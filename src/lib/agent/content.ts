@@ -1,3 +1,4 @@
+import type { TaskInput } from "@/lib/ai/tasks";
 import type { GeneratorConfig } from "@/lib/generators/pages";
 import { cleanPhrases, cleanPrompts, cleanWordList, repeatedPuzzles, type WordListOptions } from "@/lib/quality/content";
 import type { ContentNeed, PlannedSection } from "./blueprint";
@@ -52,6 +53,23 @@ export interface ContentRequest {
   sectionTitle: string;
   count: number;
   avoid: string[];
+  /** The publisher's feedback on the version being replaced (Regenerate with feedback). */
+  feedback?: string;
+}
+
+type ContentTask = "journal-prompts" | "word-lists" | "phrases";
+
+/** The AI task, its input and the provenance outputs for a content request. */
+export function contentCall(req: ContentRequest, ctx: { audience: string; bookTitle: string }): { task: ContentTask; input: TaskInput<ContentTask>; outputs: string[] } {
+  const { need, sectionTitle, count } = req;
+  const topic = need.theme;
+  const avoid = req.avoid.length ? req.avoid : undefined;
+  const feedback = req.feedback?.trim() || undefined;
+  const { audience, bookTitle } = ctx;
+  if (need.task === "journal-prompts") return { task: need.task, input: { topic, audience, count, bookTitle, sectionTitle, avoid, feedback }, outputs: [`interior.prompts:${sectionTitle}`] };
+  if (need.task === "word-lists")
+    return { task: need.task, input: { topic, audience, count, wordsPerPuzzle: need.wordsPerPuzzle, maxLength: need.maxLength, difficulty: need.difficulty, avoid, feedback }, outputs: [`interior.word-lists:${sectionTitle}`] };
+  return { task: need.task, input: { topic, audience, count, maxLength: need.maxLength, style: need.style, bookTitle, avoid, feedback }, outputs: [`interior.phrases:${sectionTitle}`] };
 }
 
 export type ContentAsk = (req: ContentRequest) => Promise<{ output: unknown; runId?: string }>;
@@ -221,4 +239,55 @@ export async function refineContent(sections: PlannedSection[], ask: ContentAsk,
     if (n < s.content.count) notes.push(`${s.label}: needed ${s.content.count}, kept ${n} distinct; the rest of its page budget became notes pages.`);
   }
   return { sections: out, removed, added, notes };
+}
+
+export interface RewriteResult {
+  config: GeneratorConfig;
+  /** New items in the section. */
+  written: number;
+  /** Old items kept because the replacements came up short. */
+  kept: number;
+  runId?: string;
+}
+
+/**
+ * Rewrite one section's content with the publisher's feedback, keeping the
+ * same number of items so the book's page count holds. New items must not
+ * repeat the rest of the book (`others`) or the items they replace; if the
+ * model comes up short after two asks, the best of the old items fill the gap.
+ */
+export async function rewriteSection(cfg: GeneratorConfig, need: ContentNeed, others: GeneratorConfig[], ask: ContentAsk, opts: { sectionTitle: string; feedback: string }): Promise<RewriteResult> {
+  const seen: Seen = { prompt: [], saying: [], affirmation: [], puzzles: [] };
+  for (const o of others) {
+    if (o.kind === "journal-prompts") seen.prompt.push(...o.prompts);
+    else if (o.kind === "cryptogram") seen.saying.push(...o.phrases);
+    else if (o.kind === "gratitude") seen.affirmation.push(...(o.affirmations ?? []));
+    else if (o.kind === "word-search" || o.kind === "word-scramble") seen.puzzles.push(...o.puzzles);
+  }
+  const old = itemsOf(cfg);
+  const oldText = old.map((x) => (typeof x === "string" ? x : (x as Puzzle).title));
+  const target = need.count;
+  let items: unknown[] = [];
+  let runId: string | undefined;
+  for (let round = 0; round < 2 && items.length < target; round++) {
+    const missing = target - items.length;
+    const count = Math.min(target + 4, missing + Math.ceil(missing / 4) + 1);
+    const avoid = [...avoidFor(cfg, seen), ...oldText].slice(-200);
+    const a = await ask({ need, sectionTitle: opts.sectionTitle, count, avoid, feedback: opts.feedback }).catch(() => null);
+    if (!a) break;
+    runId ??= a.runId;
+    const r = keep(cfg, need, newItems(cfg, a.output), missing, seen);
+    if (!r.kept.length) break;
+    items = [...items, ...r.kept];
+  }
+  const written = items.length;
+  if (items.length < target) items = [...items, ...keep(cfg, need, old, target - items.length, seen).kept];
+  // Puzzle numbering continues into later sections, so a puzzle section keeps its count even if that means an old puzzle that resembles a new one.
+  if (items.length < target && cfg.kind !== "journal-prompts" && cfg.kind !== "gratitude") {
+    const have = new Set(items.map((x) => JSON.stringify(x)));
+    items = [...items, ...old.filter((x) => !have.has(JSON.stringify(x)))].slice(0, target);
+  }
+  let config = withItems(cfg, items);
+  if (runId && written) config = { ...config, aiRunId: runId } as GeneratorConfig;
+  return { config, written, kept: items.length - written, runId };
 }

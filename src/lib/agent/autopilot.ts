@@ -1,7 +1,7 @@
 import { produce } from "immer";
 import { callAi, isModelOutput, modelRun, type AiCallResult } from "@/lib/ai/client";
 import type { BlueprintOutput, BriefOutput, TaskName } from "@/lib/ai/tasks";
-import { suggestArtTemplate } from "@/lib/cover/art";
+import { isArtTemplate, suggestArtTemplate } from "@/lib/cover/art";
 import { designCover, directArt, generateCandidates, pickCandidate } from "@/lib/cover/artClient";
 import { PALETTES } from "@/lib/cover/templates";
 import { resolveCategories, suggestCategories } from "@/lib/kdp/categories";
@@ -15,7 +15,8 @@ import { critiqueListing, reviewVisuals } from "@/lib/quality/review";
 import { createProject } from "@/lib/schema/factory";
 import type { BookType, ModelRun, Project } from "@/lib/schema/project";
 import { assembleBook, clampPageTarget, describeBook, planSections, validateBlueprint, type PlannedSection } from "./blueprint";
-import { applyContent, refineContent, type ContentRequest } from "./content";
+import { ART_CANDIDATES } from "./constants";
+import { applyContent, contentCall, refineContent, type ContentRequest } from "./content";
 
 /**
  * The publishing agent. It is a deterministic workflow with model calls inside
@@ -33,10 +34,16 @@ export interface AutopilotInput {
   notes: string;
   /** Generate AI cover art (needs an image provider on the server). */
   coverArt?: boolean;
+  /** Interior page count; left to the brief when unset. */
+  pageTarget?: number;
+  /** Cover template and/or palette; left to the brief (or the art direction) when unset. */
+  style?: { templateId?: string; paletteId?: string };
 }
 
-/** Cover art candidates autopilot generates and picks from. */
-export const ART_CANDIDATES = 4;
+/** Called with the draft as it takes shape (pages, then the cover), for the live build view. */
+export type PreviewCallback = (project: Project, stage: "layout" | "listing" | "cover" | "done") => void;
+
+export { ART_CANDIDATES } from "./constants";
 
 export type StepStatus = "pending" | "running" | "done" | "error";
 
@@ -113,6 +120,7 @@ export async function runAutopilot(
   input: AutopilotInput,
   onStep: (id: string, status: StepStatus, detail?: string) => void,
   signal?: AbortSignal,
+  onPreview?: PreviewCallback,
 ): Promise<AutopilotResult> {
   const runs: ModelRun[] = [];
   const notes: string[] = [];
@@ -144,7 +152,7 @@ export async function runAutopilot(
     return [r, `${r.output.titleIdeas[0] ?? input.topic} · ${r.meta.provider}`];
   });
   const brief: BriefOutput = briefRes.output;
-  const pageTarget = clampPageTarget(brief.pageTarget || 120);
+  const pageTarget = clampPageTarget(input.pageTarget || brief.pageTarget || 120);
   const title = brief.titleIdeas.find((t) => !findProhibited(t).length) ?? input.topic;
   const audience = brief.audience || input.audience;
 
@@ -163,13 +171,9 @@ export async function runAutopilot(
   });
 
   // 3. Content for each section that needs it (prompts, word lists, sayings)
-  const write = ({ need, sectionTitle, count, avoid }: ContentRequest) => {
-    const topic = need.theme;
-    const avoidList = avoid.length ? avoid : undefined;
-    if (need.task === "journal-prompts") return ai("journal-prompts", { topic, audience, count, bookTitle: title, sectionTitle, avoid: avoidList }, [`interior.prompts:${sectionTitle}`]);
-    if (need.task === "word-lists")
-      return ai("word-lists", { topic, audience, count, wordsPerPuzzle: need.wordsPerPuzzle, maxLength: need.maxLength, difficulty: need.difficulty, avoid: avoidList }, [`interior.word-lists:${sectionTitle}`]);
-    return ai("phrases", { topic, audience, count, maxLength: need.maxLength, style: need.style, bookTitle: title, avoid: avoidList }, [`interior.phrases:${sectionTitle}`]);
+  const write = (req: ContentRequest) => {
+    const c = contentCall(req, { audience, bookTitle: title });
+    return ai(c.task, c.input, c.outputs);
   };
   const written: PlannedSection[] = await step("content", async () => {
     const out = await pool(planned, 3, async (sec): Promise<PlannedSection> => {
@@ -194,6 +198,7 @@ export async function runAutopilot(
     const p = createProject({ name: title, bookType: input.bookType, trimId: trim.id, paper: "white", ink: "black", bleed: false, author: input.author, interior: sections });
     return [p, `${p.interior.pages.length} pages in ${p.interior.sections.length} parts`];
   });
+  onPreview?.(project, "layout");
   const interiorSummary = describeBook(filled);
   project = produce(project, (d) => {
     d.brief = { topic: input.topic, audience, notes: input.notes, angle: brief.angle, titleIdeas: brief.titleIdeas, keywordIdeas: brief.keywordIdeas, interiorPlan: interiorSummary, coverDirection: brief.coverDirection, risks: brief.risks };
@@ -259,16 +264,19 @@ export async function runAutopilot(
       return [syncTitlePage(project), "skipped"];
     }
   });
+  onPreview?.(project, "listing");
 
   // 6. Cover art: art direction, candidates, and a pick (a vision model looks at them when one is available).
-  const palette = PALETTES.find((p) => p.id === brief.palette) ?? PALETTES[0];
+  const palette = PALETTES.find((p) => p.id === (input.style?.paletteId ?? brief.palette)) ?? PALETTES[0];
+  const chosenTemplate = input.style?.templateId;
   const art = await step("art", async () => {
     if (!input.coverArt) return [null, "Off: no image provider, using a vector template"];
+    if (chosenTemplate && !isArtTemplate(chosenTemplate)) return [null, `Off: you chose the ${chosenTemplate} template`];
     try {
       const { direction, run } = await directArt(project, ART_CANDIDATES, signal);
       if (run) runs.push(run);
-      const layout = direction.layout ?? suggestArtTemplate(input.bookType);
-      const artPalette = PALETTES.find((p) => p.id === direction.palette) ?? palette;
+      const layout = (isArtTemplate(chosenTemplate) ? chosenTemplate : direction.layout) ?? suggestArtTemplate(input.bookType);
+      const artPalette = input.style?.paletteId ? palette : (PALETTES.find((p) => p.id === direction.palette) ?? palette);
       const cg = coverGeometry(project.spec, project.interior.pages.length);
       const gen = await generateCandidates(direction.concepts, layout, cg, signal);
       runs.push(...gen.runs);
@@ -288,11 +296,12 @@ export async function runAutopilot(
 
   // 6b. Cover layout: art template when there is art, else the brief's vector template; back cover gets the blurb, "What's inside" and page thumbnails.
   project = await step("cover", async () => {
-    const templateId = art?.layout ?? brief.coverTemplate;
+    const templateId = art?.layout ?? (chosenTemplate && !isArtTemplate(chosenTemplate) ? chosenTemplate : brief.coverTemplate);
     const pal = art?.palette ?? palette;
     const next = await designCover(project, { templateId, palette: pal, backText: listing.output.backCoverBlurb, inside: true, thumbs: true, listingRunId: listing.runId });
     return [next, `${templateId} template, ${pal.name} palette`];
   });
+  onPreview?.(project, "cover");
 
   // 6c. Look at the rendered cover and sample pages (needs a vision-capable model).
   project = await step("review", async () => {
@@ -336,5 +345,6 @@ export async function runAutopilot(
     return [final, runs.length ? `${runs.length} model run(s) recorded; disclosure needs your confirmation` : "No model output used (offline heuristics)"];
   });
 
+  onPreview?.(project, "done");
   return { project, report: runPreflight(project), repairs, notes, quality: qualityReport(project) };
 }

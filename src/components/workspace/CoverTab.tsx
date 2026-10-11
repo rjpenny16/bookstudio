@@ -21,7 +21,7 @@ export function CoverTab({ focusId }: { focusId: string | null }) {
   const update = useProjectStore((s) => s.update);
   const [selected, setSelected] = useState<string | null>(focusId);
   const [templateId, setTemplateId] = useState(project.cover.templateId ?? "band");
-  const [paletteId, setPaletteId] = useState(PALETTES[0].id);
+  const [paletteId, setPaletteId] = useState(project.cover.paletteId ?? PALETTES[0].id);
   const [inside, setInside] = useState(true);
   const [thumbs, setThumbs] = useState(true);
   const [busy, setBusy] = useState(false);

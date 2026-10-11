@@ -195,6 +195,8 @@ export interface Cover {
   /** "kdp": KDP prints the barcode, so its area must stay clear. */
   barcode: "kdp" | "own";
   templateId?: string;
+  /** Palette the cover was last built with (optional; added in Phase 4, no migration needed). */
+  paletteId?: string;
 }
 
 export type AiDisclosureLevel = "none" | "some" | "most";

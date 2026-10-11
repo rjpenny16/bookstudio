@@ -8,15 +8,74 @@ import { RULES_VERSION } from "@/lib/kdp/rules";
 import { FONTS } from "@/lib/render/fonts";
 import { getValue, listProjects, loadProject } from "@/lib/storage/db";
 
+type Capability = "text" | "vision" | "images";
+interface Capabilities {
+  text: AiStatus;
+  vision: { available: boolean | null; detail: string };
+  images: ImageStatus;
+}
+interface TestResult {
+  ok: boolean;
+  detail: string;
+  ms: number;
+}
+
+/** One capability: whether it's active, and a live check of the server's connection. */
+function CapabilityRow({ id, name, active, detail, badge, onTest, result, testing }: { id: Capability; name: string; active: boolean | null; detail: string; badge: string; onTest: () => void; result?: TestResult; testing: boolean }) {
+  return (
+    <li className="check-item" aria-label={name}>
+      <span className={`check-icon ${active ? "pass" : active === null ? "info" : "warn"}`} aria-label={active ? "Active" : active === null ? "Unknown" : "Not active"}>
+        {active ? "✓" : active === null ? "?" : "–"}
+      </span>
+      <div>
+        <strong>{name}</strong> <span className="badge">{badge}</span>
+        <div className="muted" style={{ fontSize: 13 }}>
+          {detail}
+        </div>
+        {result && (
+          <div className={`notice ${result.ok ? "notice-pass" : "notice-fail"}`} style={{ marginTop: 6, fontSize: 13 }} role="status" data-capability={id}>
+            {result.ok ? "Connected" : "Failed"}: {result.detail} ({result.ms} ms)
+          </div>
+        )}
+      </div>
+      <div>
+        <button className="btn btn-sm" onClick={onTest} disabled={testing}>
+          {testing && <span className="spinner" />} Test connection
+        </button>
+      </div>
+    </li>
+  );
+}
+
 export default function Settings() {
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [count, setCount] = useState<number | null>(null);
   const [images, setImages] = useState<ImageStatus | null>(null);
+  const [caps, setCaps] = useState<Capabilities | null>(null);
+  const [tests, setTests] = useState<Partial<Record<Capability, TestResult>>>({});
+  const [testing, setTesting] = useState<Capability | null>(null);
   useEffect(() => {
+    fetch("/api/test")
+      .then((r) => r.json())
+      .then(setCaps)
+      .catch(() => setCaps(null));
     aiStatus().then(setStatus).catch(() => setStatus(null));
     imageStatus().then(setImages).catch(() => setImages(null));
     listProjects().then((p) => setCount(p.length));
   }, []);
+
+  const test = async (target: Capability) => {
+    setTesting(target);
+    try {
+      const res = await fetch("/api/test", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ target }) });
+      const body = await res.json();
+      setTests((t) => ({ ...t, [target]: res.ok ? body : { ok: false, detail: body.error ?? `HTTP ${res.status}`, ms: 0 } }));
+    } catch (e) {
+      setTests((t) => ({ ...t, [target]: { ok: false, detail: e instanceof Error ? e.message : String(e), ms: 0 } }));
+    } finally {
+      setTesting(null);
+    }
+  };
 
   const exportAll = async () => {
     const summaries = await listProjects();
@@ -33,6 +92,21 @@ export default function Settings() {
           <h1>Settings</h1>
           <p>BookStudio is local-first: projects, research and sales imports live in this browser&apos;s IndexedDB. Only AI requests go to the server, and from there to the model provider you configure.</p>
         </div>
+      </div>
+      <div className="card stack" style={{ marginBottom: 16 }}>
+        <h2 style={{ margin: 0 }}>Capabilities</h2>
+        {caps ? (
+          <ul style={{ listStyle: "none", margin: 0, padding: 0 }} aria-label="Capabilities">
+            <CapabilityRow id="text" name="Writing (briefs, content, listings)" active={caps.text.provider !== "offline"} badge={caps.text.provider === "offline" ? "offline templates" : `${caps.text.provider} · ${caps.text.model}`} detail={caps.text.detail} onTest={() => test("text")} result={tests.text} testing={testing === "text"} />
+            <CapabilityRow id="vision" name="Vision review (cover, pages, art pick)" active={caps.vision.available} badge={caps.vision.available === false ? "off" : caps.text.model} detail={caps.vision.detail} onTest={() => test("vision")} result={tests.vision} testing={testing === "vision"} />
+            <CapabilityRow id="images" name="AI cover art" active={caps.images.configured} badge={caps.images.configured ? `${caps.images.provider} · ${caps.images.model}` : "off"} detail={caps.images.detail} onTest={() => test("images")} result={tests.images} testing={testing === "images"} />
+          </ul>
+        ) : (
+          <span className="muted">Checking…</span>
+        )}
+        <p className="field-hint" style={{ margin: 0 }}>
+          API keys live only in the server&apos;s environment variables; they are never sent to or stored in this browser. Tests make one tiny request (the cover art test only looks up the model and generates nothing).
+        </p>
       </div>
       <div className="grid grid-2">
         <div className="card stack">

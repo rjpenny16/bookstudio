@@ -49,7 +49,7 @@ async function generateImage(prompt: string, widthIn: number, heightIn: number, 
 }
 
 /** Ask the text model for art concepts, a layout and a palette. */
-export async function directArt(project: Project, count: number, signal?: AbortSignal): Promise<{ direction: CoverArtPromptOutput; run: ModelRun | null }> {
+export async function directArt(project: Project, count: number, signal?: AbortSignal, feedback?: string): Promise<{ direction: CoverArtPromptOutput; run: ModelRun | null }> {
   const m = project.metadata;
   const res = await callAi(
     "cover-art-prompt",
@@ -61,6 +61,7 @@ export async function directArt(project: Project, count: number, signal?: AbortS
       audience: project.brief.audience || "adults",
       coverDirection: project.brief.coverDirection,
       count,
+      ...(feedback?.trim() ? { feedback: feedback.trim() } : {}),
     },
     signal,
   );
@@ -271,6 +272,7 @@ export async function designCover(project: Project, d: CoverDesign): Promise<Pro
     draft.assets = [...draft.assets.filter((a) => !coverOwned(a)), ...added.filter((a) => used.has(a.id))];
     draft.cover.background = cover.background;
     draft.cover.templateId = cover.templateId;
+    draft.cover.paletteId = d.palette.id;
     draft.cover.elements = cover.elements.map((el) =>
       (d.aiListing || d.listingRunId) && el.type === "text" && (el.name === "Back blurb" || el.name === "Subtitle")
         ? { ...el, provenance: { origin: "ai-generated" as const, ...(d.listingRunId ? { runId: d.listingRunId } : {}) } }
