@@ -1,0 +1,23 @@
+services:
+  bookstudio:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      AI_PROVIDER: ${AI_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5-5}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+    restart: unless-stopped
+
+  # Optional self-hosted models: `docker compose --profile local-ai up`
+  # then set AI_PROVIDER=ollama and pull a model: `docker compose exec ollama ollama pull qwen3:8b`
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["local-ai"]
+    volumes:
+      - ollama:/root/.ollama
+
+volumes:
+  ollama:
