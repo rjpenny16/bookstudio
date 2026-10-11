@@ -9,7 +9,8 @@ import type { Asset, CoverArtCandidate, Element, ModelRun, Project } from "@/lib
 import { regionTone } from "@/lib/util/color";
 import { newId, ptToIn, sha256Hex } from "@/lib/util/ids";
 import { artBox, artStoreSize, coverCrop, finalArtPrompt, isArtTemplate, type ArtTemplateId } from "./art";
-import { NOT_CONTENT, whatsInside } from "./inside";
+import { coverBadge, NOT_CONTENT, seriesName, seriesVolume, whatsInside } from "./inside";
+import { applyCoverTemplate, type SavedCoverTemplate } from "./library";
 import { buildCover, type ArtTone, type Palette } from "./templates";
 
 /**
@@ -223,7 +224,7 @@ async function pageThumbnails(project: Project): Promise<Asset[]> {
 }
 
 /** Assets the cover builder owns; they're replaced on every rebuild. */
-const coverOwned = (a: Asset) => a.name.startsWith("cover-art:") || a.name.startsWith("cover-thumb:");
+const coverOwned = (a: Asset) => a.name.startsWith("cover-art:") || a.name.startsWith("cover-thumb:") || a.name.startsWith("cover-template:");
 
 export interface CoverDesign {
   templateId: string;
@@ -236,6 +237,12 @@ export interface CoverDesign {
   /** Mark subtitle and blurb as AI text from this listing run. */
   listingRunId?: string;
   aiListing?: boolean;
+  /** Badge text; "" hides the badge, unset keeps the cover's own or the default. */
+  badge?: string;
+  /** Lay out this saved template instead of `templateId`. */
+  saved?: SavedCoverTemplate;
+  /** Notes about the result, e.g. a saved template stretched to a new trim size. */
+  onWarnings?: (warnings: string[]) => void;
 }
 
 /** Lay out the whole cover from a design choice, replacing the cover's own assets. */
@@ -253,26 +260,39 @@ export async function designCover(project: Project, d: CoverDesign): Promise<Pro
   const thumbs = d.thumbs ? await pageThumbnails(project) : [];
   added.push(...thumbs);
   const m = project.metadata;
-  const cover = buildCover(
-    d.templateId,
-    {
-      title: m.title || project.name,
-      subtitle: m.subtitle,
-      author: m.author,
-      backText: d.backText,
-      palette: d.palette,
-      art: artInput,
-      inside: d.inside ? whatsInside(project) : [],
-      thumbs: thumbs.map((t) => t.id),
-    },
-    cg,
-  );
+  const badge = d.badge ?? project.cover.badge ?? coverBadge(project);
+  const input = {
+    title: m.title || project.name,
+    subtitle: m.subtitle,
+    author: m.author,
+    backText: d.backText,
+    palette: d.palette,
+    art: artInput,
+    inside: d.inside ? whatsInside(project) : [],
+    thumbs: thumbs.map((t) => t.id),
+    badge,
+    series: seriesName(m.series),
+    volume: seriesVolume(m.series),
+  };
+  let cover: { background: string; elements: Element[]; templateId?: string; barcode?: Project["cover"]["barcode"] };
+  if (d.saved) {
+    const applied = applyCoverTemplate(d.saved, input, cg);
+    // An image the book already keeps for itself (a logo also used inside) stays as it is.
+    const own = new Set(project.assets.filter((a) => !coverOwned(a)).map((a) => a.id));
+    added.push(...applied.assets.filter((a) => !own.has(a.id)).map((a) => ({ ...a, name: a.name.startsWith("cover-template:") ? a.name : `cover-template:${a.name}` })));
+    cover = applied.cover;
+    d.onWarnings?.(applied.warnings);
+  } else cover = buildCover(d.templateId, input, cg);
   const used = new Set(cover.elements.flatMap((e) => (e.type === "image" ? [e.assetId] : [])));
   return produce(project, (draft) => {
     draft.assets = [...draft.assets.filter((a) => !coverOwned(a)), ...added.filter((a) => used.has(a.id))];
     draft.cover.background = cover.background;
     draft.cover.templateId = cover.templateId;
-    draft.cover.paletteId = d.palette.id;
+    if (d.saved) {
+      delete draft.cover.paletteId;
+      if (cover.barcode) draft.cover.barcode = cover.barcode;
+    } else draft.cover.paletteId = d.palette.id;
+    if (d.badge !== undefined) draft.cover.badge = d.badge;
     draft.cover.elements = cover.elements.map((el) =>
       (d.aiListing || d.listingRunId) && el.type === "text" && (el.name === "Back blurb" || el.name === "Subtitle")
         ? { ...el, provenance: { origin: "ai-generated" as const, ...(d.listingRunId ? { runId: d.listingRunId } : {}) } }

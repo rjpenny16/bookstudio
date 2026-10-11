@@ -1,9 +1,13 @@
-import type { Box, CoverGeometry } from "@/lib/kdp/geometry";
+import type { CoverGeometry } from "@/lib/kdp/geometry";
 import { ellipse, image, line, pattern, rect, text } from "@/lib/schema/elements";
 import type { Cover, Element } from "@/lib/schema/project";
 import { createRng } from "@/lib/generators/rng";
 import { legibleOn, legibleOnAll, mixHex } from "@/lib/util/color";
 import { artBox, isArtTemplate, type ArtTemplateId } from "./art";
+import { DESIGNS } from "./designs";
+import { backCover, fitTitle, spineText, titleBlock } from "./layout";
+
+export { fitFontSize } from "./layout";
 
 export interface Palette {
   id: string;
@@ -23,29 +27,60 @@ export const PALETTES: Palette[] = [
   { id: "forest", name: "Forest", bg: "#1b4332", fg: "#f1faee", accent: "#95d5b2", muted: "#d8f3dc" },
   { id: "charcoal", name: "Charcoal", bg: "#2b2d42", fg: "#edf2f4", accent: "#ef233c", muted: "#8d99ae" },
   { id: "cream", name: "Cream", bg: "#f8f1e3", fg: "#2d2a26", accent: "#b5838d", muted: "#6d6875" },
+  { id: "lavender", name: "Lavender", bg: "#ece6f5", fg: "#2e2445", accent: "#8e6cc4", muted: "#5b4a7a" },
+  { id: "terracotta", name: "Terracotta", bg: "#f3e3d3", fg: "#3a2418", accent: "#c8643b", muted: "#7a4b35" },
+  { id: "mint", name: "Mint", bg: "#e3f6ef", fg: "#12352b", accent: "#2a9d78", muted: "#2f5d50" },
+  { id: "plum", name: "Plum", bg: "#3d1e3f", fg: "#fff3f8", accent: "#f2a65a", muted: "#e8cfe0" },
+];
+
+/** Shelf a design is filed under in the template library. */
+export type TemplateTag = "puzzle" | "journal" | "planner" | "kids" | "large-print" | "series" | "classic" | "modern";
+
+export const TEMPLATE_TAGS: { id: TemplateTag; label: string }[] = [
+  { id: "puzzle", label: "Puzzle & activity" },
+  { id: "journal", label: "Journal & notebook" },
+  { id: "planner", label: "Planner & log book" },
+  { id: "kids", label: "Kids" },
+  { id: "large-print", label: "Large print & seniors" },
+  { id: "series", label: "Series" },
+  { id: "classic", label: "Classic" },
+  { id: "modern", label: "Modern" },
 ];
 
 export interface CoverTemplate {
   id: string;
   name: string;
   description: string;
+  tags: TemplateTag[];
+  /** Uses the badge text (e.g. "200 puzzles") when there is one. */
+  usesBadge?: boolean;
 }
 
 export const COVER_TEMPLATES: CoverTemplate[] = [
-  { id: "band", name: "Title band", description: "Bold band across the front with centered title" },
-  { id: "framed", name: "Framed classic", description: "Double frame with serif title, timeless journal look" },
-  { id: "geometric", name: "Geometric", description: "Overlapping circles and a strong sans title" },
-  { id: "minimal", name: "Minimal", description: "Large left-aligned title with lots of space" },
-  { id: "playful", name: "Playful", description: "Script title on a dotted background, great for kids" },
-  { id: "puzzle", name: "Puzzle grid", description: "Grid texture and a heavy display title" },
+  { id: "band", name: "Title band", description: "Bold band across the front with centered title", tags: ["planner", "modern"] },
+  { id: "framed", name: "Framed classic", description: "Double frame with serif title, timeless journal look", tags: ["journal", "classic"] },
+  { id: "geometric", name: "Geometric", description: "Overlapping circles and a strong sans title", tags: ["modern", "planner"] },
+  { id: "minimal", name: "Minimal", description: "Large left-aligned title with lots of space", tags: ["journal", "modern"] },
+  { id: "playful", name: "Playful", description: "Script title on a dotted background, great for kids", tags: ["kids"] },
+  { id: "puzzle", name: "Puzzle grid", description: "Grid texture and a heavy display title", tags: ["puzzle"] },
+  { id: "color-blocks", name: "Color blocks", description: "Heavy title over a bright 3x3 mosaic with a puzzle grid", tags: ["puzzle", "kids", "large-print"] },
+  { id: "botanical", name: "Botanical", description: "Title plate on a field of vector flowers, a calm gift look", tags: ["journal", "large-print", "classic"] },
+  { id: "spiral", name: "Spiral-bound", description: "Coil binding look, slanted lattice panel and a round badge", tags: ["puzzle", "planner"], usesBadge: true },
+  { id: "starburst", name: "Large print burst", description: "Big title plate on sun rays with a starburst badge", tags: ["large-print", "puzzle"], usesBadge: true },
+  { id: "series", name: "Series ribbon", description: "Volume ribbon, header title and sunset stripes; built for a numbered series", tags: ["series", "puzzle", "journal"] },
+  { id: "kids-bold", name: "Big & bright", description: "Tilted sticker title, dashed border and confetti", tags: ["kids"], usesBadge: true },
+  { id: "rainbow", name: "Rainbow arcs", description: "Left-aligned serif title over soft rainbow arcs", tags: ["journal", "kids", "modern"] },
+  { id: "label", name: "Vintage label", description: "Notched label with ornaments on a diamond lattice", tags: ["planner", "classic", "journal"] },
 ];
 
 /** Templates built around AI cover art; they need an image. */
 export const ART_COVER_TEMPLATES: CoverTemplate[] = [
-  { id: "art-full-bleed", name: "Art, full bleed", description: "Artwork fills the front; title on a plate over a calm area" },
-  { id: "art-panel", name: "Art panel", description: "Title band on top, artwork below to the edge" },
-  { id: "art-framed", name: "Art in a frame", description: "Framed artwork between title and subtitle, classic and quiet" },
+  { id: "art-full-bleed", name: "Art, full bleed", description: "Artwork fills the front; title on a plate over a calm area", tags: [] },
+  { id: "art-panel", name: "Art panel", description: "Title band on top, artwork below to the edge", tags: [] },
+  { id: "art-framed", name: "Art in a frame", description: "Framed artwork between title and subtitle, classic and quiet", tags: [] },
 ];
+
+export const templateInfo = (id: string | undefined): CoverTemplate | undefined => [...COVER_TEMPLATES, ...ART_COVER_TEMPLATES].find((t) => t.id === id);
 
 /** Measured tone of the art where the title goes (average color, luminance spread). */
 export interface ArtTone {
@@ -72,134 +107,11 @@ export interface CoverInput {
   inside?: string[];
   /** Asset ids of interior page thumbnails for the back cover (trim aspect), up to 3. */
   thumbs?: string[];
-}
-
-const CHAR_FACTOR: Record<string, number> = {
-  Inter: 0.56,
-  Montserrat: 0.6,
-  Oswald: 0.44,
-  "Anton": 0.4,
-  Merriweather: 0.6,
-  Lora: 0.53,
-  "Playfair Display": 0.53,
-  Pacifico: 0.62,
-  Caveat: 0.42,
-  "Roboto Mono": 0.6,
-};
-
-/** Largest font size (<= max) at which `s` fits within `maxLines` lines of `width`. */
-export function fitFontSize(s: string, family: string, width: number, maxLines: number, max: number, min = 10): number {
-  const factor = CHAR_FACTOR[family] ?? 0.56;
-  const words = s.split(/\s+/).filter(Boolean);
-  for (let size = max; size > min; size -= 1) {
-    const charW = size * factor;
-    let lines = 1;
-    let cur = 0;
-    let ok = true;
-    for (const w of words) {
-      const len = w.length * charW;
-      if (len > width) {
-        ok = false;
-        break;
-      }
-      const next = cur === 0 ? len : cur + charW + len;
-      if (next > width) {
-        lines++;
-        cur = len;
-      } else cur = next;
-    }
-    if (ok && lines <= maxLines) return size;
-  }
-  return min;
-}
-
-function estLines(s: string, family: string, width: number, size: number): number {
-  const factor = CHAR_FACTOR[family] ?? 0.56;
-  const words = s.split(/\s+/).filter(Boolean);
-  let lines = 1;
-  let cur = 0;
-  for (const w of words) {
-    const len = w.length * size * factor;
-    const next = cur === 0 ? len : cur + size * factor + len;
-    if (next > width && cur > 0) {
-      lines++;
-      cur = len;
-    } else cur = next;
-  }
-  return lines;
-}
-
-function titleBlock(s: string, family: string, box: Box, y: number, max: number, color: string, align: "left" | "center" = "center", maxLines = 3): Element {
-  const size = fitFontSize(s, family, box.width, maxLines, max);
-  const lines = estLines(s, family, box.width, size);
-  return text({ x: box.x, y, width: box.width, height: lines * size * 1.13 * 1.05, text: s, fontFamily: family, bold: true, fontSize: size, color, align, lineHeight: 1.05, name: "Title" });
-}
-
-function backCover(cg: CoverGeometry, input: CoverInput, color: string, family = "Lora"): Element[] {
-  const b = cg.backSafe;
-  const inset = 18;
-  const width = b.width - inset * 2;
-  const top = b.y + inset + 12;
-  let bottom = cg.barcode.y - inset;
-  const els: Element[] = [];
-
-  // Page thumbnails along the bottom, above the barcode.
-  const thumbs = (input.thumbs ?? []).slice(0, 3);
-  if (thumbs.length) {
-    const gap = 14;
-    const ratio = cg.trimH / cg.trimW;
-    const th = Math.min(((width - gap * (thumbs.length - 1)) / thumbs.length) * ratio, (bottom - top) * 0.32);
-    const tw = th / ratio;
-    const x0 = b.x + inset + (width - (tw * thumbs.length + gap * (thumbs.length - 1))) / 2;
-    const y = bottom - th;
-    thumbs.forEach((assetId, i) => {
-      const x = x0 + i * (tw + gap);
-      els.push(image({ x, y, width: tw, height: th, assetId, name: "Back page thumbnail" }));
-      els.push(rect({ x, y, width: tw, height: th, fill: null, stroke: color, strokeWidth: 0.75, opacity: 0.6, name: "Thumbnail border" }));
-    });
-    bottom = y - 18;
-  }
-
-  // "What's inside" bullets above them.
-  let items = (input.inside ?? []).map((s) => s.trim()).filter(Boolean).slice(0, 6);
-  const size = 10.5;
-  const lh = 1.3;
-  const listHeight = (list: string[]) => 13 * 1.13 * lh + 4 + list.reduce((h, s) => h + estLines(`• ${s}`, family, width, size) * size * 1.13 * lh, 0);
-  while (items.length && listHeight(items) > (bottom - top) * (input.backText.trim() ? 0.5 : 1)) items = items.slice(0, -1);
-  if (items.length) {
-    let y = bottom - listHeight(items);
-    els.push(text({ x: b.x + inset, y, width, height: 13 * 1.13 * lh, text: "What's inside", fontFamily: family, bold: true, fontSize: 13, color, lineHeight: lh, name: "Inside heading" }));
-    y += 13 * 1.13 * lh + 4;
-    for (const item of items) {
-      const h = estLines(`• ${item}`, family, width, size) * size * 1.13 * lh;
-      els.push(text({ x: b.x + inset, y, width, height: h, text: `• ${item}`, fontFamily: family, fontSize: size, color, lineHeight: lh, name: "Inside item" }));
-      y += h;
-    }
-    bottom -= listHeight(items) + 16;
-  }
-
-  // The blurb takes the space that's left.
-  if (input.backText.trim()) {
-    const maxH = bottom - top;
-    let fsize = 11;
-    let blurb = input.backText.trim();
-    while (fsize > 8 && estLines(blurb, family, width, fsize) * fsize * 1.13 * 1.35 > maxH) fsize -= 0.5;
-    while (estLines(blurb, family, width, fsize) * fsize * 1.13 * 1.35 > maxH && blurb.length > 40) blurb = `${blurb.slice(0, Math.floor(blurb.length * 0.9)).replace(/\s+\S*$/, "")}…`;
-    const lines = estLines(blurb, family, width, fsize);
-    els.unshift(text({ x: b.x + inset, y: top, width, height: lines * fsize * 1.13 * 1.35, text: blurb, fontFamily: family, fontSize: fsize, color, lineHeight: 1.35, name: "Back blurb" }));
-  }
-  return els;
-}
-
-function spineText(cg: CoverGeometry, input: CoverInput, color: string, family = "Montserrat"): Element[] {
-  if (!cg.spineTextAllowed || cg.spineSafe.width < 6) return [];
-  const label = [input.title, input.author].filter(Boolean).join("  ·  ").toUpperCase();
-  const size = Math.min(cg.spineSafe.width * 0.62, 13, fitFontSize(label, family, cg.spineSafe.height, 1, 13, 4));
-  const h = size * 1.13;
-  const w = cg.spineSafe.height;
-  const cx = cg.spineBox.x + cg.spineBox.width / 2;
-  const cy = cg.spineBox.y + cg.spineBox.height / 2;
-  return [text({ x: cx - w / 2, y: cy - h / 2, width: w, height: h, text: label, fontFamily: family, bold: true, fontSize: size, color, align: "center", rotation: 90, lineHeight: 1, name: "Spine text" })];
+  /** Short callout for templates with a badge, e.g. "200 puzzles" or "Large print". */
+  badge?: string;
+  /** Series name and volume number, for the series template. */
+  series?: string;
+  volume?: string;
 }
 
 export function buildCover(templateId: string, input: CoverInput, cg: CoverGeometry): Pick<Cover, "background" | "elements" | "templateId"> {
@@ -210,7 +122,12 @@ export function buildCover(templateId: string, input: CoverInput, cg: CoverGeome
   const fullFront = { x: cg.front.x, y: 0, width: cg.width - cg.front.x, height: cg.height };
   if (isArtTemplate(templateId) && !input.art) templateId = "minimal";
 
-  switch (templateId) {
+  const design = DESIGNS[templateId];
+  if (design) {
+    const out = design(input, cg);
+    els.push(...out.elements);
+    background = out.background ?? background;
+  } else switch (templateId) {
     case "art-full-bleed":
     case "art-panel":
     case "art-framed":
@@ -220,7 +137,7 @@ export function buildCover(templateId: string, input: CoverInput, cg: CoverGeome
       const bandY = cg.front.y + cg.trimH * 0.3;
       const bandH = cg.trimH * 0.3;
       els.push(rect({ x: fullFront.x, y: bandY, width: fullFront.width, height: bandH, fill: p.accent, name: "Band" }));
-      const title = titleBlock(input.title, "Oswald", { ...f, x: f.x + 12, width: f.width - 24 }, 0, 64, legibleOn(p.accent, p.bg, [p.fg]));
+      const title = fitTitle(input.title, "Oswald", { ...f, x: f.x + 12, width: f.width - 24 }, 64, bandH - 16, legibleOn(p.accent, p.bg, [p.fg]));
       title.y = bandY + (bandH - title.height) / 2;
       els.push(title);
       if (input.subtitle) els.push(text({ x: f.x + 12, y: bandY + bandH + 20, width: f.width - 24, height: 40, text: input.subtitle, fontFamily: "Inter", fontSize: 14, color: p.fg, align: "center", name: "Subtitle" }));

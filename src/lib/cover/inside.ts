@@ -55,3 +55,24 @@ export function whatsInside(project: Project, max = 5): string[] {
   if (answerKeys) out.push("Answer keys at the back");
   return out;
 }
+
+/** Volume number from the series field ("Brain Teasers, Book 2", "Vol. 3"). */
+export function seriesVolume(series: string): string | undefined {
+  return /(?:vol(?:ume)?\.?|book|no\.?|#|part)\s*(\d{1,3})\b/i.exec(series)?.[1];
+}
+
+/** Series name without the volume part: "Brain Breaks, Book 2" -> "Brain Breaks". */
+export function seriesName(series: string): string {
+  return series.replace(/[,:\-–—\s]*(?:vol(?:ume)?\.?|book|no\.?|#|part)\s*\d{1,3}\b.*$/i, "").trim();
+}
+
+/**
+ * Default badge for templates that have one: the puzzle count for puzzle
+ * books, "Large print" when the title says so, else nothing.
+ */
+export function coverBadge(project: Project): string {
+  const puzzles = project.interior.sections.reduce((n, s) => n + (s.role === "body" && !("part" in s.config && s.config.part === "solutions") ? puzzleCount(s.config) : 0), 0);
+  if (puzzles >= 10) return `${puzzles} puzzles`;
+  if (/large[\s-]print/i.test(`${project.metadata.title} ${project.metadata.subtitle}`)) return "Large print";
+  return "";
+}

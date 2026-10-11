@@ -197,6 +197,8 @@ export interface Cover {
   templateId?: string;
   /** Palette the cover was last built with (optional; added in Phase 4, no migration needed). */
   paletteId?: string;
+  /** Badge text for templates that show one; "" hides it, unset uses the default (optional, no migration needed). */
+  badge?: string;
 }
 
 export type AiDisclosureLevel = "none" | "some" | "most";

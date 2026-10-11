@@ -16,6 +16,14 @@ const TEMPLATE_WORDS: [RegExp, Template][] = [
   [/bold|strong|punchy|stand out/i, "band"],
   [/geometric|shapes|abstract|circles/i, "geometric"],
   [/puzzle|grid/i, "puzzle"],
+  [/flower|floral|botanical|garden/i, "botanical"],
+  [/large print|senior|big print|starburst/i, "starburst"],
+  [/series|volume|collection/i, "series"],
+  [/spiral|notebook look|coil/i, "spiral"],
+  [/rainbow|arcs|boho/i, "rainbow"],
+  [/vintage|retro|label|antique/i, "label"],
+  [/mosaic|blocks|colou?rful grid/i, "color-blocks"],
+  [/sticker|confetti|loud/i, "kids-bold"],
 ];
 
 const PALETTE_WORDS: [RegExp, PaletteId][] = [
@@ -27,6 +35,10 @@ const PALETTE_WORDS: [RegExp, PaletteId][] = [
   [/forest|outdoor|earthy|deep green/i, "forest"],
   [/grey|gray|serious|masculine|red/i, "charcoal"],
   [/cream|neutral|beige|vintage|light/i, "cream"],
+  [/purple|lavender|lilac/i, "lavender"],
+  [/terracotta|clay|rust|autumn|orange/i, "terracotta"],
+  [/mint|teal|spring/i, "mint"],
+  [/plum|wine|luxur/i, "plum"],
 ];
 
 const asTemplate = (id: string): Template | null => ((TEMPLATE_CHOICES as readonly string[]).includes(id) ? (id as Template) : null);

@@ -274,6 +274,58 @@ test("one-click start builds a book and the Review & Publish screen exports it",
   expect(errors).toEqual([]);
 });
 
+test("cover template library: pick a design, save it and reuse it on another book", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const newBook = async (title: string, trim: string) => {
+    await page.goto("/new");
+    await page.getByLabel("Working title").fill(title);
+    await page.getByLabel("Author / pen name").fill("Ada Writer");
+    await page.getByLabel("Book type").selectOption("puzzle");
+    await page.getByLabel("Trim size").selectOption(trim);
+    await page.getByRole("button", { name: "Create book" }).click();
+    await expect(page).toHaveURL(/\/projects\/prj_/);
+    await page.getByRole("tab", { name: "Cover" }).click();
+  };
+
+  await newBook("Sudoku for Seniors", "6x9");
+  await page.getByRole("button", { name: "Browse template library" }).click();
+  const library = page.getByRole("dialog", { name: "Cover template library" });
+  await expect(library.getByRole("img", { name: "Botanical preview" })).toBeVisible();
+  if (shots) await page.screenshot({ path: `${shots}/cover-library-grid.png` });
+  await library.getByRole("tab", { name: /Large print/ }).click();
+  await expect(library.getByRole("img", { name: "Large print burst preview" })).toBeVisible();
+  await library.getByRole("radio", { name: "Lavender" }).click();
+  await library.getByRole("button", { name: "Use Large print burst" }).click();
+  await expect(library).toBeHidden();
+  await expect(page.getByText("Large print burst", { exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: /SUDOKU FOR SENIORS/ }).first()).toBeVisible();
+  await page.getByLabel("Badge text").fill("Large print");
+  await page.getByRole("button", { name: "Build cover from listing" }).click();
+  await expect(page.getByRole("option", { name: /^Text LARGE PRINT$/ })).toBeVisible();
+  if (shots) await page.screenshot({ path: `${shots}/cover-library-used.png` });
+
+  // Save it to My templates.
+  await page.getByRole("button", { name: "Browse template library" }).click();
+  await library.getByRole("tab", { name: /My templates/ }).click();
+  await library.getByLabel("Template name").fill("Seniors series");
+  await library.getByRole("button", { name: "Save current cover" }).click();
+  await expect(library.getByRole("status")).toContainText('Saved "Seniors series"');
+  await expect(library.getByRole("img", { name: "Seniors series preview" })).toBeVisible();
+  if (shots) await page.screenshot({ path: `${shots}/cover-library.png` });
+  await library.getByRole("button", { name: "Close", exact: true }).first().click();
+
+  // A second book, another trim size, gets the same design with its own title.
+  await newBook("Word Search for Seniors", "8.5x11");
+  await page.getByRole("button", { name: "Browse template library" }).click();
+  await library.getByRole("tab", { name: /My templates/ }).click();
+  await library.getByRole("button", { name: "Apply Seniors series" }).click();
+  await expect(page.getByText("Seniors series", { exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: /WORD SEARCH FOR SENIORS/ }).first()).toBeVisible();
+  await expect(page.getByRole("option", { name: /SUDOKU/ })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 test("settings show capabilities and test the connection", async ({ page }) => {
   await page.goto("/settings");
   const caps = page.getByRole("list", { name: "Capabilities" });
