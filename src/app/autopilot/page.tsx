@@ -1,21 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { aiStatus, type AiStatus } from "@/lib/ai/client";
-import { ART_CANDIDATES, AUTOPILOT_STEPS, runAutopilot, type AgentStep, type AutopilotResult } from "@/lib/agent/autopilot";
+import { AUTOPILOT_STEPS, runAutopilot, type AgentStep, type AutopilotResult } from "@/lib/agent/autopilot";
 import { imageStatus, type ImageStatus } from "@/lib/cover/artClient";
-import { TRIM_SIZES } from "@/lib/kdp/rules";
-import { BOOK_TYPES, type BookType } from "@/lib/schema/project";
+import type { Project } from "@/lib/schema/project";
 import { saveProject } from "@/lib/storage/db";
+import { LiveBuild } from "@/components/autopilot/LiveBuild";
+import { artEnabled, CostEstimate, EXAMPLES, resolveSetup, SetupForm, setupFromParams, type SetupState } from "@/components/autopilot/SetupForm";
 
-const EXAMPLES: { topic: string; audience: string; bookType: BookType; trimId: string }[] = [
-  { topic: "gratitude journal for nurses", audience: "nurses and healthcare workers", bookType: "journal", trimId: "6x9" },
-  { topic: "large print sudoku", audience: "seniors", bookType: "puzzle", trimId: "8.5x11" },
-  { topic: "ocean animals word search", audience: "kids ages 6-9", bookType: "puzzle", trimId: "8.5x11" },
-  { topic: "fishing log book", audience: "anglers", bookType: "log-book", trimId: "6x9" },
-];
 
 export default function AutopilotPage() {
   return (
@@ -27,47 +22,65 @@ export default function AutopilotPage() {
 
 function Autopilot() {
   const params = useSearchParams();
+  const router = useRouter();
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [images, setImages] = useState<ImageStatus | null>(null);
-  const [coverArt, setCoverArt] = useState(true);
-  const [topic, setTopic] = useState(params.get("topic") ?? "");
-  const [audience, setAudience] = useState(params.get("audience") ?? "");
-  const [bookType, setBookType] = useState<BookType>("journal");
-  const [trimId, setTrimId] = useState("6x9");
-  const [author, setAuthor] = useState("");
-  const [notes, setNotes] = useState(params.get("notes") ?? "");
+  const [setup, setSetup] = useState<SetupState>(() => setupFromParams(params));
   const [steps, setSteps] = useState<AgentStep[]>([]);
   const [result, setResult] = useState<AutopilotResult | null>(null);
+  const [preview, setPreview] = useState<{ project: Project; hasCover: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const autoStarted = useRef(false);
 
   useEffect(() => {
     aiStatus().then(setStatus).catch(() => setStatus(null));
     imageStatus().then(setImages).catch(() => setImages(null));
   }, []);
 
-  const start = async () => {
+  const start = async (thenReview = false) => {
     setError(null);
     setResult(null);
+    setPreview(null);
     setRunning(true);
     setSteps(AUTOPILOT_STEPS.map((s) => ({ ...s, status: "pending" })));
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    const { bookType, trimId } = resolveSetup(setup);
     try {
       const res = await runAutopilot(
-        { topic, audience, bookType, trimId, author: author || "Your Name", notes, coverArt: Boolean(images?.configured && coverArt) },
+        {
+          topic: setup.topic,
+          audience: setup.audience,
+          bookType,
+          trimId,
+          author: setup.author || "Your Name",
+          notes: setup.notes,
+          coverArt: artEnabled(setup, images),
+          pageTarget: setup.pageTarget,
+          style: setup.templateId || setup.paletteId ? { templateId: setup.templateId, paletteId: setup.paletteId } : undefined,
+        },
         (id, st, detail) => setSteps((prev) => prev.map((s) => (s.id === id ? { ...s, status: st, detail } : s))),
         ctrl.signal,
+        (project, stage) => setPreview({ project, hasCover: stage === "cover" || stage === "done" }),
       );
       await saveProject(res.project);
       setResult(res);
+      if (thenReview) router.push(`/projects/${res.project.id}#review`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setRunning(false);
     }
   };
+
+  // The one-screen start on the home page lands here with go=1: run once both statuses are known, then open Review & Publish.
+  useEffect(() => {
+    if (params.get("go") !== "1" || autoStarted.current || !status || !images || !setup.topic.trim()) return;
+    autoStarted.current = true;
+    void Promise.resolve().then(() => start(true));
+  });
 
   return (
     <div className="page">
@@ -82,80 +95,17 @@ function Autopilot() {
       <div className="split-aside">
         <div className="stack">
           <div className="card stack">
-            <div className="field">
-              <label>
-                What is the book about?
-                <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. gratitude journal for nurses" />
-              </label>
-            </div>
+            <SetupForm value={setup} onChange={setSetup} images={images} disabled={running} />
             <div className="chip-list" aria-label="Examples">
               {EXAMPLES.map((ex) => (
-                <button
-                  key={ex.topic}
-                  className="chip"
-                  onClick={() => {
-                    setTopic(ex.topic);
-                    setAudience(ex.audience);
-                    setBookType(ex.bookType);
-                    setTrimId(ex.trimId);
-                  }}
-                >
+                <button key={ex.topic} className="chip" disabled={running} onClick={() => setSetup((s) => ({ ...s, topic: ex.topic, audience: ex.audience, bookType: undefined, trimId: undefined }))}>
                   {ex.topic}
                 </button>
               ))}
             </div>
-            <div className="field-row">
-              <div className="field">
-                <label>
-                  Audience
-                  <input value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="who buys it?" />
-                </label>
-              </div>
-              <div className="field">
-                <label>
-                  Book type
-                  <select value={bookType} onChange={(e) => setBookType(e.target.value as BookType)}>
-                    {BOOK_TYPES.filter((t) => t.id !== "coloring" && t.id !== "other").map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="field">
-                <label>
-                  Trim
-                  <select value={trimId} onChange={(e) => setTrimId(e.target.value)}>
-                    {TRIM_SIZES.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="field">
-                <label>
-                  Author / pen name
-                  <input value={author} onChange={(e) => setAuthor(e.target.value)} />
-                </label>
-              </div>
-            </div>
-            <div className="field">
-              <label>
-                Notes (optional)
-                <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Tone, must-haves, things to avoid" />
-              </label>
-            </div>
-            {images?.configured && (
-              <label className="check">
-                <input type="checkbox" checked={coverArt} onChange={(e) => setCoverArt(e.target.checked)} />
-                Generate AI cover art ({ART_CANDIDATES} images with {images.model}; the best one is picked for the cover)
-              </label>
-            )}
+            <CostEstimate setup={setup} status={status} images={images} />
             <div className="row">
-              <button className="btn btn-primary" onClick={start} disabled={running || !topic.trim()}>
+              <button className="btn btn-primary" onClick={() => start()} disabled={running || !setup.topic.trim()}>
                 {running && <span className="spinner" />} {running ? "Working…" : "Run autopilot"}
               </button>
               {running && (
@@ -165,6 +115,13 @@ function Autopilot() {
               )}
             </div>
           </div>
+
+          {(running || preview) && !result && (
+            <div className="card stack">
+              <h2 style={{ margin: 0 }}>Your book so far</h2>
+              <LiveBuild project={preview?.project ?? null} hasCover={preview?.hasCover ?? false} />
+            </div>
+          )}
 
           {steps.length > 0 && (
             <div className="card stack">
@@ -187,6 +144,7 @@ function Autopilot() {
           {result && (
             <div className="card stack">
               <h2 style={{ margin: 0 }}>Draft ready for your review</h2>
+              <LiveBuild project={result.project} hasCover />
               <p style={{ margin: 0 }}>
                 <b>{result.project.metadata.title}</b>: {result.project.interior.pages.length} pages, preflight {result.report.passed}/{result.report.total}
                 {result.report.blocking ? `, ${result.report.blocking} blocking` : ""}.
@@ -252,10 +210,13 @@ function Autopilot() {
                 </details>
               )}
               <div className="notice notice-info">
-                Human checkpoint: review the interior and cover, edit the listing, and confirm the AI disclosure on the Listing tab before exporting.
+                Human checkpoint: flip through the pages, check the cover and listing, and confirm the AI disclosure on the Review &amp; Publish screen before exporting.
               </div>
               <div className="row">
-                <Link className="btn btn-primary" href={`/projects/${result.project.id}#interior`}>
+                <Link className="btn btn-primary" href={`/projects/${result.project.id}#review`}>
+                  Review &amp; Publish
+                </Link>
+                <Link className="btn" href={`/projects/${result.project.id}#interior`}>
                   Open in studio
                 </Link>
                 <Link className="btn" href={`/projects/${result.project.id}#quality`}>

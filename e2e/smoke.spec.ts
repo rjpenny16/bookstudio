@@ -93,6 +93,10 @@ test("autopilot drafts a puzzle book offline", async ({ page }) => {
   await expect(sections.filter({ hasText: /Answer key/ })).toHaveCount(1);
   await expect(page.getByRole("list", { name: "Quality review" }).getByRole("listitem").filter({ hasText: /^Rule checks: \d+ high/ })).toHaveCount(1);
   await expect(page.getByText("Check content for repeats & weak items")).toBeVisible();
+  // The finished draft shows its cover and pages, and the cost estimate said offline runs are free.
+  await expect(page.getByRole("img", { name: "Front cover (live)" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Pages so far" }).getByRole("listitem").first()).toBeVisible();
+  await expect(page.getByLabel("Cost estimate")).toContainText("no model calls");
   if (shots) await page.screenshot({ path: `${shots}/autopilot.png`, fullPage: true });
   await page.getByRole("link", { name: "Open in studio" }).click();
   await expect(page.getByRole("listbox", { name: "Pages" })).toBeVisible();
@@ -197,4 +201,87 @@ test("autopilot generates, picks and places AI cover art", async ({ page }) => {
   // Upscaling is only cosmetic: preflight measures the 512 px source, which is far too small for print.
   await expect(page.getByText(/Cover: image is \d+ DPI \(minimum 150/)).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test("one-click start builds a book and the Review & Publish screen exports it", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/");
+  await page.getByLabel("What is the book about?").fill("large print word search");
+  await page.getByLabel("Who is it for?").fill("seniors");
+  // Book type and trim are inferred from the words, with the reason shown.
+  const detected = page.getByLabel("Detected setup");
+  await expect(detected).toContainText("Puzzle book");
+  await expect(detected).toContainText('8.5" x 11"');
+  await expect(detected).toContainText("large print reads best");
+  await expect(page.getByLabel("Cost estimate")).toContainText("no model calls");
+  await page.getByText("Advanced").click();
+  await page.getByLabel("Pages", { exact: true }).fill("100");
+  await page.getByLabel("Author / pen name").fill("Ada Writer");
+  await expect(detected).toContainText("100 pages");
+  if (shots) await page.screenshot({ path: `${shots}/home.png`, fullPage: true });
+  await page.getByRole("button", { name: "Create my book" }).click();
+
+  // Autopilot runs by itself and opens the Review & Publish screen.
+  await expect(page).toHaveURL(/\/projects\/prj_\w+#review/, { timeout: 90_000 });
+  await expect(page.getByRole("tab", { name: "Review & Publish" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("100 pages ·")).toBeVisible();
+  await expect(page.getByRole("img", { name: "Front cover" })).toBeVisible();
+
+  // Flip through a section.
+  const sections = page.getByRole("tablist", { name: "Book sections" });
+  await sections.getByRole("tab", { name: /^Warm-Up \d+$/ }).click();
+  await expect(page.getByText(/^Warm-Up: 1 of \d+ · book page \d+$/)).toBeVisible();
+  await page.getByRole("button", { name: "Next page" }).click();
+  await expect(page.getByText(/^Warm-Up: 2 of \d+/)).toBeVisible();
+
+  // Regenerate only this section, harder.
+  const before = await page.getByRole("img", { name: /^Book page/ }).getAttribute("alt");
+  await page.getByLabel('Feedback for the "Warm-Up"').fill("harder puzzles");
+  await page.getByRole("button", { name: 'Regenerate "Warm-Up"' }).click();
+  await expect(page.getByRole("status").filter({ hasText: /Difficulty: easy → medium/ })).toBeVisible();
+  expect(await page.getByRole("img", { name: /^Book page/ }).getAttribute("alt")).toBe(before);
+  await expect(page.getByText("100 pages ·")).toBeVisible();
+
+  // Restyle the cover and rewrite the listing from feedback (offline heuristics).
+  await page.getByLabel("Feedback for the cover").fill("more playful and bright");
+  await page.getByRole("button", { name: "Regenerate cover" }).click();
+  await expect(page.getByText(/Playful template, Sunny palette/)).toBeVisible();
+  await page.getByLabel("Feedback for the listing").fill("less formal");
+  await page.getByRole("button", { name: "Regenerate listing" }).click();
+  await expect(page.getByRole("status").filter({ hasText: /title page and cover were updated|matched the current listing/ })).toBeVisible();
+
+  // Inline listing edit, then the scorecard: disclosure first.
+  await page.getByLabel("Keyword 7").fill("big print puzzle gift");
+  const card = page.getByRole("list", { name: "Scorecard" });
+  await expect(card.getByRole("listitem").filter({ hasText: "AI disclosure" })).toContainText("Needs your confirmation");
+  await page.getByLabel(/These answers are correct/).check();
+  await expect(card.getByRole("listitem").filter({ hasText: "AI disclosure" })).toContainText("Confirmed");
+  await expect(page.getByText("Ready to export")).toBeVisible();
+  if (shots) await page.screenshot({ path: `${shots}/review.png`, fullPage: true });
+
+  // Export from the same screen.
+  await page.getByLabel(/I reviewed the cover, pages and listing/).check();
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: /Export KDP package/ }).click()]);
+  const zip = await JSZip.loadAsync(await readFile((await download.path())!));
+  const meta = JSON.parse(await zip.file("metadata.json")!.async("string"));
+  expect(meta.print.pageCount).toBe(100);
+  expect(zip.file("interior.pdf")).not.toBeNull();
+
+  // The inline edit was saved.
+  await page.reload();
+  await expect(page.getByLabel("Keyword 7")).toHaveValue("big print puzzle gift");
+  expect(errors).toEqual([]);
+});
+
+test("settings show capabilities and test the connection", async ({ page }) => {
+  await page.goto("/settings");
+  const caps = page.getByRole("list", { name: "Capabilities" });
+  await expect(caps.getByRole("listitem", { name: /Writing/ })).toContainText("offline templates");
+  await expect(caps.getByRole("listitem", { name: /AI cover art/ })).toContainText("off");
+  await caps.getByRole("listitem", { name: /Writing/ }).getByRole("button", { name: "Test connection" }).click();
+  await expect(page.getByRole("status").filter({ hasText: /Connected: Offline mode/ })).toBeVisible();
+  await caps.getByRole("listitem", { name: /Vision/ }).getByRole("button", { name: "Test connection" }).click();
+  await expect(page.getByRole("status").filter({ hasText: /Failed: Offline mode can't look at images/ })).toBeVisible();
+  await expect(page.getByText(/never sent to or stored in this browser/)).toBeVisible();
 });

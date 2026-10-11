@@ -14,6 +14,9 @@ Brief ──► Interior generators ──► Cover templates ──► Listing 
 
 | Area | What you get |
 |---|---|
+| **One-screen start** | The home page asks for a niche and a reader. Book type and trim size are inferred from the words (and shown with the reason); page count and cover style are left to the brief. An Advanced section overrides any of them. Before the run you see an estimate of the model calls, tokens and images it will use. |
+| **Live build** | While autopilot runs, page thumbnails appear as soon as the interior is laid out, then the front cover once it is designed. |
+| **Review & Publish** | One screen, opened after autopilot, with everything needed to ship: the cover and its art candidates, a page flip-through grouped by section, the listing (editable inline), a ready-to-publish scorecard out of 100 (preflight, content, cover & pages, listing, disclosure) with one-click fixes, the AI disclosure confirmation and the Export button. Each section, the cover and the listing has a **Regenerate with feedback** box ("harder puzzles", "more playful", "less formal") that reruns only that part: a section keeps its page count and answer key, a cover restyles (or gets new art when it uses AI art), and a new listing updates the title page and cover to match. Undo brings back the previous version. The other tabs stay for detailed editing. |
 | **Project setup** | KDP paperback presets: 17 trim sizes, white/cream paper, B&W/standard/premium color, bleed. Spine width, cover size, gutter and safe zones are derived from the spec, never typed by hand. |
 | **Studio** | Fabric.js canvas over a renderer-neutral document model. Text, shapes, lines, images (PNG/JPG/WebP/SVG), procedural patterns. Layers, lock, arrange, snapping, undo/redo, and live trim/bleed/gutter/spine/barcode guides. |
 | **Accessibility** | Every canvas action is also available as ordinary form controls: a layer listbox, numeric X/Y/W/H in inches, a text field, and keyboard nudge, delete and duplicate. |
@@ -43,6 +46,8 @@ Or with Docker:
 ```bash
 docker compose up --build    # http://localhost:3000
 ```
+
+**Settings** shows which capabilities are active (writing, vision review, cover art) and has a **Test connection** button for each. The tests make one tiny request; the cover art test only looks up the image model and generates nothing. Keys stay in the server's environment variables and never reach the browser.
 
 Projects, research boards and sales imports are stored **in your browser** (IndexedDB). Export them from **Settings** or from a project's **Export** tab. Only AI requests reach the server.
 
@@ -81,7 +86,7 @@ src/
 │   ├── render/        pdf-lib print renderer, canvas preview renderer, shared text layout & patterns
 │   ├── preflight/     Checks, AI-usage detection from provenance, deterministic fixes
 │   ├── ai/            Task schemas & prompts, providers (Anthropic / Ollama / offline), browser client
-│   ├── agent/         Autopilot workflow (model calls inside a deterministic pipeline)
+│   ├── agent/         Autopilot workflow (model calls inside a deterministic pipeline), setup inference, run estimate, regenerate-with-feedback
 │   ├── export/        KDP package builder (zip), metadata/provenance/license manifests
 │   ├── research/      CSV import, rank→sales estimates with intervals, niche scoring, sales reports
 │   └── storage/       IndexedDB persistence, zustand store with undo/redo and cover reflow
@@ -104,7 +109,7 @@ npm run typecheck
 npm run lint
 npm test               # unit tests: KDP math, puzzles, preflight + fixes, PDF rendering, quality checks
 npm run build
-npx playwright test    # end-to-end: create → edit → quality → preflight → export; autopilot; visual review (mocked model)
+npx playwright test    # end-to-end: create → edit → quality → preflight → export; one-click start → Review & Publish → regenerate → export; autopilot; visual review and cover art (mocked); settings
 ```
 
 The e2e suite starts the production server itself (`npm start`), so run `npm run build` first. If your Playwright version doesn't match a locally installed Chromium, set `PW_CHROMIUM_PATH` to the browser executable.

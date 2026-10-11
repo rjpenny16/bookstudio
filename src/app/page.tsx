@@ -9,6 +9,9 @@ import type { Project } from "@/lib/schema/project";
 import { deleteProject, listProjects, loadProject, saveProject, type ProjectSummary } from "@/lib/storage/db";
 import { newId } from "@/lib/util/ids";
 import { PageThumb } from "@/components/workspace/PageThumb";
+import { CostEstimate, emptySetup, EXAMPLES, SetupForm, setupToParams, type SetupState } from "@/components/autopilot/SetupForm";
+import { aiStatus, type AiStatus } from "@/lib/ai/client";
+import { imageStatus, type ImageStatus } from "@/lib/cover/artClient";
 
 function CoverThumb({ id }: { id: string }) {
   const [p, setP] = useState<Project | null>(null);
@@ -25,10 +28,15 @@ export default function Dashboard() {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [setup, setSetup] = useState<SetupState>(emptySetup);
+  const [status, setStatus] = useState<AiStatus | null>(null);
+  const [images, setImages] = useState<ImageStatus | null>(null);
 
   const refresh = () => listProjects().then(setProjects);
   useEffect(() => {
     refresh();
+    aiStatus().then(setStatus).catch(() => setStatus(null));
+    imageStatus().then(setImages).catch(() => setImages(null));
   }, []);
 
   const importFile = async (file: File | undefined) => {
@@ -52,16 +60,48 @@ export default function Dashboard() {
           <p>Research a niche, generate an interior and cover, write the listing, pass KDP preflight and download a ready-to-upload package.</p>
         </div>
       </div>
+      <form
+        className="card stack quick-start"
+        aria-labelledby="quick-start"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!setup.topic.trim()) return;
+          const q = setupToParams(setup);
+          q.set("go", "1");
+          router.push(`/autopilot?${q}`);
+        }}
+      >
+        <div>
+          <h2 id="quick-start" style={{ margin: 0 }}>
+            Make a book
+          </h2>
+          <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
+            Name the niche and the reader. Autopilot plans the sections, writes the content, designs the cover and listing, checks everything against KDP&apos;s rules, and stops for your review. It never publishes for you.
+          </p>
+        </div>
+        <SetupForm value={setup} onChange={setSetup} images={images} />
+        <div className="chip-list" aria-label="Examples">
+          {EXAMPLES.map((ex) => (
+            <button type="button" key={ex.topic} className="chip" onClick={() => setSetup((s) => ({ ...s, topic: ex.topic, audience: ex.audience, bookType: undefined, trimId: undefined }))}>
+              {ex.topic}
+            </button>
+          ))}
+        </div>
+        <CostEstimate setup={setup} status={status} images={images} />
+        <div className="row">
+          <button className="btn btn-primary" type="submit" disabled={!setup.topic.trim()}>
+            Create my book
+          </button>
+          <span className="muted" style={{ fontSize: 13 }}>
+            {status ? `${status.provider === "offline" ? "Offline templates" : status.model}${images?.configured ? ` · cover art by ${images.model}` : ""}` : ""}
+          </span>
+        </div>
+      </form>
       <div className="hero-actions">
-        <Link href="/autopilot" className="action-card">
-          <span className="kicker">AI Autopilot</span>
-          <strong>Describe a book, get a draft</strong>
-          <span>Brief → interior → listing → cover → preflight, with every step editable and logged.</span>
-        </Link>
         <Link href="/new" className="action-card">
-          <span className="kicker">Studio</span>
+          <span className="kicker">Blank project</span>
           <strong>Start from a KDP preset</strong>
-          <span>Pick trim, paper and an interior generator. Bleed, spine and margins are set for you.</span>
+          <span>Pick trim, paper and an interior generator, and build the book yourself. Bleed, spine and margins are set for you.</span>
         </Link>
         <button className="action-card" onClick={() => fileRef.current?.click()}>
           <span className="kicker">Import</span>
@@ -76,7 +116,7 @@ export default function Dashboard() {
         <p className="muted">Loading…</p>
       ) : projects.length === 0 ? (
         <div className="empty">
-          <p>No books yet. Start with the Autopilot or a KDP preset.</p>
+          <p>No books yet. Describe one above, or start from a KDP preset.</p>
         </div>
       ) : (
         <div className="project-grid">

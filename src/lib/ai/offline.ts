@@ -1,4 +1,5 @@
 import { recipeBlueprint } from "@/lib/agent/recipes";
+import { restyleOffline } from "@/lib/cover/restyle";
 import { nearDuplicate } from "@/lib/quality/content";
 import { AFFIRMATION_BANK, PROMPT_BANK, SAYING_BANK, THEME_BANK } from "./offlineBanks";
 import type { TaskInput, TaskName, TaskOutput } from "./tasks";
@@ -153,6 +154,10 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
     }
     case "cover-art-pick":
       return { choice: 1, reason: "Offline mode can't look at images; picked by measured title contrast instead.", problems: [] } as TaskOutput<T>;
+    case "cover-style": {
+      const i = input as TaskInput<"cover-style">;
+      return restyleOffline(i.feedback, i.currentTemplate, i.currentPalette) as TaskOutput<T>;
+    }
     case "visual-review":
       return { score: 0, summary: "Offline mode can't look at images; only the rule-based design checks ran.", thumbnailReadable: true, findings: [] } as TaskOutput<T>;
   }

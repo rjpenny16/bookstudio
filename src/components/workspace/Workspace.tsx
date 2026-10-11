@@ -13,10 +13,12 @@ import { InteriorTab } from "./InteriorTab";
 import { ListingTab } from "./ListingTab";
 import { PreflightTab } from "./PreflightTab";
 import { QualityTab } from "./QualityTab";
+import { ReviewTab } from "./ReviewTab";
 
-export type TabId = "brief" | "interior" | "cover" | "listing" | "quality" | "preflight" | "export";
+export type TabId = "review" | "brief" | "interior" | "cover" | "listing" | "quality" | "preflight" | "export";
 
 const TABS: { id: TabId; label: string }[] = [
+  { id: "review", label: "Review & Publish" },
   { id: "brief", label: "Brief" },
   { id: "interior", label: "Interior" },
   { id: "cover", label: "Cover" },
@@ -164,6 +166,7 @@ export function Workspace() {
         </div>
       </div>
       <section className="ws-body" role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+        {tab === "review" && report && <ReviewTab report={report} onGo={selectTab} />}
         {tab === "brief" && <BriefTab />}
         {tab === "interior" && <InteriorTab focus={focus} setFocus={setFocus} />}
         {tab === "cover" && <CoverTab focusId={focus.elementId} />}
