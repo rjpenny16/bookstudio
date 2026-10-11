@@ -195,6 +195,15 @@ dialog.modal::backdrop { background: rgba(20, 18, 15, 0.45); }
 .modal-head { padding: 16px 20px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
 .modal-body { padding: 16px 20px; overflow: auto; max-height: calc(100vh - 200px); }
 .modal-foot { padding: 12px 20px; border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; }
+dialog.modal-wide { width: min(1080px, calc(100vw - 32px)); }
+
+/* ---------- cover template library ---------- */
+.template-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px; }
+.template-card { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.template-thumb { aspect-ratio: var(--ratio, 0.66); display: grid; place-items: center; background: var(--panel-2); border-radius: 4px; overflow: hidden; box-shadow: var(--shadow); font-size: 12px; }
+.template-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.template-current { display: flex; gap: 10px; align-items: center; }
+.template-current img { width: 48px; border-radius: 3px; box-shadow: var(--shadow); }
 
 /* ---------- dashboard ---------- */
 .hero-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-bottom: 28px; }

@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { aiStatus, type AiStatus } from "@/lib/ai/client";
 import { canRegenerate } from "@/lib/agent/regenerate";
 import { coverSettings, regenerateCoverWithAi, regenerateListingWithAi, regenerateSectionWithAi, type Regenerated } from "@/lib/agent/regenerateClient";
-import { ART_COVER_TEMPLATES, COVER_TEMPLATES, PALETTES } from "@/lib/cover/templates";
+import { isSavedTemplateId } from "@/lib/cover/library";
+import { PALETTES, templateInfo } from "@/lib/cover/templates";
 import { designCover } from "@/lib/cover/artClient";
 import { downloadPackage } from "@/lib/export/client";
 import { coverGeometry, interiorGeometry } from "@/lib/kdp/geometry";
@@ -96,7 +97,7 @@ export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (ta
   const usage = aiUsage(project);
   const listingReview = quality.reviews.listing;
   const candidates = project.coverArt?.candidates ?? [];
-  const templateName = [...COVER_TEMPLATES, ...ART_COVER_TEMPLATES].find((t) => t.id === project.cover.templateId)?.name ?? "custom";
+  const templateName = isSavedTemplateId(project.cover.templateId) ? "saved" : (templateInfo(project.cover.templateId)?.name ?? "custom");
   const paletteName = PALETTES.find((p) => p.id === project.cover.paletteId)?.name;
 
   /** Run one action at a time; a regenerated project replaces the current one (undo brings the old one back). */

@@ -1,8 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { designCover } from "@/lib/cover/artClient";
-import { ART_COVER_TEMPLATES, COVER_TEMPLATES, PALETTES } from "@/lib/cover/templates";
+import { coverBadge } from "@/lib/cover/inside";
+import { isSavedTemplateId, SAVED_TEMPLATE_PREFIX, type SavedCoverTemplate } from "@/lib/cover/library";
+import { PALETTES, templateInfo } from "@/lib/cover/templates";
+import { getCoverTemplate } from "@/lib/storage/coverTemplates";
 import { coverGeometry } from "@/lib/kdp/geometry";
 import type { Project } from "@/lib/schema/project";
 import { useProjectStore } from "@/lib/storage/store";
@@ -10,6 +13,7 @@ import { ptToIn, round } from "@/lib/util/ids";
 import type { Guide } from "@/components/editor/CanvasEditor";
 import { ElementStudio } from "@/components/editor/ElementStudio";
 import { CoverArtPanel } from "./CoverArtPanel";
+import { TemplateLibraryDialog } from "./TemplateLibrary";
 
 export function firstParagraph(s: string, max = 420): string {
   const p = s.split(/\n\s*\n/)[0]?.trim() ?? "";
@@ -26,9 +30,20 @@ export function CoverTab({ focusId }: { focusId: string | null }) {
   const [thumbs, setThumbs] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const hasArt = Boolean(project.coverArt?.candidates.length);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [saved, setSaved] = useState<SavedCoverTemplate | null>(null);
+  /** Badge text; undefined follows the book (e.g. its puzzle count). */
+  const [badge, setBadge] = useState<string | undefined>(project.cover.badge);
+  const autoBadge = coverBadge(project);
   const n = project.interior.pages.length;
   const cg = useMemo(() => coverGeometry(project.spec, n), [project.spec, n]);
+
+  // A cover built from a saved template rebuilds from that template.
+  useEffect(() => {
+    if (!isSavedTemplateId(templateId) || saved?.id === templateId.slice(SAVED_TEMPLATE_PREFIX.length)) return;
+    getCoverTemplate(templateId.slice(SAVED_TEMPLATE_PREFIX.length)).then((t) => setSaved(t ?? null));
+  }, [templateId, saved]);
 
   const [prevFocus, setPrevFocus] = useState(focusId);
   if (focusId !== prevFocus) {
@@ -55,19 +70,41 @@ export function CoverTab({ focusId }: { focusId: string | null }) {
     return { paper, world: { x: -pad, y: -pad, width: cg.width + pad * 2, height: cg.height + pad * 2 } };
   }, [cg]);
 
-  /** Lay out the cover; `candidateId` puts that artwork on it (switching to its art layout if needed). */
-  const rebuild = async (candidateId?: string) => {
+  /**
+   * Lay out the cover. `candidateId` puts that artwork on it (switching to its
+   * art layout if needed); `use` picks a built-in or saved template first.
+   */
+  const rebuild = async (candidateId?: string, use?: { templateId: string } | { saved: SavedCoverTemplate }) => {
     const current = useProjectStore.getState().project!;
     const candidate = current.coverArt?.candidates.find((c) => c.id === (candidateId ?? current.coverArt?.chosenId));
+    const chosen = use && "saved" in use ? `${SAVED_TEMPLATE_PREFIX}${use.saved.id}` : use?.templateId;
     // Art is generated for one layout, so using a candidate switches to it.
-    const tpl = candidateId && candidate ? candidate.layout : templateId;
+    const tpl = candidateId && candidate ? candidate.layout : (chosen ?? templateId);
     if (tpl !== templateId) setTemplateId(tpl);
+    const savedTpl = use && "saved" in use ? use.saved : isSavedTemplateId(tpl) ? saved : null;
+    if (use && "saved" in use) setSaved(use.saved);
     const palette = PALETTES.find((p) => p.id === paletteId) ?? PALETTES[0];
     const aiListing = current.modelRuns.some((r) => r.outputs.some((o) => o.startsWith("listing.")));
-    setBusy(true);
     setError(null);
+    setWarnings([]);
+    if (isSavedTemplateId(tpl) && !savedTpl) {
+      setError("That saved template is no longer in your library. Pick another design.");
+      return;
+    }
+    setBusy(true);
     try {
-      const next = await designCover(current, { templateId: tpl, palette, backText: firstParagraph(current.metadata.description), candidateId: candidate?.id, inside, thumbs, aiListing });
+      const next = await designCover(current, {
+        templateId: tpl,
+        palette,
+        backText: firstParagraph(current.metadata.description),
+        candidateId: candidate?.id,
+        inside,
+        thumbs,
+        aiListing,
+        badge,
+        ...(savedTpl ? { saved: savedTpl } : {}),
+        onWarnings: setWarnings,
+      });
       applyCover(next);
       setSelected(null);
     } catch (e) {
@@ -91,27 +128,34 @@ export function CoverTab({ focusId }: { focusId: string | null }) {
           {round(ptToIn(cg.width), 3)}" × {round(ptToIn(cg.height), 3)}"
         </span>
       </div>
-      <div className="field">
-        <label>
-          Template
-          <select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
-            <optgroup label="Vector templates">
-              {COVER_TEMPLATES.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}: {t.description}
-                </option>
-              ))}
-            </optgroup>
-            <optgroup label={hasArt ? "With cover art" : "With cover art (generate art first)"}>
-              {ART_COVER_TEMPLATES.map((t) => (
-                <option key={t.id} value={t.id} disabled={!hasArt}>
-                  {t.name}: {t.description}
-                </option>
-              ))}
-            </optgroup>
-          </select>
-        </label>
+      <div className="template-current">
+        <div style={{ flex: 1 }}>
+          <small className="muted">Template</small>
+          <div>
+            <strong>{isSavedTemplateId(templateId) ? (saved?.name ?? "Saved template") : (templateInfo(templateId)?.name ?? templateId)}</strong>
+            {isSavedTemplateId(templateId) && <span className="badge" style={{ marginLeft: 6 }}>My template</span>}
+          </div>
+        </div>
+        <button className="btn btn-sm" onClick={() => setLibraryOpen(true)}>
+          Browse template library
+        </button>
       </div>
+      <TemplateLibraryDialog
+        open={libraryOpen}
+        onClose={() => setLibraryOpen(false)}
+        project={project}
+        palette={PALETTES.find((p) => p.id === paletteId) ?? PALETTES[0]}
+        onPalette={setPaletteId}
+        busy={busy}
+        onUse={(id) => {
+          setLibraryOpen(false);
+          rebuild(undefined, { templateId: id });
+        }}
+        onUseSaved={(t) => {
+          setLibraryOpen(false);
+          rebuild(undefined, { saved: t });
+        }}
+      />
       <div className="chip-list" role="radiogroup" aria-label="Palette">
         {PALETTES.map((p) => (
           <button key={p.id} className="chip" role="radio" aria-checked={paletteId === p.id} onClick={() => setPaletteId(p.id)} style={{ borderColor: paletteId === p.id ? "var(--accent)" : undefined }}>
@@ -120,6 +164,13 @@ export function CoverTab({ focusId }: { focusId: string | null }) {
           </button>
         ))}
       </div>
+      {templateId === "series" && <small className="muted">The series name and volume number come from the listing&apos;s Series field, e.g. &ldquo;Brain Breaks, Book 2&rdquo;.</small>}
+      {(isSavedTemplateId(templateId) || templateInfo(templateId)?.usesBadge) && (
+        <label className="field">
+          Badge text
+          <input value={badge ?? autoBadge} placeholder="e.g. 200 puzzles, Large print" maxLength={28} onChange={(e) => setBadge(e.target.value)} />
+        </label>
+      )}
       <div className="row">
         <label className="check">
           <input type="checkbox" checked={inside} onChange={(e) => setInside(e.target.checked)} />
@@ -137,6 +188,11 @@ export function CoverTab({ focusId }: { focusId: string | null }) {
         Uses title, subtitle, author and the first paragraph of the description. Replaces the current cover design (undo is available).
       </p>
       {error && <div className="notice notice-fail">{error}</div>}
+      {warnings.map((w) => (
+        <div key={w} className="notice notice-warn">
+          {w}
+        </div>
+      ))}
       <CoverArtPanel onUse={(id) => rebuild(id)} busy={busy} palette={PALETTES.find((p) => p.id === paletteId) ?? PALETTES[0]} />
       <div className="row">
         <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
