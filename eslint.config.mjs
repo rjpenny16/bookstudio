@@ -4,7 +4,7 @@ import typescript from "eslint-config-next/typescript";
 const config = [
   ...webVitals,
   ...typescript,
-  { ignores: [".next/**", "node_modules/**", "next-env.d.ts"] },
+  { ignores: [".next/**", "node_modules/**", "next-env.d.ts", "samples/**"] },
   {
     rules: {
       // Inch marks (6" x 9") are everywhere in print UIs.

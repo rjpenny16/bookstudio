@@ -732,7 +732,7 @@ function scramblePages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "word-scr
 }
 
 /** Hints per difficulty: easier puzzles reveal more of the most common letters. */
-const CRYPTO_HINTS = { easy: 4, medium: 2, hard: 0 } as const;
+export const CRYPTO_HINTS = { easy: 4, medium: 2, hard: 0 } as const;
 
 function cryptogramBlock(c: Cryptogram, x: number, y: number, width: number, maxH: number, solved: boolean): { els: Element[]; height: number } {
   // Each letter gets a cell: a blank (or the answer) on top, the cipher letter underneath.
