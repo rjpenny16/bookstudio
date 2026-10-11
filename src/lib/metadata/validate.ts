@@ -1,3 +1,4 @@
+import { matchCategory } from "@/lib/kdp/categories";
 import { LISTING, PROHIBITED_LISTING_TERMS } from "@/lib/kdp/rules";
 import type { BookType, ListingMetadata } from "@/lib/schema/project";
 
@@ -52,6 +53,8 @@ export function validateListing(m: ListingMetadata, bookType?: BookType): Listin
   if (repeated.length) warnings.push(`Keywords that only repeat title words waste a slot: ${repeated.join(", ")}.`);
   if (m.categories.length > LISTING.maxCategories) errors.push(`KDP allows up to ${LISTING.maxCategories} categories.`);
   if (m.categories.length === 0) warnings.push("Pick up to 3 categories when you publish.");
+  const unknown = m.categories.filter((c) => c.trim() && !matchCategory(c));
+  if (unknown.length) warnings.push(`Not a known Amazon Books category: ${unknown.join(", ")}.`);
   if (bookType && (bookType === "puzzle" || bookType === "coloring") && m.isbn.kind === "none") warnings.push("Puzzle and coloring books are not low-content; KDP will ask for an ISBN (free KDP ISBN is fine).");
   return { errors, warnings, cleanable };
 }

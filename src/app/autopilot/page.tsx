@@ -71,7 +71,7 @@ function Autopilot() {
         <div>
           <h1>AI Autopilot</h1>
           <p>
-            Describe the book. The agent writes a brief, plans the sections (how-to page, difficulty ramp, contents, answer keys), writes their content, builds the interior with deterministic generators, drafts the listing, designs the cover, runs KDP preflight and repairs what it safely can. It stops for your approval and never publishes for you.
+            Describe the book. The agent writes a brief, plans the sections (how-to page, difficulty ramp, contents, answer keys), writes their content and replaces anything repeated or weak, builds the interior with deterministic generators, drafts and critiques the listing, designs the cover and has the model look at it, runs KDP preflight and repairs what it safely can. It stops for your approval and never publishes for you.
           </p>
         </div>
       </div>
@@ -198,6 +198,24 @@ function Autopilot() {
                   </ul>
                 </div>
               )}
+              <div>
+                <strong>Quality review</strong>
+                <ul aria-label="Quality review" style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                  <li>
+                    Rule checks: {result.quality.counts.high} high, {result.quality.counts.medium} medium, {result.quality.counts.low} low
+                  </li>
+                  {result.quality.reviews.listing && result.quality.reviews.listing.provider !== "offline" && (
+                    <li>
+                      Listing critique: {result.quality.reviews.listing.score}/10 · {result.quality.reviews.listing.summary}
+                    </li>
+                  )}
+                  {result.quality.reviews.visual && (
+                    <li>
+                      Cover &amp; pages: {result.quality.reviews.visual.score}/10{result.quality.reviews.visual.thumbnailReadable ? "" : " · title hard to read as a thumbnail"} · {result.quality.reviews.visual.summary}
+                    </li>
+                  )}
+                </ul>
+              </div>
               {result.notes.length > 0 && (
                 <div className="notice notice-info">
                   {result.notes.map((n, i) => (
@@ -221,6 +239,9 @@ function Autopilot() {
               <div className="row">
                 <Link className="btn btn-primary" href={`/projects/${result.project.id}#interior`}>
                   Open in studio
+                </Link>
+                <Link className="btn" href={`/projects/${result.project.id}#quality`}>
+                  Quality review
                 </Link>
                 <Link className="btn" href={`/projects/${result.project.id}#listing`}>
                   Review listing

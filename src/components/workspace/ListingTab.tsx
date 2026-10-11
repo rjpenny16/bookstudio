@@ -2,29 +2,15 @@
 
 import { useState } from "react";
 import { callAi, isModelOutput, modelRun } from "@/lib/ai/client";
-import { findTrim, royaltyUsd } from "@/lib/kdp/geometry";
+import { KDP_CATEGORIES, matchCategory, resolveCategories, suggestCategories } from "@/lib/kdp/categories";
+import { royaltyUsd } from "@/lib/kdp/geometry";
 import { LISTING } from "@/lib/kdp/rules";
 import { cleanKeywords, validateListing } from "@/lib/metadata/validate";
 import { aiUsage } from "@/lib/preflight/aiUsage";
+import { describeInterior, listingFacts, trimLabel } from "@/lib/quality";
 import { isLowContent, type AiDisclosureLevel } from "@/lib/schema/project";
 import { useProjectStore } from "@/lib/storage/store";
 
-const CATEGORY_SUGGESTIONS = [
-  "Books > Self-Help > Journal Writing",
-  "Books > Self-Help > Personal Transformation",
-  "Books > Health, Fitness & Dieting > Mental Health > Happiness",
-  "Books > Business & Money > Skills > Time Management",
-  "Books > Crafts, Hobbies & Home > Crafts & Hobbies > Journaling",
-  "Books > Humor & Entertainment > Puzzles & Games > Sudoku",
-  "Books > Humor & Entertainment > Puzzles & Games > Word Search",
-  "Books > Humor & Entertainment > Puzzles & Games > Mazes",
-  "Books > Humor & Entertainment > Puzzles & Games > Logic & Brain Teasers",
-  "Books > Children's Books > Activities, Crafts & Games > Activity Books",
-  "Books > Children's Books > Activities, Crafts & Games > Coloring Books",
-  "Books > Crafts, Hobbies & Home > Coloring Books for Grown-Ups",
-  "Books > Arts & Photography > Music > Songbooks",
-  "Books > Education & Teaching > Schools & Teaching > Early Childhood Education",
-];
 
 function trimTrailing(xs: string[]): string[] {
   const out = [...xs];
@@ -53,6 +39,10 @@ export function ListingTab() {
       fn(d.metadata);
     });
 
+  const suggested = suggestCategories(listingFacts(project), 12);
+  // Categories that fit this book first, then the rest of the known list.
+  const categoryList = [...suggested, ...KDP_CATEGORIES.map((c) => c.path).filter((c) => !suggested.includes(c))];
+
   const generate = async () => {
     setBusy(true);
     setNote(null);
@@ -64,10 +54,11 @@ export function ListingTab() {
         angle: project.brief.angle,
         workingTitle: m.title || project.name,
         author: m.author,
-        interiorSummary: project.brief.interiorPlan || describeInterior(),
+        interiorSummary: describeInterior(project),
         pageCount: n,
-        trim: findTrim(project.spec.trimId)?.label ?? `${project.spec.widthIn}x${project.spec.heightIn}`,
+        trim: trimLabel(project),
         keywordIdeas: project.brief.keywordIdeas.length ? project.brief.keywordIdeas : m.keywords,
+        categoryOptions: suggested,
       });
       const L = res.output;
       update((d) => {
@@ -75,7 +66,8 @@ export function ListingTab() {
         d.metadata.subtitle = L.subtitle;
         d.metadata.description = L.description;
         d.metadata.keywords = cleanKeywords(L.keywords);
-        if (L.categories.length) d.metadata.categories = L.categories.slice(0, 3);
+        const cats = resolveCategories(L.categories, suggested).categories;
+        if (cats.length) d.metadata.categories = cats;
         if (isModelOutput(res.meta)) d.modelRuns.push(modelRun(res.meta, ["listing.title", "listing.description", "listing.keywords"]));
       });
       setNote({ kind: "info", text: `Drafted by ${res.meta.provider} (${res.meta.model}). Review every field before publishing. Suggested price: $${L.suggestedPriceUsd.toFixed(2)}.` });
@@ -86,14 +78,6 @@ export function ListingTab() {
     }
   };
 
-  function describeInterior() {
-    const kinds = new Map<string, number>();
-    for (const p of project.interior.pages) {
-      const k = p.generator?.kind ?? "custom";
-      kinds.set(k, (kinds.get(k) ?? 0) + 1);
-    }
-    return [...kinds.entries()].map(([k, c]) => `${c} ${k.replace(/-/g, " ")} pages`).join(", ");
-  }
 
   const keywords = [...m.keywords, ...Array(Math.max(0, LISTING.maxKeywords - m.keywords.length)).fill("")].slice(0, LISTING.maxKeywords);
   const disclosure = (key: "text" | "images" | "translation", label: string, detected: boolean) => (
@@ -200,7 +184,7 @@ export function ListingTab() {
             ))}
           </div>
           <datalist id="kdp-categories">
-            {CATEGORY_SUGGESTIONS.map((c) => (
+            {categoryList.map((c) => (
               <option key={c} value={c} />
             ))}
           </datalist>
@@ -224,7 +208,12 @@ export function ListingTab() {
               </div>
             ))}
           </div>
-          <p className="field-hint">Category paths are suggestions; pick the closest match in KDP&apos;s category browser when you publish.</p>
+          {m.categories.some((c) => c.trim() && !matchCategory(c)) && (
+            <div className="notice notice-warn">
+              Not a known Amazon Books category: {m.categories.filter((c) => c.trim() && !matchCategory(c)).join(", ")}. Pick one from the list.
+            </div>
+          )}
+          <p className="field-hint">The list holds real Amazon Books categories, best fits first. KDP&apos;s picker shows them as e.g. &quot;Humor &amp; Entertainment › Puzzles &amp; Games › Sudoku&quot;; confirm the path there when you publish.</p>
         </div>
 
         <div className="card stack">

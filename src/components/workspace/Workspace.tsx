@@ -12,14 +12,16 @@ import { ExportTab } from "./ExportTab";
 import { InteriorTab } from "./InteriorTab";
 import { ListingTab } from "./ListingTab";
 import { PreflightTab } from "./PreflightTab";
+import { QualityTab } from "./QualityTab";
 
-export type TabId = "brief" | "interior" | "cover" | "listing" | "preflight" | "export";
+export type TabId = "brief" | "interior" | "cover" | "listing" | "quality" | "preflight" | "export";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "brief", label: "Brief" },
   { id: "interior", label: "Interior" },
   { id: "cover", label: "Cover" },
   { id: "listing", label: "Listing" },
+  { id: "quality", label: "Quality" },
   { id: "preflight", label: "Preflight" },
   { id: "export", label: "Export" },
 ];
@@ -166,6 +168,7 @@ export function Workspace() {
         {tab === "interior" && <InteriorTab focus={focus} setFocus={setFocus} />}
         {tab === "cover" && <CoverTab focusId={focus.elementId} />}
         {tab === "listing" && <ListingTab />}
+        {tab === "quality" && <QualityTab onGo={selectTab} />}
         {tab === "preflight" && report && <PreflightTab report={report} onGo={goToIssue} />}
         {tab === "export" && report && <ExportTab report={report} onGoPreflight={() => selectTab("preflight")} />}
       </section>

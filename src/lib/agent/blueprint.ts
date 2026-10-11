@@ -3,6 +3,7 @@ import { estimatePageCount, puzzleCount, type GeneratorConfig } from "@/lib/gene
 import { randomSeed } from "@/lib/generators/rng";
 import { findTrim } from "@/lib/kdp/geometry";
 import type { SectionInput } from "@/lib/schema/factory";
+import { wordSearchMaxLength } from "@/lib/quality/content";
 import { isLowContent, type BookType } from "@/lib/schema/project";
 import { recipeBlueprint } from "./recipes";
 
@@ -62,7 +63,7 @@ export function validateBlueprint(bp: BlueprintOutput, ctx: BlueprintContext): {
 /** Content a section needs from a model (or offline heuristics) before it can be generated. */
 export type ContentNeed =
   | { task: "journal-prompts"; theme: string; count: number }
-  | { task: "word-lists"; theme: string; count: number; wordsPerPuzzle: number; maxLength: number }
+  | { task: "word-lists"; theme: string; count: number; wordsPerPuzzle: number; maxLength: number; difficulty?: "easy" | "medium" | "hard" }
   | { task: "phrases"; theme: string; count: number; maxLength: number; style: "saying" | "affirmation" };
 
 export interface PlannedSection {
@@ -124,9 +125,9 @@ function fitPuzzles(make: (n: number) => GeneratorConfig, budget: number): numbe
   return n;
 }
 
-function puzzleContent(cfg: GeneratorConfig, theme: string): ContentNeed | null {
-  if (cfg.kind === "word-search") return { task: "word-lists", theme, count: cfg.puzzles.length, wordsPerPuzzle: cfg.size <= 12 ? 10 : cfg.size <= 15 ? 15 : 18, maxLength: Math.min(12, cfg.size - 2) };
-  if (cfg.kind === "word-scramble") return { task: "word-lists", theme, count: cfg.puzzles.length, wordsPerPuzzle: 15, maxLength: 10 };
+function puzzleContent(cfg: GeneratorConfig, theme: string, difficulty: "easy" | "medium" | "hard"): ContentNeed | null {
+  if (cfg.kind === "word-search") return { task: "word-lists", theme, count: cfg.puzzles.length, wordsPerPuzzle: cfg.size <= 12 ? 10 : cfg.size <= 15 ? 15 : 18, maxLength: wordSearchMaxLength(cfg.size), difficulty: cfg.difficulty };
+  if (cfg.kind === "word-scramble") return { task: "word-lists", theme, count: cfg.puzzles.length, wordsPerPuzzle: 15, maxLength: 10, difficulty };
   if (cfg.kind === "cryptogram") return { task: "phrases", theme, count: cfg.phrases.length, maxLength: cfg.perPage === 2 ? 90 : 120, style: "saying" };
   return null;
 }
@@ -200,7 +201,7 @@ export function planSections(bp: BlueprintOutput, input: PlanInput): PlannedSect
     if (PUZZLE_KINDS.includes(s.kind)) {
       const n = fitPuzzles((k) => puzzleConfig(s.kind, k, s.difficulty, sizing), budgets[i]);
       const config = puzzleConfig(s.kind, n, s.difficulty, sizing);
-      return { label: s.title, subtitle: s.subtitle, kind: s.kind, config, content: puzzleContent(config, theme) };
+      return { label: s.title, subtitle: s.subtitle, kind: s.kind, config, content: puzzleContent(config, theme, capDifficulty(s.difficulty)) };
     }
     const config = lowContentConfig(s.kind, budgets[i], bp, s.title);
     let content: ContentNeed | null = null;

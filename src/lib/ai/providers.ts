@@ -4,7 +4,7 @@ import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { offlineTask } from "./offline";
-import { SYSTEM_PROMPT, TASK_EFFORT, TASKS, taskPrompt, type TaskInput, type TaskName, type TaskOutput } from "./tasks";
+import { SYSTEM_PROMPT, TASK_EFFORT, TASKS, taskPrompt, VISION_TASKS, type TaskInput, type TaskName, type TaskOutput } from "./tasks";
 
 export type ProviderName = "anthropic" | "ollama" | "offline";
 
@@ -19,6 +19,15 @@ export interface TaskResult<T extends TaskName> {
   output: TaskOutput<T>;
   meta: { provider: ProviderName; model: string; task: T; promptHash: string };
 }
+
+/** An image sent alongside a vision task's prompt (base64, no data: prefix). */
+export const TaskImage = z.object({
+  label: z.string().max(80),
+  mediaType: z.enum(["image/png", "image/jpeg"]),
+  data: z.string().max(5_000_000),
+});
+export type TaskImage = z.infer<typeof TaskImage>;
+export const TaskImages = z.array(TaskImage).max(12);
 
 export class AiError extends Error {
   constructor(message: string, readonly status = 502) {
@@ -46,9 +55,17 @@ export function providerStatus(): ProviderStatus {
   };
 }
 
-async function runAnthropic<T extends TaskName>(task: T, prompt: string, model: string): Promise<TaskOutput<T>> {
+async function runAnthropic<T extends TaskName>(task: T, prompt: string, model: string, images: TaskImage[]): Promise<TaskOutput<T>> {
   const client = new Anthropic();
   const schema = TASKS[task].output as unknown as z.ZodType<TaskOutput<T>>;
+  // Each image is preceded by its label so the model can name it in findings.
+  const content: Anthropic.Beta.BetaContentBlockParam[] = [
+    ...images.flatMap((img): Anthropic.Beta.BetaContentBlockParam[] => [
+      { type: "text", text: `Image: ${img.label}` },
+      { type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } },
+    ]),
+    { type: "text", text: prompt },
+  ];
   try {
     const response = await client.beta.messages.parse({
       model,
@@ -56,7 +73,7 @@ async function runAnthropic<T extends TaskName>(task: T, prompt: string, model: 
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
       system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: prompt }],
+      messages: [{ role: "user", content: images.length ? content : prompt }],
       output_config: { effort: TASK_EFFORT[task], format: betaZodOutputFormat(schema) },
     });
     if (response.stop_reason === "refusal") throw new AiError(`The model declined this request${response.stop_details?.category ? ` (${response.stop_details.category})` : ""}.`, 422);
@@ -72,7 +89,7 @@ async function runAnthropic<T extends TaskName>(task: T, prompt: string, model: 
   }
 }
 
-async function runOllama<T extends TaskName>(task: T, prompt: string, model: string): Promise<TaskOutput<T>> {
+async function runOllama<T extends TaskName>(task: T, prompt: string, model: string, images: TaskImage[]): Promise<TaskOutput<T>> {
   const base = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
   const schema = TASKS[task].output;
   const res = await fetch(`${base}/api/chat`, {
@@ -84,7 +101,7 @@ async function runOllama<T extends TaskName>(task: T, prompt: string, model: str
       format: z.toJSONSchema(schema),
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: prompt },
+        { role: "user", content: prompt, ...(images.length ? { images: images.map((i) => i.data) } : {}) },
       ],
     }),
   }).catch((e: unknown) => {
@@ -103,16 +120,22 @@ async function runOllama<T extends TaskName>(task: T, prompt: string, model: str
   return result.data as TaskOutput<T>;
 }
 
-export async function runTask<T extends TaskName>(task: T, rawInput: unknown): Promise<TaskResult<T>> {
+export async function runTask<T extends TaskName>(task: T, rawInput: unknown, rawImages: unknown = []): Promise<TaskResult<T>> {
   const inputParse = TASKS[task].input.safeParse(rawInput);
   if (!inputParse.success) throw new AiError(`Invalid input for ${task}: ${inputParse.error.issues[0]?.message}`, 400);
+  const imagesParse = TaskImages.safeParse(rawImages ?? []);
+  if (!imagesParse.success) throw new AiError(`Invalid images: ${imagesParse.error.issues[0]?.message}`, 400);
+  const images = VISION_TASKS.includes(task) ? imagesParse.data : [];
+  if (VISION_TASKS.includes(task) && !images.length) throw new AiError(`${task} needs at least one image.`, 400);
   const input = inputParse.data as TaskInput<T>;
   const prompt = taskPrompt(task, input);
   const status = providerStatus();
-  const promptHash = `sha256:${createHash("sha256").update(SYSTEM_PROMPT + prompt).digest("hex")}`;
+  const hash = createHash("sha256").update(SYSTEM_PROMPT + prompt);
+  for (const img of images) hash.update(img.data);
+  const promptHash = `sha256:${hash.digest("hex")}`;
   let output: TaskOutput<T>;
-  if (status.provider === "anthropic") output = await runAnthropic(task, prompt, status.model);
-  else if (status.provider === "ollama") output = await runOllama(task, prompt, status.model);
+  if (status.provider === "anthropic") output = await runAnthropic(task, prompt, status.model, images);
+  else if (status.provider === "ollama") output = await runOllama(task, prompt, status.model, images);
   else output = offlineTask(task, input);
   return { output, meta: { provider: status.provider, model: status.model, task, promptHash } };
 }

@@ -2,6 +2,7 @@ import type { Box, CoverGeometry } from "@/lib/kdp/geometry";
 import { ellipse, line, pattern, rect, text } from "@/lib/schema/elements";
 import type { Cover, Element } from "@/lib/schema/project";
 import { createRng } from "@/lib/generators/rng";
+import { legibleOn } from "@/lib/util/color";
 
 export interface Palette {
   id: string;
@@ -144,7 +145,7 @@ export function buildCover(templateId: string, input: CoverInput, cg: CoverGeome
       const bandY = cg.front.y + cg.trimH * 0.3;
       const bandH = cg.trimH * 0.3;
       els.push(rect({ x: fullFront.x, y: bandY, width: fullFront.width, height: bandH, fill: p.accent, name: "Band" }));
-      const title = titleBlock(input.title, "Oswald", { ...f, x: f.x + 12, width: f.width - 24 }, 0, 64, p.bg);
+      const title = titleBlock(input.title, "Oswald", { ...f, x: f.x + 12, width: f.width - 24 }, 0, 64, legibleOn(p.accent, p.bg, [p.fg]));
       title.y = bandY + (bandH - title.height) / 2;
       els.push(title);
       if (input.subtitle) els.push(text({ x: f.x + 12, y: bandY + bandH + 20, width: f.width - 24, height: 40, text: input.subtitle, fontFamily: "Inter", fontSize: 14, color: p.fg, align: "center", name: "Subtitle" }));
@@ -198,7 +199,7 @@ export function buildCover(templateId: string, input: CoverInput, cg: CoverGeome
       els.push(pattern({ x: 0, y: 0, width: cg.width, height: cg.height, pattern: { kind: "dots", spacing: 18, radius: 2.2 }, stroke: p.accent, strokeWidth: 0.5, opacity: 0.35, name: "Dots" }));
       const plate = { x: f.x + 12, y: f.y + f.height * 0.22, width: f.width - 24, height: f.height * 0.42 };
       els.push(rect({ ...plate, fill: "#ffffff", stroke: p.accent, strokeWidth: 4, cornerRadius: 28, name: "Title plate" }));
-      const title = titleBlock(input.title, "Pacifico", { ...plate, x: plate.x + 20, width: plate.width - 40 }, 0, 48, p.accent);
+      const title = titleBlock(input.title, "Pacifico", { ...plate, x: plate.x + 20, width: plate.width - 40 }, 0, 48, legibleOn("#ffffff", p.accent, [p.fg, p.bg]));
       title.y = plate.y + (plate.height - title.height) / 2 - (input.subtitle ? 12 : 0);
       els.push(title);
       if (input.subtitle) els.push(text({ x: plate.x + 20, y: title.y + title.height + 6, width: plate.width - 40, height: 18, text: input.subtitle, fontFamily: "Inter", bold: true, fontSize: 12, color: "#333333", align: "center", name: "Subtitle" }));
@@ -211,7 +212,7 @@ export function buildCover(templateId: string, input: CoverInput, cg: CoverGeome
     default: {
       els.push(pattern({ x: 0, y: 0, width: cg.width, height: cg.height, pattern: { kind: "grid", spacing: 24 }, stroke: p.muted, strokeWidth: 0.8, opacity: 0.25, name: "Grid" }));
       const plateY = f.y + f.height * 0.18;
-      const title = titleBlock(input.title.toUpperCase(), "Anton", { ...f, x: f.x + 16, width: f.width - 32 }, plateY + 16, 96, p.bg, "center", 3);
+      const title = titleBlock(input.title.toUpperCase(), "Anton", { ...f, x: f.x + 16, width: f.width - 32 }, plateY + 16, 96, legibleOn(p.accent, p.bg, [p.fg]), "center", 3);
       els.push(rect({ x: fullFront.x, y: plateY, width: fullFront.width, height: title.height + 32, fill: p.accent, name: "Title band" }));
       els.push(title);
       if (input.subtitle) els.push(text({ x: f.x + 16, y: plateY + title.height + 48, width: f.width - 32, height: 40, text: input.subtitle, fontFamily: "Oswald", fontSize: 18, color: p.fg, align: "center", name: "Subtitle" }));

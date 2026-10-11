@@ -1,4 +1,6 @@
 import { recipeBlueprint } from "@/lib/agent/recipes";
+import { nearDuplicate } from "@/lib/quality/content";
+import { AFFIRMATION_BANK, PROMPT_BANK, SAYING_BANK, THEME_BANK } from "./offlineBanks";
 import type { TaskInput, TaskName, TaskOutput } from "./tasks";
 
 /**
@@ -8,111 +10,19 @@ import type { TaskInput, TaskName, TaskOutput } from "./tasks";
 
 const titleCase = (s: string) => s.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
 
+/** Up to `count` items of `pool`, starting at a topic-dependent offset, skipping anything in `avoid`. */
+function pick(pool: string[], count: number, seed: string, avoid: string[] = []): string[] {
+  const usable = pool.filter((p) => !avoid.some((a) => nearDuplicate(p, a)));
+  if (!usable.length) return [];
+  const start = hash(seed) % usable.length;
+  return Array.from({ length: Math.min(count, usable.length) }, (_, k) => usable[(start + k) % usable.length]);
+}
+
 function hash(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return h >>> 0;
 }
-
-const GENERIC_PROMPTS = [
-  "What made you smile today, and why?",
-  "Describe a moment this week when you felt completely yourself.",
-  "What is one small win you want to celebrate?",
-  "Write about a place where you feel calm. What do you notice there?",
-  "What would you tell your younger self about today?",
-  "Which habit would make tomorrow easier?",
-  "Who helped you recently, and how could you thank them?",
-  "What are you looking forward to this month?",
-  "Describe a challenge you handled better than you expected.",
-  "What does a perfect ordinary day look like for you?",
-  "List three things you can see, hear and feel right now.",
-  "What is something you want to learn, and what is the first step?",
-  "Write about a memory that still makes you laugh.",
-  "What drained your energy today, and what restored it?",
-  "Which boundary do you want to protect this week?",
-  "What would you do if you knew you could not fail?",
-  "Describe someone you admire and the quality you want to borrow.",
-  "What is a belief you have changed your mind about?",
-  "How did you take care of your body today?",
-  "What are you ready to let go of?",
-  "Write a short letter to your future self one year from now.",
-  "What is one thing you are proud of that nobody else saw?",
-  "Which song, book or film fits your mood today? Why?",
-  "What does success mean to you right now?",
-  "Describe your ideal morning routine in detail.",
-  "What conversation do you need to have, and how could you start it?",
-  "What surprised you this week?",
-  "Write about a time you were brave.",
-  "What are three things you love about where you live?",
-  "Which worry can you set down for today?",
-];
-
-// Traditional proverbs (public domain) for offline cryptograms.
-const SAYINGS = [
-  "Slow and steady wins the race.",
-  "A journey of a thousand miles begins with a single step.",
-  "Many hands make light work.",
-  "Where there is a will there is a way.",
-  "Practice makes perfect.",
-  "Every cloud has a silver lining.",
-  "Actions speak louder than words.",
-  "The early bird catches the worm.",
-  "Rome was not built in a day.",
-  "Little by little the bird builds its nest.",
-  "A smooth sea never made a skilled sailor.",
-  "Patience is a virtue.",
-  "Two heads are better than one.",
-  "Laughter is the best medicine.",
-  "Better late than never.",
-  "Every day is a fresh start.",
-  "Kindness costs nothing.",
-  "Good things come to those who wait.",
-  "Fortune favors the bold.",
-  "Knowledge is power.",
-  "Still waters run deep.",
-  "Home is where the heart is.",
-  "Hope for the best and prepare for the worst.",
-  "The best things in life are worth waiting for.",
-  "A friend in need is a friend indeed.",
-  "No rain, no flowers.",
-  "Tomorrow is another day.",
-  "Great minds think alike.",
-  "One step at a time.",
-  "Small steps lead to big changes.",
-];
-
-const AFFIRMATIONS = [
-  "I am allowed to take today one moment at a time.",
-  "I notice the good things around me.",
-  "I am growing a little every day.",
-  "I give myself the same kindness I give others.",
-  "I am grateful for the people who support me.",
-  "I can do hard things.",
-  "My best is enough today.",
-  "I choose calm over hurry.",
-  "I make room for rest and joy.",
-  "I welcome new beginnings.",
-  "I am proud of how far I have come.",
-  "Small moments of peace add up.",
-  "I trust myself to handle what comes.",
-  "I celebrate small wins.",
-  "I deserve good things.",
-];
-
-const THEMES: Record<string, string[]> = {
-  Animals: ["lion", "tiger", "zebra", "giraffe", "monkey", "panda", "koala", "rabbit", "turtle", "eagle", "dolphin", "penguin", "otter", "camel", "beaver"],
-  Fruits: ["apple", "banana", "cherry", "grape", "lemon", "mango", "orange", "peach", "pear", "plum", "kiwi", "melon", "papaya", "guava", "lime"],
-  Garden: ["flower", "seed", "soil", "rose", "tulip", "daisy", "shovel", "hose", "fence", "weed", "sprout", "bloom", "leaf", "root", "basket"],
-  Ocean: ["wave", "shell", "coral", "whale", "shark", "tide", "reef", "sand", "crab", "anchor", "island", "pearl", "kelp", "squid", "harbor"],
-  Space: ["planet", "comet", "orbit", "rocket", "galaxy", "moon", "star", "nebula", "meteor", "saturn", "venus", "mars", "jupiter", "launch", "cosmos"],
-  Kitchen: ["spoon", "whisk", "oven", "kettle", "ladle", "plate", "bowl", "knife", "grater", "pan", "teapot", "napkin", "apron", "blender", "toaster"],
-  Weather: ["rain", "cloud", "storm", "thunder", "breeze", "snow", "frost", "sunny", "rainbow", "drizzle", "fog", "hail", "lightning", "humid", "chilly"],
-  Sports: ["soccer", "tennis", "hockey", "rugby", "golf", "boxing", "rowing", "cycling", "skiing", "karate", "archery", "diving", "surfing", "bowling", "cricket"],
-  Music: ["piano", "guitar", "violin", "drums", "flute", "melody", "rhythm", "chorus", "tempo", "harmony", "cello", "trumpet", "banjo", "concert", "lyrics"],
-  Travel: ["passport", "ticket", "luggage", "airport", "hotel", "map", "compass", "journey", "cruise", "train", "beach", "museum", "camera", "suitcase", "voyage"],
-  Farm: ["barn", "tractor", "cow", "sheep", "goat", "horse", "chicken", "hay", "corn", "pumpkin", "farmer", "silo", "piglet", "orchard", "meadow"],
-  Holidays: ["candle", "gift", "parade", "feast", "lantern", "wreath", "ribbon", "costume", "fireworks", "banner", "cookie", "carol", "family", "picnic", "party"],
-};
 
 export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): TaskOutput<T> {
   switch (task) {
@@ -153,19 +63,22 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
     }
     case "phrases": {
       const i = input as TaskInput<"phrases">;
-      const pool = (i.style === "affirmation" ? AFFIRMATIONS : SAYINGS).filter((p) => p.length <= i.maxLength);
-      const start = hash(i.topic) % pool.length;
-      return { phrases: Array.from({ length: Math.min(i.count, pool.length) }, (_, k) => pool[(start + k) % pool.length]) } as TaskOutput<T>;
+      const pool = (i.style === "affirmation" ? AFFIRMATION_BANK : SAYING_BANK).filter((p) => p.length <= i.maxLength);
+      return { phrases: pick(pool, i.count, i.topic, i.avoid) } as TaskOutput<T>;
     }
     case "listing": {
       const i = input as TaskInput<"listing">;
       const title = i.workingTitle || titleCase(`${i.topic} ${i.bookType}`);
       const out: TaskOutput<"listing"> = {
         title,
-        subtitle: `${titleCase(i.bookType)} for ${i.audience || "adults"} | ${i.pageCount} pages, ${i.trim}`,
-        description: `${title} is a ${i.bookType} made for ${i.audience || "everyday use"}.\n\nInside you will find:\n• ${i.interiorSummary}\n• ${i.pageCount} pages in a ${i.trim} paperback\n• Clean layout printed on quality paper\n\n${i.angle || "Perfect for home, school, travel or as a thoughtful gift."}`,
+        subtitle: `${titleCase(i.bookType.replace("-", " "))} for ${i.audience || "adults"}`,
+        description: [
+          `Made for ${i.audience || "everyday use"}, this ${i.bookType.replace("-", " ")} keeps everything in one place, ready whenever you are.`,
+          `Inside you will find:\n${[...i.interiorSummary.split(/;\s*/).filter(Boolean), `${i.pageCount} pages in a ${i.trim} paperback`, "Clean, uncluttered layout that is easy on the eyes"].map((l) => `• ${l}`).join("\n")}`,
+          i.angle || "A thoughtful gift for home, school or travel.",
+        ].join("\n\n"),
         keywords: [...i.keywordIdeas, `${i.topic} gift`, `${i.topic} for ${i.audience}`, `${i.bookType} for ${i.audience}`].map((k) => k.toLowerCase().slice(0, 50)).filter((k, n, a) => k.trim() && a.indexOf(k) === n).slice(0, 7),
-        categories: [],
+        categories: (i.categoryOptions ?? []).slice(0, 3),
         backCoverBlurb: `${title}: ${i.angle || `a ${i.bookType} for ${i.audience}`}`.slice(0, 450),
         suggestedPriceUsd: i.pageCount > 150 ? 9.99 : 7.99,
       };
@@ -173,20 +86,29 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
     }
     case "journal-prompts": {
       const i = input as TaskInput<"journal-prompts">;
-      const start = hash(i.topic) % GENERIC_PROMPTS.length;
-      const prompts = Array.from({ length: i.count }, (_, k) => GENERIC_PROMPTS[(start + k) % GENERIC_PROMPTS.length]);
-      return { prompts } as TaskOutput<T>;
+      // Only distinct prompts: a shorter section beats a journal that repeats itself.
+      return { prompts: pick(PROMPT_BANK, i.count, `${i.topic}|${i.sectionTitle ?? ""}`, i.avoid) } as TaskOutput<T>;
     }
     case "word-lists": {
       const i = input as TaskInput<"word-lists">;
-      const names = Object.keys(THEMES);
+      const names = Object.keys(THEME_BANK);
       const match = names.find((n) => i.topic.toLowerCase().includes(n.toLowerCase().replace(/s$/, "")));
       const start = match ? names.indexOf(match) : hash(i.topic) % names.length;
-      const puzzles = Array.from({ length: i.count }, (_, k) => {
+      const avoid = new Set((i.avoid ?? []).map((t) => t.trim().toLowerCase()));
+      // Later rounds through the themes take a different window of each theme's words,
+      // stepping by more than half a list so no two puzzles share most of their words.
+      const step = Math.floor(i.wordsPerPuzzle / 2) + 1;
+      const puzzles: { title: string; words: string[] }[] = [];
+      for (let k = 0; puzzles.length < i.count && k < names.length * 6; k++) {
         const name = names[(start + k) % names.length];
         const round = Math.floor(k / names.length);
-        return { title: round ? `${name} ${round + 1}` : name, words: THEMES[name].filter((w) => w.length <= i.maxLength).slice(0, i.wordsPerPuzzle) };
-      });
+        const words = THEME_BANK[name].filter((w) => w.length <= i.maxLength);
+        if (round >= Math.floor(words.length / step)) continue;
+        const title = round ? `${name} ${round + 1}` : name;
+        if (avoid.has(title.toLowerCase())) continue;
+        const offset = round * step;
+        puzzles.push({ title, words: Array.from({ length: Math.min(i.wordsPerPuzzle, words.length) }, (_, n) => words[(offset + n) % words.length]) });
+      }
       return { puzzles } as TaskOutput<T>;
     }
     case "keywords": {
@@ -201,6 +123,18 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
         notes: "Offline heuristic expansion. Validate with your research data before using.",
       } as TaskOutput<T>;
     }
+    case "listing-critique": {
+      const i = input as TaskInput<"listing-critique">;
+      const out: TaskOutput<"listing-critique"> = {
+        score: Math.max(3, 10 - i.ruleFindings.length),
+        summary: "Offline mode: only the rule-based checks ran. Connect a model for a written critique and a revised listing.",
+        findings: [],
+        revised: { title: i.title, subtitle: i.subtitle, description: i.description, keywords: i.keywords, categories: i.categories },
+      };
+      return out as TaskOutput<T>;
+    }
+    case "visual-review":
+      return { score: 0, summary: "Offline mode can't look at images; only the rule-based design checks ran.", thumbnailReadable: true, findings: [] } as TaskOutput<T>;
   }
   throw new Error(`Unknown task ${task}`);
 }
