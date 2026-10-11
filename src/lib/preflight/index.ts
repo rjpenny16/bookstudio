@@ -86,7 +86,9 @@ function isBackground(el: Element, area: Box): boolean {
 export function effectiveDpi(project: Project, el: Extract<Element, { type: "image" }>): number | null {
   const asset = project.assets.find((a) => a.id === el.assetId);
   if (!asset) return null;
-  return Math.min(asset.widthPx / ptToIn(el.width), asset.heightPx / ptToIn(el.height));
+  const w = Math.min(asset.widthPx, asset.upscaledFrom?.widthPx ?? Infinity);
+  const h = Math.min(asset.heightPx, asset.upscaledFrom?.heightPx ?? Infinity);
+  return Math.min(w / ptToIn(el.width), h / ptToIn(el.height));
 }
 
 export function runPreflight(project: Project): PreflightReport {

@@ -1,8 +1,9 @@
 import type { Box, CoverGeometry } from "@/lib/kdp/geometry";
-import { ellipse, line, pattern, rect, text } from "@/lib/schema/elements";
+import { ellipse, image, line, pattern, rect, text } from "@/lib/schema/elements";
 import type { Cover, Element } from "@/lib/schema/project";
 import { createRng } from "@/lib/generators/rng";
-import { legibleOn } from "@/lib/util/color";
+import { legibleOn, legibleOnAll, mixHex } from "@/lib/util/color";
+import { artBox, isArtTemplate, type ArtTemplateId } from "./art";
 
 export interface Palette {
   id: string;
@@ -39,12 +40,38 @@ export const COVER_TEMPLATES: CoverTemplate[] = [
   { id: "puzzle", name: "Puzzle grid", description: "Grid texture and a heavy display title" },
 ];
 
+/** Templates built around AI cover art; they need an image. */
+export const ART_COVER_TEMPLATES: CoverTemplate[] = [
+  { id: "art-full-bleed", name: "Art, full bleed", description: "Artwork fills the front; title on a plate over a calm area" },
+  { id: "art-panel", name: "Art panel", description: "Title band on top, artwork below to the edge" },
+  { id: "art-framed", name: "Art in a frame", description: "Framed artwork between title and subtitle, classic and quiet" },
+];
+
+/** Measured tone of the art where the title goes (average color, luminance spread). */
+export interface ArtTone {
+  mean: string;
+  spread: number;
+}
+
+export interface CoverArtInput {
+  assetId: string;
+  /** Model run that generated the art, for provenance. */
+  runId?: string;
+  tone?: ArtTone;
+}
+
 export interface CoverInput {
   title: string;
   subtitle: string;
   author: string;
   backText: string;
   palette: Palette;
+  /** Cover art for the art-* templates. */
+  art?: CoverArtInput;
+  /** "What's inside" bullets for the back cover. */
+  inside?: string[];
+  /** Asset ids of interior page thumbnails for the back cover (trim aspect), up to 3. */
+  thumbs?: string[];
 }
 
 const CHAR_FACTOR: Record<string, number> = {
@@ -109,17 +136,59 @@ function titleBlock(s: string, family: string, box: Box, y: number, max: number,
 }
 
 function backCover(cg: CoverGeometry, input: CoverInput, color: string, family = "Lora"): Element[] {
-  if (!input.backText.trim()) return [];
   const b = cg.backSafe;
   const inset = 18;
-  const maxH = cg.barcode.y - b.y - inset * 2;
   const width = b.width - inset * 2;
-  let size = 11;
-  let blurb = input.backText.trim();
-  while (size > 8 && estLines(blurb, family, width, size) * size * 1.13 * 1.35 > maxH) size -= 0.5;
-  while (estLines(blurb, family, width, size) * size * 1.13 * 1.35 > maxH && blurb.length > 40) blurb = `${blurb.slice(0, Math.floor(blurb.length * 0.9)).replace(/\s+\S*$/, "")}…`;
-  const lines = estLines(blurb, family, width, size);
-  return [text({ x: b.x + inset, y: b.y + inset + 12, width, height: lines * size * 1.13 * 1.35, text: blurb, fontFamily: family, fontSize: size, color, lineHeight: 1.35, name: "Back blurb" })];
+  const top = b.y + inset + 12;
+  let bottom = cg.barcode.y - inset;
+  const els: Element[] = [];
+
+  // Page thumbnails along the bottom, above the barcode.
+  const thumbs = (input.thumbs ?? []).slice(0, 3);
+  if (thumbs.length) {
+    const gap = 14;
+    const ratio = cg.trimH / cg.trimW;
+    const th = Math.min(((width - gap * (thumbs.length - 1)) / thumbs.length) * ratio, (bottom - top) * 0.32);
+    const tw = th / ratio;
+    const x0 = b.x + inset + (width - (tw * thumbs.length + gap * (thumbs.length - 1))) / 2;
+    const y = bottom - th;
+    thumbs.forEach((assetId, i) => {
+      const x = x0 + i * (tw + gap);
+      els.push(image({ x, y, width: tw, height: th, assetId, name: "Back page thumbnail" }));
+      els.push(rect({ x, y, width: tw, height: th, fill: null, stroke: color, strokeWidth: 0.75, opacity: 0.6, name: "Thumbnail border" }));
+    });
+    bottom = y - 18;
+  }
+
+  // "What's inside" bullets above them.
+  let items = (input.inside ?? []).map((s) => s.trim()).filter(Boolean).slice(0, 6);
+  const size = 10.5;
+  const lh = 1.3;
+  const listHeight = (list: string[]) => 13 * 1.13 * lh + 4 + list.reduce((h, s) => h + estLines(`• ${s}`, family, width, size) * size * 1.13 * lh, 0);
+  while (items.length && listHeight(items) > (bottom - top) * (input.backText.trim() ? 0.5 : 1)) items = items.slice(0, -1);
+  if (items.length) {
+    let y = bottom - listHeight(items);
+    els.push(text({ x: b.x + inset, y, width, height: 13 * 1.13 * lh, text: "What's inside", fontFamily: family, bold: true, fontSize: 13, color, lineHeight: lh, name: "Inside heading" }));
+    y += 13 * 1.13 * lh + 4;
+    for (const item of items) {
+      const h = estLines(`• ${item}`, family, width, size) * size * 1.13 * lh;
+      els.push(text({ x: b.x + inset, y, width, height: h, text: `• ${item}`, fontFamily: family, fontSize: size, color, lineHeight: lh, name: "Inside item" }));
+      y += h;
+    }
+    bottom -= listHeight(items) + 16;
+  }
+
+  // The blurb takes the space that's left.
+  if (input.backText.trim()) {
+    const maxH = bottom - top;
+    let fsize = 11;
+    let blurb = input.backText.trim();
+    while (fsize > 8 && estLines(blurb, family, width, fsize) * fsize * 1.13 * 1.35 > maxH) fsize -= 0.5;
+    while (estLines(blurb, family, width, fsize) * fsize * 1.13 * 1.35 > maxH && blurb.length > 40) blurb = `${blurb.slice(0, Math.floor(blurb.length * 0.9)).replace(/\s+\S*$/, "")}…`;
+    const lines = estLines(blurb, family, width, fsize);
+    els.unshift(text({ x: b.x + inset, y: top, width, height: lines * fsize * 1.13 * 1.35, text: blurb, fontFamily: family, fontSize: fsize, color, lineHeight: 1.35, name: "Back blurb" }));
+  }
+  return els;
 }
 
 function spineText(cg: CoverGeometry, input: CoverInput, color: string, family = "Montserrat"): Element[] {
@@ -139,8 +208,14 @@ export function buildCover(templateId: string, input: CoverInput, cg: CoverGeome
   const els: Element[] = [];
   let background = p.bg;
   const fullFront = { x: cg.front.x, y: 0, width: cg.width - cg.front.x, height: cg.height };
+  if (isArtTemplate(templateId) && !input.art) templateId = "minimal";
 
   switch (templateId) {
+    case "art-full-bleed":
+    case "art-panel":
+    case "art-framed":
+      els.push(...artCover(templateId, input, cg));
+      break;
     case "band": {
       const bandY = cg.front.y + cg.trimH * 0.3;
       const bandH = cg.trimH * 0.3;
@@ -225,8 +300,76 @@ export function buildCover(templateId: string, input: CoverInput, cg: CoverGeome
   return {
     background,
     templateId,
-    elements: els.map((e) => ({ ...e, provenance: { origin: "generated", generator: `cover:${templateId}` } })),
+    elements: els.map((e) =>
+      e.type === "image" && e.assetId === input.art?.assetId
+        ? { ...e, provenance: { origin: "ai-generated", ...(input.art.runId ? { runId: input.art.runId } : {}) } }
+        : { ...e, provenance: { origin: "generated", generator: `cover:${templateId}` } },
+    ),
   };
+}
+
+/** Plate opacity over art: see-through when the art behind the title is calm, nearly solid when it's busy. */
+const plateOpacity = (tone?: ArtTone) => (tone && tone.spread < 0.08 ? 0.78 : 0.9);
+
+function artCover(templateId: ArtTemplateId, input: CoverInput, cg: CoverGeometry): Element[] {
+  const p = input.palette;
+  const f = cg.frontSafe;
+  const art = input.art!;
+  const box = artBox(templateId, cg);
+  const els: Element[] = [];
+  const pic = image({ ...box, assetId: art.assetId, name: "Cover art" });
+
+  if (templateId === "art-full-bleed") {
+    els.push(pic);
+    const opacity = plateOpacity(art.tone);
+    // What the title is actually read against: the plate with the art showing through.
+    const seen = [p.bg, art.tone ? mixHex(p.bg, art.tone.mean, 1 - opacity) : p.bg];
+    const titleColor = legibleOnAll(seen, p.fg, [p.accent, p.muted]);
+    const inner = { ...f, x: f.x + 22, width: f.width - 44 };
+    const plateY = f.y + 14;
+    const title = titleBlock(input.title, "Playfair Display", inner, plateY + 18, 60, titleColor);
+    const subH = input.subtitle ? 34 : 0;
+    els.push(rect({ x: f.x, y: plateY, width: f.width, height: title.height + 36 + subH, fill: p.bg, opacity, cornerRadius: 8, name: "Title plate" }));
+    els.push(title);
+    if (input.subtitle) els.push(text({ x: inner.x, y: title.y + title.height + 8, width: inner.width, height: 30, text: input.subtitle, fontFamily: "Inter", fontSize: 13, color: legibleOnAll(seen, p.fg, [p.muted], 4.5), align: "center", name: "Subtitle" }));
+    if (input.author) {
+      const w = Math.min(f.width, Math.max(140, input.author.length * 9 + 48));
+      els.push(rect({ x: f.x + (f.width - w) / 2, y: f.y + f.height - 40, width: w, height: 30, fill: p.bg, opacity, cornerRadius: 15, name: "Author plate" }));
+      els.push(text({ x: f.x, y: f.y + f.height - 33, width: f.width, height: 18, text: input.author, fontFamily: "Inter", bold: true, fontSize: 14, color: legibleOnAll(seen, p.fg, [p.muted], 4.5), align: "center", name: "Author" }));
+    }
+  } else if (templateId === "art-panel") {
+    els.push(pic);
+    els.push(rect({ x: box.x, y: box.y - 5, width: box.width, height: 5, fill: p.accent, name: "Accent rule" }));
+    const avail = box.y - 18 - (f.y + 10);
+    const inner = { ...f, x: f.x + 12, width: f.width - 24 };
+    const subH = input.subtitle ? 36 : 0;
+    let max = 72;
+    let title = titleBlock(input.title, "Oswald", inner, 0, max, p.fg);
+    while (title.height + subH > avail && max > 18) title = titleBlock(input.title, "Oswald", inner, 0, (max -= 4), p.fg);
+    title.y = f.y + 10 + (avail - title.height - subH) / 2;
+    els.push(title);
+    if (input.subtitle) els.push(text({ x: inner.x, y: title.y + title.height + 8, width: inner.width, height: 30, text: input.subtitle, fontFamily: "Inter", fontSize: 13, color: legibleOn(p.bg, p.muted, [p.fg], 4.5), align: "center", name: "Subtitle" }));
+    if (input.author) {
+      const w = Math.min(f.width, Math.max(140, input.author.length * 9 + 48));
+      els.push(rect({ x: f.x + (f.width - w) / 2, y: f.y + f.height - 40, width: w, height: 30, fill: p.bg, opacity: 0.92, cornerRadius: 15, name: "Author plate" }));
+      els.push(text({ x: f.x, y: f.y + f.height - 33, width: f.width, height: 18, text: input.author, fontFamily: "Inter", bold: true, fontSize: 14, color: p.fg, align: "center", name: "Author" }));
+    }
+  } else {
+    const inner = { ...f, x: f.x + 24, width: f.width - 48 };
+    const avail = box.y - 24 - (f.y + 20);
+    let max = 56;
+    let title = titleBlock(input.title, "Playfair Display", inner, 0, max, p.fg);
+    while (title.height > avail && max > 18) title = titleBlock(input.title, "Playfair Display", inner, 0, (max -= 4), p.fg);
+    title.y = f.y + 20 + (avail - title.height) / 2;
+    els.push(title);
+    els.push(rect({ x: box.x - 9, y: box.y - 9, width: box.width + 18, height: box.height + 18, fill: null, stroke: p.accent, strokeWidth: 3, name: "Art frame" }));
+    els.push(pic);
+    if (input.subtitle) els.push(text({ x: inner.x, y: box.y + box.height + 22, width: inner.width, height: 34, text: input.subtitle, fontFamily: "Lora", fontSize: 13, color: legibleOn(p.bg, p.muted, [p.fg], 4.5), align: "center", name: "Subtitle" }));
+    if (input.author) els.push(text({ x: inner.x, y: f.y + f.height - 24, width: inner.width, height: 18, text: input.author, fontFamily: "Lora", fontSize: 15, color: p.fg, align: "center", name: "Author" }));
+  }
+  els.push(...backCover(cg, input, p.fg, templateId === "art-panel" ? "Inter" : "Lora"));
+  els.push(...spineText(cg, input, p.fg, templateId === "art-panel" ? "Oswald" : "Lora"));
+  return els;
 }
 
 export function suggestTemplate(bookType: string): string {

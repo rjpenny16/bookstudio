@@ -255,6 +255,35 @@ export interface Asset {
   license: AssetLicense;
   contentHash: string;
   createdAt: string;
+  /** Pixel size before an upscale. Upscaling adds no detail, so preflight measures resolution from this. */
+  upscaledFrom?: { widthPx: number; heightPx: number };
+}
+
+/** One generated cover artwork, kept at its original size so it can be re-cropped for another layout. */
+export interface CoverArtCandidate {
+  id: string;
+  /** Concept label from the art direction. */
+  name: string;
+  /** The full prompt sent to the image model. */
+  prompt: string;
+  dataUrl: string;
+  widthPx: number;
+  heightPx: number;
+  provider: string;
+  model: string;
+  /** Model run recorded for this image. */
+  runId: string;
+  /** Art layout the image was generated for. */
+  layout: string;
+  createdAt: string;
+}
+
+export interface CoverArtState {
+  candidates: CoverArtCandidate[];
+  /** Candidate currently on the cover. */
+  chosenId?: string;
+  /** Why it was chosen (model pick or contrast measurement). */
+  pickReason?: string;
 }
 
 export interface ModelRun {
@@ -310,6 +339,8 @@ export interface Project {
   modelRuns: ModelRun[];
   /** Latest model reviews of the listing and the rendered book (optional; added in Phase 2, no migration needed). */
   reviews?: ProjectReviews;
+  /** AI cover art candidates (optional; added in Phase 3, no migration needed). */
+  coverArt?: CoverArtState;
 }
 
 export function isLowContent(bookType: BookType): boolean {

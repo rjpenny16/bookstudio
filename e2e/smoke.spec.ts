@@ -143,3 +143,58 @@ test("quality tab sends rendered cover and pages to a vision model", async ({ pa
   await expect(page.getByText(/couldn.t read the title on the thumbnail/)).toBeVisible();
   if (shots) await page.screenshot({ path: `${shots}/quality-visual.png`, fullPage: true });
 });
+
+test("autopilot generates, picks and places AI cover art", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/autopilot");
+  // A striped test image made in the browser stands in for the generated art.
+  const art = await page.evaluate(() => {
+    const c = document.createElement("canvas");
+    c.width = 512;
+    c.height = 768;
+    const ctx = c.getContext("2d")!;
+    for (let i = 0; i < 12; i++) {
+      ctx.fillStyle = `hsl(${i * 30}, 60%, ${30 + (i % 3) * 20}%)`;
+      ctx.fillRect(0, i * 64, 512, 64);
+    }
+    return c.toDataURL("image/jpeg", 0.9).split(",")[1];
+  });
+  const prompts: { prompt: string; widthIn: number; heightIn: number }[] = [];
+  await page.route("/api/image", async (route) => {
+    if (route.request().method() === "GET") return route.fulfill({ json: { provider: "openai", model: "test-image", configured: true, detail: "mocked" } });
+    prompts.push(route.request().postDataJSON());
+    return route.fulfill({ json: { data: art, mediaType: "image/jpeg", widthPx: 512, heightPx: 768, provider: "openai", model: "test-image", promptHash: `sha256:${prompts.length}` } });
+  });
+  await page.reload();
+
+  await page.getByRole("button", { name: "large print sudoku" }).click();
+  await expect(page.getByLabel(/Generate AI cover art/)).toBeChecked();
+  await page.getByRole("button", { name: "Run autopilot" }).click();
+  await expect(page.getByText("Draft ready for your review")).toBeVisible({ timeout: 90_000 });
+  expect(prompts).toHaveLength(4);
+  for (const p of prompts) {
+    expect(p.prompt).toMatch(/no text, letters/i);
+    expect(p.widthIn).toBeGreaterThan(8);
+  }
+  await expect(page.getByText(/Picked .+ of 4/)).toBeVisible();
+
+  await page.getByRole("link", { name: "Open in studio" }).click();
+  await page.getByRole("tab", { name: "Cover" }).click();
+  const gallery = page.getByRole("list", { name: "Cover art candidates" }).getByRole("listitem");
+  await expect(gallery).toHaveCount(4);
+  await expect(page.getByRole("button", { name: "On cover" })).toHaveCount(1);
+  // 512 px art on an 8.5" panel is upscaled, and preflight still reports its real resolution.
+  await expect(page.getByText(/Cover art prints at \d+ DPI \(upscaled from/)).toBeVisible();
+  await gallery.getByRole("button", { name: "Use this" }).first().click();
+  await expect(page.getByRole("button", { name: "On cover" })).toHaveCount(1);
+  await expect(page.getByRole("option", { name: /Cover art/ }).first()).toBeVisible();
+  if (shots) await page.screenshot({ path: `${shots}/cover-art.png` });
+
+  await page.getByRole("tab", { name: "Listing" }).click();
+  await expect(page.getByLabel(/^Images/)).toHaveValue("some");
+  await page.getByRole("tab", { name: "Preflight" }).click();
+  // Upscaling is only cosmetic: preflight measures the 512 px source, which is far too small for print.
+  await expect(page.getByText(/Cover: image is \d+ DPI \(minimum 150/)).toBeVisible();
+  expect(errors).toEqual([]);
+});

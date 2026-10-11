@@ -244,6 +244,44 @@ export const VisualReviewOutput = z.object({
 });
 export type VisualReviewOutput = z.infer<typeof VisualReviewOutput>;
 
+export const ART_LAYOUTS = ["art-full-bleed", "art-panel", "art-framed"] as const;
+
+export const CoverArtPromptInput = z.object({
+  title: z.string(),
+  subtitle: z.string(),
+  bookType: z.string(),
+  topic: z.string(),
+  audience: z.string(),
+  coverDirection: z.string(),
+  count: z.number().int().min(1).max(6),
+});
+
+export const CoverArtPromptOutput = z.object({
+  layout: z.enum(ART_LAYOUTS).describe("art-full-bleed: art fills the front, title over a calm top third; art-panel: title band on top, art below; art-framed: art inside a frame, quieter and classic"),
+  palette: z.enum(PALETTE_CHOICES).describe("Palette for title plates and back cover that suits the art"),
+  concepts: z.array(
+    z.object({
+      name: z.string().describe("2-4 word label for the concept"),
+      prompt: z.string().describe("Image prompt, 40-90 words: subject, setting, composition, style, color mood"),
+    }),
+  ),
+});
+export type CoverArtPromptOutput = z.infer<typeof CoverArtPromptOutput>;
+
+export const CoverArtPickInput = z.object({
+  title: z.string(),
+  bookType: z.string(),
+  audience: z.string(),
+  /** Labels of the attached candidate covers, in order. */
+  images: z.array(z.string()),
+});
+
+export const CoverArtPickOutput = z.object({
+  choice: z.number().int().describe("1-based number of the best candidate"),
+  reason: z.string().describe("One sentence on why it beats the others"),
+  problems: z.array(z.string()).describe("Visible problems with the chosen cover, if any (text in the art, clashing title area, off-genre)"),
+});
+
 export const TASKS = {
   brief: { input: BriefInput, output: BriefOutput },
   blueprint: { input: BlueprintInput, output: BlueprintOutput },
@@ -254,10 +292,12 @@ export const TASKS = {
   keywords: { input: KeywordsInput, output: KeywordsOutput },
   "listing-critique": { input: ListingCritiqueInput, output: ListingCritiqueOutput },
   "visual-review": { input: VisualReviewInput, output: VisualReviewOutput },
+  "cover-art-prompt": { input: CoverArtPromptInput, output: CoverArtPromptOutput },
+  "cover-art-pick": { input: CoverArtPickInput, output: CoverArtPickOutput },
 } as const;
 
 /** Tasks whose prompt is accompanied by images. */
-export const VISION_TASKS: TaskName[] = ["visual-review"];
+export const VISION_TASKS: TaskName[] = ["visual-review", "cover-art-pick"];
 
 export type TaskName = keyof typeof TASKS;
 
@@ -272,6 +312,8 @@ export const TASK_EFFORT: Record<TaskName, "low" | "medium" | "high"> = {
   keywords: "medium",
   "listing-critique": "high",
   "visual-review": "high",
+  "cover-art-prompt": "high",
+  "cover-art-pick": "medium",
 };
 export type TaskInput<T extends TaskName> = z.infer<(typeof TASKS)[T]["input"]>;
 export type TaskOutput<T extends TaskName> = z.infer<(typeof TASKS)[T]["output"]>;
@@ -384,6 +426,25 @@ Judge it on:
 - Price: sensible for the format, page count and genre.
 
 ruleFindings lists problems an automatic checker already found; address them in the revision. Report each problem once in findings, most important first, and only real problems (an excellent listing can have none). In revised, apply your fixes and keep everything that was already good word for word. Never invent features the interior summary doesn't support. Title + subtitle must stay under 200 characters, each keyword 50 characters or fewer, description under 4000 characters.`;
+    case "cover-art-prompt": {
+      const i = input as TaskInput<"cover-art-prompt">;
+      return `Art-direct the front cover of this KDP paperback. Write ${i.count} distinct image-generation prompts for cover artwork.\n\n${data}
+
+- The artwork carries no text: the title, subtitle and author are typeset over or beside it afterwards. Never ask for words, letters, labels, signs or book titles in the image.
+- Each concept takes a different approach (a scene, a single iconic object, a pattern or still life, a mood or landscape), all clearly about the topic and appealing to this audience at thumbnail size: one clear focal subject, strong shapes, a limited color palette.
+- Fit the genre: puzzle and activity books read as bright, friendly and clear; journals and planners as calm, warm and tasteful; children's books as playful and colorful.
+- Describe subject, setting, composition, style (flat vector illustration, gouache, watercolor, paper cut, line art with flat color) and color mood. Flat or illustrated styles print and upscale better than photorealism.
+- No real people, celebrities, brands, logos, trademarks or characters from existing franchises; nothing that imitates a living artist's style.
+- layout: the art layout that best suits this book and these concepts. palette: the palette whose colors go best with them.`;
+    }
+    case "cover-art-pick": {
+      const i = input as TaskInput<"cover-art-pick">;
+      return `These are candidate front covers for a KDP paperback, each with the same title typeset over a different AI-generated artwork.\n\n${data}
+
+The attached images are, in order: ${i.images.map((l, n) => `(${n + 1}) ${l}`).join(", ")}.
+
+Pick the one a shopper scrolling Amazon search results is most likely to click and be happy with: title readable at thumbnail size, art that clearly says what the book is about for this audience, fits the genre, looks professional. Reject any candidate whose artwork contains stray text, letters, garbled lettering, logos, deformed figures or anything off-topic. Reply with its number in choice.`;
+    }
     case "visual-review": {
       const i = input as TaskInput<"visual-review">;
       return `You are reviewing print proofs of a KDP paperback before it is uploaded.\n\n${data}
