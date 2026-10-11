@@ -10,6 +10,7 @@ import { regionTone } from "@/lib/util/color";
 import { newId, ptToIn, sha256Hex } from "@/lib/util/ids";
 import { artBox, artStoreSize, coverCrop, finalArtPrompt, isArtTemplate, type ArtTemplateId } from "./art";
 import { coverBadge, NOT_CONTENT, seriesName, seriesVolume, whatsInside } from "./inside";
+import { genreOfProject } from "./genres";
 import { applyCoverTemplate, type SavedCoverTemplate } from "./library";
 import { buildCover, type ArtTone, type Palette } from "./templates";
 
@@ -273,6 +274,7 @@ export async function designCover(project: Project, d: CoverDesign): Promise<Pro
     badge,
     series: seriesName(m.series),
     volume: seriesVolume(m.series),
+    type: genreOfProject(project).type,
   };
   let cover: { background: string; elements: Element[]; templateId?: string; barcode?: Project["cover"]["barcode"] };
   if (d.saved) {
@@ -294,7 +296,7 @@ export async function designCover(project: Project, d: CoverDesign): Promise<Pro
     } else draft.cover.paletteId = d.palette.id;
     if (d.badge !== undefined) draft.cover.badge = d.badge;
     draft.cover.elements = cover.elements.map((el) =>
-      (d.aiListing || d.listingRunId) && el.type === "text" && (el.name === "Back blurb" || el.name === "Subtitle")
+      (d.aiListing || d.listingRunId) && el.type === "text" && (el.name === "Back hook" || el.name === "Back blurb" || el.name === "Subtitle")
         ? { ...el, provenance: { origin: "ai-generated" as const, ...(d.listingRunId ? { runId: d.listingRunId } : {}) } }
         : el,
     ) as Element[];
@@ -326,7 +328,7 @@ export async function pickCandidate(
     const asset = await artAsset(c, layout, cg, false);
     const tone = layout === "art-full-bleed" ? await measureTone(asset, cg) : undefined;
     spreads.push(tone?.spread ?? 0);
-    const cover = buildCover(layout, { title: m.title || project.name, subtitle: m.subtitle, author: m.author, backText: "", palette, art: { assetId: asset.id, tone } }, cg);
+    const cover = buildCover(layout, { title: m.title || project.name, subtitle: m.subtitle, author: m.author, backText: "", palette, art: { assetId: asset.id, tone }, type: genreOfProject(project).type }, cg);
     const images = await loadImages([asset]);
     const canvas = rasterize({ widthPt: cg.front.width, heightPt: cg.front.height, scale: 720 / cg.front.height, background: cover.background, elements: cover.elements, images, originX: -cg.front.x, originY: -cg.front.y });
     previews.push({ label: `Candidate ${i + 1}: ${c.name}`, mediaType: "image/jpeg", data: jpeg(canvas) });

@@ -1,4 +1,5 @@
-import { buildCover, PALETTES, suggestTemplate } from "@/lib/cover/templates";
+import { genreOf } from "@/lib/cover/genres";
+import { buildCover, PALETTES } from "@/lib/cover/templates";
 import { coverGeometry, findTrim } from "@/lib/kdp/geometry";
 import { RULES_VERSION } from "@/lib/kdp/rules";
 import { estimatePageCount, generatePages, generatorInfo, type GeneratorConfig } from "@/lib/generators/pages";
@@ -79,9 +80,10 @@ export function createProject(input: NewProjectInput): Project {
   }
   project.interior.sections = sections;
   const cg = coverGeometry(project.spec, project.interior.pages.length);
+  const genre = genreOf({ bookType: input.bookType, topic: input.name, audience: "" });
   Object.assign(
     project.cover,
-    buildCover(suggestTemplate(input.bookType), { title: project.metadata.title, subtitle: "", author: project.metadata.author, backText: "", palette: PALETTES[0] }, cg),
+    buildCover(genre.templates[0], { title: project.metadata.title, subtitle: "", author: project.metadata.author, backText: "", palette: PALETTES.find((p) => p.id === genre.palettes[0]) ?? PALETTES[0], type: genre.type }, cg),
   );
   return project;
 }

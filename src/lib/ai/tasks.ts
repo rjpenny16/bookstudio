@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { genreOf } from "@/lib/cover/genres";
 
 /**
  * AI tasks. Every task has a strict output schema; model output is validated
@@ -44,10 +45,16 @@ export type SectionKind = (typeof SECTION_KINDS)[number];
 
 // Kept in step with COVER_TEMPLATES and PALETTES in lib/cover/templates (a test checks it).
 export const TEMPLATE_CHOICES = ["band", "framed", "geometric", "minimal", "playful", "puzzle", "color-blocks", "botanical", "spiral", "starburst", "series", "kids-bold", "rainbow", "label"] as const;
-export const PALETTE_CHOICES = ["midnight", "sage", "blush", "ocean", "sunny", "forest", "charcoal", "cream", "lavender", "terracotta", "mint", "plum"] as const;
+export const PALETTE_CHOICES = ["midnight", "sage", "blush", "ocean", "sunny", "forest", "charcoal", "cream", "lavender", "terracotta", "mint", "plum", "newsprint", "royal", "candy", "sky", "linen", "dusk", "ivory-gold", "kraft", "slate"] as const;
+
+/** The genre's proven templates and palettes, so the model starts from what sells in this niche. */
+function genreHint(i: { bookType: string; topic: string; audience: string }): string {
+  const g = genreOf(i);
+  return `- This looks like a ${g.label.toLowerCase()}. Templates that suit it, best first: ${g.templates.join(", ")}. Palettes: ${g.palettes.join(", ")}. Prefer these unless the topic clearly calls for something else.`;
+}
 
 const TEMPLATE_GUIDE = `Templates: band (bold band across the front, centered title), framed (double frame, serif title, timeless journal look), geometric (overlapping circles, strong sans title), minimal (large left-aligned title, lots of space), playful (script title on dots, for kids), puzzle (grid texture, heavy display title), color-blocks (heavy title over a bright 3x3 mosaic with a puzzle grid; sudoku and kids' puzzles), botanical (title plate on vector flowers; gift journals, seniors), spiral (spiral-bound look, slanted lattice panel, round badge; puzzle and activity books), starburst (big title plate on sun rays with a starburst badge; large print), series (volume ribbon and sunset stripes; numbered series), kids-bold (tilted sticker title, confetti, dashed border; kids), rainbow (serif title over rainbow arcs; journals, kids), label (vintage notched label; log books, classic journals).
-Palettes: midnight (navy, gold), sage (soft green), blush (pink), ocean (deep blue, cyan), sunny (yellow, pink), forest (dark green), charcoal (dark grey, red), cream (warm off-white), lavender (soft purple), terracotta (warm clay, orange), mint (fresh green, teal), plum (deep purple, apricot).`;
+Palettes: midnight (navy, gold), sage (soft green), blush (pink), ocean (deep blue, cyan), sunny (yellow, pink), forest (dark green), charcoal (dark grey, red), cream (warm off-white), lavender (soft purple), terracotta (warm clay, orange), mint (fresh green, teal), plum (deep purple, apricot), newsprint (off-white, black, red; classic puzzle books), royal (deep blue, yellow; large print), candy (pale yellow, pink, purple; kids), sky (light blue, orange; kids, outdoors), linen (warm linen, olive; wellness journals), dusk (navy, warm gold; faith, evening), ivory-gold (ivory, gold; faith, gift journals), kraft (brown paper, cream; log books), slate (blue-grey, yellow; planners, log books).`;
 
 export const BriefInput = z.object({
   topic: z.string(),
@@ -148,7 +155,7 @@ export const ListingOutput = z.object({
   description: z.string().describe("Plain text, 2-4 short paragraphs and an optional bullet list using '• '. 600-1500 characters."),
   keywords: z.array(z.string()).describe("Exactly 7 backend keyword phrases, each 50 characters or fewer, not repeating title words"),
   categories: z.array(z.string()).describe("Up to 3 Amazon browse category paths, e.g. 'Books > Self-Help > Journal Writing'"),
-  backCoverBlurb: z.string().describe("2-3 sentences for the back cover, under 450 characters"),
+  backCoverBlurb: z.string().describe("Back-cover copy of 3-5 sentences, about 450-650 characters: a hook sentence first, then what is inside and who it is for. Plain prose, no bullet list, no quotation marks, no price"),
   suggestedPriceUsd: z.number(),
 });
 export type ListingOutput = z.infer<typeof ListingOutput>;
@@ -376,7 +383,7 @@ export function taskPrompt<T extends TaskName>(task: T, input: TaskInput<T>): st
 - titleIdeas: 5 distinct, memorable titles under 60 characters that a buyer would search for or remember; title case; no subtitle stuffed into the title, no repeated words.
 - subtitle: names the audience and the main benefit, under 120 characters.
 - keywordIdeas: 10 phrases real buyers type into Amazon, each a different angle (audience, occasion, use case, format, problem solved).
-- Pick the generator that best fits the book type and topic, a realistic page target (puzzle books 100-160, journals and planners 100-200, notebooks 100-150), and the cover template and palette that suit the audience and genre conventions.\n${TEMPLATE_GUIDE}
+- Pick the generator that best fits the book type and topic, a realistic page target (puzzle books 100-160, journals and planners 100-200, notebooks 100-150), and the cover template and palette that suit the audience and genre conventions.\n${TEMPLATE_GUIDE}\n${genreHint(input as z.infer<typeof BriefInput>)}
 - risks: concrete risks to check (trademarks in the topic, crowded niches, policy issues, content that needs care for this audience). Say "none found" rather than inventing risks.`;
     case "blueprint":
       return `Plan the interior of this KDP paperback as an ordered list of sections.\n\n${data}\n\nSection kinds:

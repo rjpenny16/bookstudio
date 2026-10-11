@@ -92,11 +92,22 @@ export function drawElements(ctx: CanvasRenderingContext2D, elements: Element[],
         ctx.font = `${el.fontSize}px "${cssFamily(el.fontFamily, el.bold)}"`;
         ctx.fillStyle = el.color;
         ctx.textBaseline = "alphabetic";
+        // Spacing follows every character, as in the PDF (Tc) and Fabric (charSpacing).
+        if (el.letterSpacing) ctx.letterSpacing = `${el.letterSpacing * el.fontSize}px`;
+        const outline = el.strokeColor && el.strokeWidth ? el.strokeWidth : 0;
+        if (outline) {
+          // Stroke under the fill, so the outline sits outside the letters.
+          ctx.strokeStyle = el.strokeColor!;
+          ctx.lineWidth = outline * 2;
+          ctx.lineJoin = "round";
+        }
         const lines = wrapText(el.text, el.width + 0.5, (s) => ctx.measureText(s).width);
         lines.forEach((ln, i) => {
           const w = ctx.measureText(ln).width;
           const dx = el.align === "center" ? (el.width - w) / 2 : el.align === "right" ? el.width - w : 0;
-          ctx.fillText(ln, el.x + dx, el.y + baselineOffset(i, el.fontSize, el.lineHeight));
+          const y = el.y + baselineOffset(i, el.fontSize, el.lineHeight);
+          if (outline) ctx.strokeText(ln, el.x + dx, y);
+          ctx.fillText(ln, el.x + dx, y);
         });
         break;
       }

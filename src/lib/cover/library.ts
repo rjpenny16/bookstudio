@@ -4,6 +4,7 @@ import type { Asset, Cover, Element, Project, TextElement } from "@/lib/schema/p
 import { legibleOn } from "@/lib/util/color";
 import { newId, ptToIn } from "@/lib/util/ids";
 import { backCover, estLines, spineText } from "./layout";
+import { splitTitle } from "./lockup";
 import type { CoverInput } from "./templates";
 
 /**
@@ -46,14 +47,16 @@ export interface SavedCoverTemplate {
 }
 
 /** Elements that describe one particular book; rebuilt for each book a template is applied to. */
-const BOOK_SPECIFIC = new Set(["Back blurb", "Inside heading", "Inside item", "Back page thumbnail", "Thumbnail border", "Spine text"]);
+const BOOK_SPECIFIC = new Set(["Back hook", "Back accent", "Back blurb", "Inside panel", "Inside heading", "Inside check", "Inside item", "Back page thumbnail", "Thumbnail border", "Spine text", "Spine author"]);
 
 /** Text elements whose words come from the book, by element name. */
-type Role = "title" | "subtitle" | "author" | "series" | "volume" | "badge";
-const ROLES: Record<string, Role> = { Title: "title", Subtitle: "subtitle", Author: "author", Series: "series", Volume: "volume", "Badge text": "badge" };
+type Role = "kicker" | "title" | "support" | "subtitle" | "author" | "series" | "volume" | "badge";
+const ROLES: Record<string, Role> = { "Title kicker": "kicker", Title: "title", "Title support": "support", Subtitle: "subtitle", Author: "author", Series: "series", Volume: "volume", "Badge text": "badge" };
 /** Shapes that only exist to carry a role's text; dropped with it when the new book has none. */
 const COMPANIONS: Record<Role, string[]> = {
+  kicker: [],
   title: [],
+  support: [],
   subtitle: ["Subtitle plate"],
   author: ["Author plate"],
   series: [],
@@ -155,10 +158,11 @@ function retext(el: TextElement, words: string): TextElement {
   const upper = /[A-Za-z]/.test(el.text) && el.text === el.text.toUpperCase();
   const s = upper ? words.toUpperCase() : words;
   const oldLines = Math.max(1, Math.round(el.height / (el.fontSize * 1.13 * el.lineHeight)));
-  const fits = (size: number) => estLines(s, el.fontFamily, el.width, size) * size * 1.13 * el.lineHeight <= Math.max(el.height, oldLines * size * 1.13 * el.lineHeight) * 1.02;
+  const o = { bold: el.bold, letterSpacing: el.letterSpacing ?? 0 };
+  const fits = (size: number) => estLines(s, el.fontFamily, el.width, size, o) * size * 1.13 * el.lineHeight <= Math.max(el.height, oldLines * size * 1.13 * el.lineHeight) * 1.02;
   let size = el.fontSize;
   while (size > 7 && !fits(size)) size -= 0.5;
-  const h = estLines(s, el.fontFamily, el.width, size) * size * 1.13 * el.lineHeight;
+  const h = estLines(s, el.fontFamily, el.width, size, o) * size * 1.13 * el.lineHeight;
   return { ...el, text: s, fontSize: size, y: el.y + (el.height - h) / 2, height: h, provenance: { origin: "generated", generator: "cover:saved-template" } };
 }
 
@@ -173,8 +177,16 @@ export interface AppliedTemplate {
 export function applyCoverTemplate(t: SavedCoverTemplate, input: Omit<CoverInput, "palette">, cg: CoverGeometry): AppliedTemplate {
   const from = frameOf(t.source);
   const to = frameOf(cg);
+  // A design saved with a split title gets the new title split the same way; parts the design has no place for stay with the hero.
+  const has = (name: string) => t.elements.some((e) => e.type === "text" && e.name === name);
+  const parts = has("Title kicker") || has("Title support") ? splitTitle(input.title) : { hero: input.title };
+  const kicker = has("Title kicker") ? (parts.kicker ?? "") : "";
+  const support = has("Title support") ? (parts.support ?? "") : "";
+  const hero = [has("Title kicker") ? "" : parts.kicker, parts.hero, has("Title support") ? "" : parts.support].filter(Boolean).join(" ");
   const words: Record<Role, string> = {
-    title: input.title,
+    kicker,
+    title: hero,
+    support,
     subtitle: input.subtitle,
     author: input.author,
     series: input.series ?? "",

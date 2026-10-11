@@ -90,7 +90,9 @@ async function toFabric(el: Element, assets: Map<string, Asset>): Promise<Tagged
       obj = new Line([el.x, el.y, el.x + el.width, el.y + el.height], { ...common, angle: 0, stroke: el.stroke, strokeWidth: Math.max(el.strokeWidth, 0.25), strokeLineCap: el.cap ?? "butt", strokeDashArray: el.dash, padding: 3 });
       break;
     case "text": {
-      const tb = new Textbox(el.text, { ...common, ...center, width: el.width, fontSize: el.fontSize, fontFamily: cssFamily(el.fontFamily, el.bold), fill: el.color, textAlign: el.align, lineHeight: el.lineHeight, splitByGrapheme: false });
+      const outline = el.strokeColor && el.strokeWidth ? { stroke: el.strokeColor, strokeWidth: el.strokeWidth * 2, paintFirst: "stroke" as const, strokeLineJoin: "round" as const } : {};
+      // Fabric's charSpacing is in thousandths of an em.
+      const tb = new Textbox(el.text, { ...common, ...center, width: el.width, fontSize: el.fontSize, fontFamily: cssFamily(el.fontFamily, el.bold), fill: el.color, textAlign: el.align, lineHeight: el.lineHeight, splitByGrapheme: false, charSpacing: (el.letterSpacing ?? 0) * 1000, ...outline });
       tb.setPositionByOrigin(new Point(el.x + el.width / 2, el.y + tb.height / 2), "center", "center");
       obj = tb;
       break;

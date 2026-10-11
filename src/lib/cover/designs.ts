@@ -2,9 +2,11 @@ import type { Box, CoverGeometry } from "@/lib/kdp/geometry";
 import { ellipse, line, pattern, rect, text } from "@/lib/schema/elements";
 import type { Element, TextElement } from "@/lib/schema/project";
 import { createRng } from "@/lib/generators/rng";
+import { textWidth } from "@/lib/render/metrics";
 import { legibleOn, mixHex, shiftHue } from "@/lib/util/color";
 import { circle, halfCircle, lattice, notchedRect, ornament, pathIn, petal, polygon, rays, ribbon, star } from "./decor";
-import { backCover, estLines, fitFontSize, fitTitle, spineText } from "./layout";
+import { backCover, estLines, face, fitFontSize, spineText } from "./layout";
+import { lockup } from "./lockup";
 import type { CoverInput } from "./templates";
 
 /**
@@ -17,17 +19,17 @@ import type { CoverInput } from "./templates";
 type Design = (input: CoverInput, cg: CoverGeometry) => { background?: string; elements: Element[] };
 
 const LH = 1.13;
-const textHeight = (s: string, family: string, width: number, size: number, lh = 1.16) => estLines(s, family, width, size) * size * LH * lh;
+const textHeight = (s: string, family: string, width: number, size: number, lh = 1.16, bold = true) => estLines(s, family, width, size, { bold }) * size * LH * lh;
 const inset = (b: Box, dx: number, dy = 0): Box => ({ x: b.x + dx, y: b.y + dy, width: b.width - dx * 2, height: b.height - dy * 2 });
 
 function para(s: string, box: Box, family: string, size: number, color: string, opts: { bold?: boolean; align?: "left" | "center" | "right"; name: string; lh?: number }): TextElement {
   const lh = opts.lh ?? 1.16;
-  return text({ x: box.x, y: box.y, width: box.width, height: textHeight(s, family, box.width, size, lh), text: s, fontFamily: family, fontSize: size, color, bold: opts.bold ?? false, align: opts.align ?? "center", lineHeight: lh, name: opts.name });
+  return text({ x: box.x, y: box.y, width: box.width, height: textHeight(s, family, box.width, size, lh, opts.bold ?? false), text: s, fontFamily: family, fontSize: size, color, bold: opts.bold ?? false, align: opts.align ?? "center", lineHeight: lh, name: opts.name });
 }
 
 /** Text on a rounded pill sized to it, centered at `cx`. */
 function pill(s: string, cx: number, y: number, maxW: number, fill: string, color: string, family: string, size: number, name: string): Element[] {
-  const w = Math.min(maxW, s.length * size * 0.62 + size * 2.4);
+  const w = Math.min(maxW, textWidth(s, family, true, size) * 1.02 + size * 2.4);
   const h = size * 2.1;
   return [
     rect({ x: cx - w / 2, y, width: w, height: h, fill, cornerRadius: h / 2, name: `${name} plate` }),
@@ -44,11 +46,11 @@ const colorBlocks: Design = (input, cg) => {
   const inner = inset(f, 8);
   const els: Element[] = [];
   const titleColor = legibleOn(p.bg, p.fg, [p.accent]);
-  const title = fitTitle(input.title.toUpperCase(), "Anton", { ...inner, y: f.y + 6 }, 84, f.height * 0.3, titleColor);
-  els.push(title);
+  const title = lockup(input, { box: { ...inner, y: f.y + 6 }, family: "Anton", bold: false, supportFamily: "Montserrat", max: 100, maxH: f.height * 0.34, color: titleColor, upper: true });
+  els.push(...title.elements);
   let y = title.y + title.height + 6;
   if (input.subtitle) {
-    const sub = para(input.subtitle, { ...inner, y }, "Montserrat", 13, legibleOn(p.bg, p.muted, [p.fg], 4.5), { bold: true, name: "Subtitle" });
+    const sub = para(input.subtitle, { ...inner, y }, face(input, "support", "Montserrat"), 13, legibleOn(p.bg, p.muted, [p.fg], 4.5), { bold: true, name: "Subtitle" });
     els.push(sub);
     y = sub.y + sub.height;
   }
@@ -65,8 +67,8 @@ const colorBlocks: Design = (input, cg) => {
   });
   els.push(pattern({ x: gx, y: gy, width: size, height: size, pattern: { kind: "grid", spacing: size / 9, majorEvery: 3 }, stroke: "#ffffff", strokeWidth: 1.4, opacity: 0.85, name: "Puzzle grid" }));
   els.push(rect({ x: gx, y: gy, width: size, height: size, fill: null, stroke: titleColor, strokeWidth: 3, name: "Grid border" }));
-  if (input.author) els.push(para(input.author, { ...inner, y: f.y + f.height - 22 }, "Montserrat", 14, p.fg, { bold: true, name: "Author" }));
-  return { elements: [...els, ...backAndSpine(input, cg, p.fg, "Inter")] };
+  if (input.author) els.push(para(input.author, { ...inner, y: f.y + f.height - 22 }, face(input, "support", "Montserrat"), 14, p.fg, { bold: true, name: "Author" }));
+  return { elements: [...els, ...backAndSpine(input, cg, p.fg, face(input, "body", "Inter"))] };
 };
 
 const botanical: Design = (input, cg) => {
@@ -103,20 +105,20 @@ const botanical: Design = (input, cg) => {
   const plateW = f.width - 36;
   const px = f.x + 18;
   const titleColor = legibleOn(p.bg, p.fg, [p.accent]);
-  const title = fitTitle(input.title, "Playfair Display", { x: px + 22, y: 0, width: plateW - 44, height: 0 }, 54, f.height * 0.34, titleColor);
-  const sub = input.subtitle ? para(input.subtitle.toUpperCase(), { x: px + 22, y: 0, width: plateW - 44, height: 0 }, "Inter", 10.5, legibleOn(p.bg, p.muted, [p.fg], 4.5), { bold: true, name: "Subtitle", lh: 1.3 }) : null;
+  const title = lockup(input, { box: { x: px + 22, y: 0, width: plateW - 44, height: 0 }, family: "Playfair Display", max: 64, maxH: f.height * 0.38, color: titleColor, supportColor: legibleOn(p.bg, p.muted, [p.fg], 4.5) });
+  const sub = input.subtitle ? para(input.subtitle.toUpperCase(), { x: px + 22, y: 0, width: plateW - 44, height: 0 }, face(input, "support", "Inter"), 10.5, legibleOn(p.bg, p.muted, [p.fg], 4.5), { bold: true, name: "Subtitle", lh: 1.3 }) : null;
   const plateH = 26 + title.height + (sub ? sub.height + 14 : 0) + 26;
   const plateY = f.y + f.height * 0.42 - plateH / 2;
   els.push(rect({ x: px, y: plateY, width: plateW, height: plateH, fill: p.bg, stroke: p.accent, strokeWidth: 3, name: "Title plate" }));
   els.push(rect({ x: px + 7, y: plateY + 7, width: plateW - 14, height: plateH - 14, fill: null, stroke: p.accent, strokeWidth: 0.8, name: "Plate rule" }));
   title.y = plateY + 26;
-  els.push(title);
+  els.push(...title.elements);
   if (sub) {
     sub.y = title.y + title.height + 14;
     els.push(sub);
   }
-  if (input.author) els.push(...pill(input.author, f.x + f.width / 2, f.y + f.height - 34, f.width, p.bg, p.fg, "Lora", 13, "Author"));
-  return { elements: [...els, ...backAndSpine(input, cg, p.fg, "Lora", "Lora")] };
+  if (input.author) els.push(...pill(input.author, f.x + f.width / 2, f.y + f.height - 34, f.width, p.bg, p.fg, face(input, "body", "Lora"), 13, "Author"));
+  return { elements: [...els, ...backAndSpine(input, cg, p.fg, face(input, "body", "Lora"), "Lora")] };
 };
 
 const spiral: Design = (input, cg) => {
@@ -142,9 +144,9 @@ const spiral: Design = (input, cg) => {
   els.push(pathIn(lat, lattice(lat.width, lat.height, 26), { stroke: mixHex(p.accent, p.fg, 0.35), strokeWidth: 1.2, opacity: 0.55, name: "Lattice" }));
 
   const titleColor = legibleOn(p.bg, p.fg, [p.accent]);
-  const title = fitTitle(input.title.toUpperCase(), "Anton", { ...inner, y: inner.y + 8 }, 80, cg.trimH * 0.28, titleColor);
-  els.push(title);
-  if (input.subtitle) els.push(para(input.subtitle, { ...inner, y: title.y + title.height + 8 }, "Oswald", 15, legibleOn(p.bg, p.muted, [p.fg], 4.5), { name: "Subtitle" }));
+  const title = lockup(input, { box: { ...inner, y: inner.y + 8 }, family: "Anton", bold: false, supportFamily: "Oswald", max: 96, maxH: cg.trimH * 0.32, color: titleColor, upper: true });
+  els.push(...title.elements);
+  if (input.subtitle) els.push(para(input.subtitle, { ...inner, y: title.y + title.height + 8 }, face(input, "support", "Oswald"), 15, legibleOn(p.bg, p.muted, [p.fg], 4.5), { name: "Subtitle" }));
   if (input.badge) {
     const R = Math.min(inner.width * 0.19, 72);
     const cx = inner.x + inner.width - R - 4;
@@ -155,8 +157,8 @@ const spiral: Design = (input, cg) => {
     const h = textHeight(label, "Oswald", R * 1.3, size, 1);
     els.push(text({ x: cx - R * 0.65, y: cy - h / 2, width: R * 1.3, height: h, text: label, fontFamily: "Oswald", bold: true, fontSize: size, color: legibleOn(p.bg, p.fg, [p.accent]), align: "center", lineHeight: 1, name: "Badge text" }));
   }
-  if (input.author) els.push(para(input.author, { ...inner, y: f.y + f.height - 22 }, "Oswald", 16, legibleOn(p.accent, p.bg, [p.fg, "#ffffff"]), { bold: true, name: "Author", align: input.badge ? "left" : "center" }));
-  return { elements: [...els, ...backAndSpine(input, cg, p.fg, "Inter", "Oswald")] };
+  if (input.author) els.push(para(input.author, { ...inner, y: f.y + f.height - 22 }, face(input, "support", "Oswald"), 16, legibleOn(p.accent, p.bg, [p.fg, "#ffffff"]), { bold: true, name: "Author", align: input.badge ? "left" : "center" }));
+  return { elements: [...els, ...backAndSpine(input, cg, p.fg, face(input, "body", "Inter"), "Oswald")] };
 };
 
 const starburst: Design = (input, cg) => {
@@ -178,12 +180,12 @@ const starburst: Design = (input, cg) => {
   const R = input.badge ? Math.min(f.width * 0.18, 70) : 0;
   const pw = f.width - 16;
   const titleColor = legibleOn(plateFill, p.fg, [p.bg, p.accent]);
-  const title = fitTitle(input.title.toUpperCase(), "Anton", { x: f.x + 26, y: 0, width: pw - 36, height: 0 }, 92, cg.trimH * 0.36, titleColor);
+  const title = lockup(input, { box: { x: f.x + 26, y: 0, width: pw - 36, height: 0 }, family: "Anton", bold: false, supportFamily: "Oswald", max: 110, maxH: cg.trimH * 0.38, color: titleColor, upper: true });
   const plateH = title.height + 40 + R * 0.7;
   const top = Math.max((bannerH || f.y) + 18, cg.front.y + cg.trimH * 0.46 - plateH / 2);
   els.push(rect({ x: f.x + 8, y: top, width: pw, height: plateH, fill: plateFill, stroke: p.accent, strokeWidth: 4, cornerRadius: 14, name: "Title plate" }));
   title.y = top + 20;
-  els.push(title);
+  els.push(...title.elements);
   if (input.badge) {
     const bx = f.x + f.width - R;
     const by = Math.min(top + plateH + R * 0.25, f.y + f.height - R - 40);
@@ -193,8 +195,8 @@ const starburst: Design = (input, cg) => {
     const h = textHeight(label, "Oswald", R * 1.15, size, 1);
     els.push(text({ x: bx - R * 0.575, y: by - h / 2, width: R * 1.15, height: h, text: label, fontFamily: "Oswald", bold: true, fontSize: size, color: legibleOn(p.accent, "#ffffff", [p.fg, p.bg, "#111111"]), align: "center", lineHeight: 1, name: "Badge text" }));
   }
-  if (input.author) els.push(...pill(input.author, f.x + f.width / 2 - (input.badge ? R * 0.6 : 0), f.y + f.height - 34, f.width - R * 2.2, plateFill, legibleOn(plateFill, p.fg, [p.bg], 4.5), "Inter", 14, "Author"));
-  return { elements: [...els, ...backAndSpine(input, cg, p.fg, "Inter", "Oswald")] };
+  if (input.author) els.push(...pill(input.author, f.x + f.width / 2 - (input.badge ? R * 0.6 : 0), f.y + f.height - 34, f.width - R * 2.2, plateFill, legibleOn(plateFill, p.fg, [p.bg], 4.5), face(input, "support", "Inter"), 14, "Author"));
+  return { elements: [...els, ...backAndSpine(input, cg, p.fg, face(input, "body", "Inter"), "Oswald")] };
 };
 
 const series: Design = (input, cg) => {
@@ -215,23 +217,23 @@ const series: Design = (input, cg) => {
   const tx = f.x + rw + 14;
   const tbox: Box = { x: tx, y: 0, width: f.x + f.width - tx, height: 0 };
   const titleColor = legibleOn(p.fg, p.bg, ["#ffffff", "#111111"]);
-  const title = fitTitle(input.title.toUpperCase(), "Montserrat", tbox, 60, headerH - f.y - 20, titleColor, "left", 4);
+  const title = lockup(input, { box: tbox, family: "Montserrat", max: 68, maxH: headerH - f.y - 20, color: titleColor, align: "left", maxLines: 4, upper: true });
   title.y = f.y + (headerH - f.y - title.height) / 2;
-  els.push(title);
+  els.push(...title.elements);
   let y = headerH + 22;
   if (input.series) {
     const s = para(input.series.toUpperCase(), { ...f, y }, "Montserrat", 12, legibleOn(p.bg, p.accent, [p.muted, p.fg], 4.5), { bold: true, name: "Series" });
     els.push(s);
     y = s.y + s.height + 10;
   }
-  if (input.subtitle) els.push(para(input.subtitle, { ...inset(f, 10), y }, "Lora", 16, legibleOn(p.bg, p.fg, [p.muted], 4.5), { name: "Subtitle", lh: 1.25 }));
+  if (input.subtitle) els.push(para(input.subtitle, { ...inset(f, 10), y }, face(input, "body", "Lora"), 16, legibleOn(p.bg, p.fg, [p.muted], 4.5), { name: "Subtitle", lh: 1.25 }));
   // Sunset stripes along the bottom.
   const stripesTop = cg.front.y + cg.trimH * 0.74;
   const bands = 5;
   const bh = (cg.height - stripesTop) / bands;
   for (let i = 0; i < bands; i++) els.push(rect({ x: box.x, y: stripesTop + i * bh, width: box.width, height: bh + 0.5, fill: mixHex(p.bg, i % 2 ? shiftHue(p.accent, -25) : p.accent, 0.35 + (i * 0.65) / (bands - 1)), name: "Stripe" }));
-  if (input.author) els.push(para(input.author, { ...f, y: stripesTop - 30 }, "Montserrat", 14, p.fg, { bold: true, name: "Author" }));
-  return { elements: [...els, ...backAndSpine(input, cg, p.fg, "Inter")] };
+  if (input.author) els.push(para(input.author, { ...f, y: stripesTop - 30 }, face(input, "support", "Montserrat"), 14, p.fg, { bold: true, name: "Author" }));
+  return { elements: [...els, ...backAndSpine(input, cg, p.fg, face(input, "body", "Inter"))] };
 };
 
 const kidsBold: Design = (input, cg) => {
@@ -243,7 +245,7 @@ const kidsBold: Design = (input, cg) => {
   const pw = f.width - 28;
   const pxl = f.x + 14;
   const titleColor = legibleOn("#ffffff", p.accent, [p.fg, "#111111"]);
-  const title = fitTitle(input.title.toUpperCase(), "Anton", { x: pxl + 18, y: 0, width: pw - 36, height: 0 }, 88, cg.trimH * 0.34, titleColor);
+  const title = lockup(input, { box: { x: pxl + 18, y: 0, width: pw - 36, height: 0 }, family: "Anton", bold: false, supportFamily: "Inter", max: 100, maxH: cg.trimH * 0.36, color: titleColor, upper: true });
   const plateH = title.height + 44;
   const plateY = f.y + f.height * 0.36 - plateH / 2;
   const plate = { x: pxl, y: plateY, width: pw, height: plateH };
@@ -273,7 +275,7 @@ const kidsBold: Design = (input, cg) => {
   els.push(rect({ ...plate, fill: "#ffffff", stroke: p.fg, strokeWidth: 3, cornerRadius: 18, rotation: angle, name: "Title plate" }));
   title.y = plateY + (plateH - title.height) / 2;
   title.rotation = angle;
-  els.push(title);
+  els.push(...title.elements);
   if (input.subtitle) els.push(...pill(input.subtitle, f.x + f.width / 2, subY, f.width - 20, p.fg, legibleOn(p.fg, p.bg, ["#ffffff", "#111111"], 4.5), "Inter", 13, "Subtitle"));
   if (input.badge) {
     const { cx, cy } = badge;
@@ -283,8 +285,8 @@ const kidsBold: Design = (input, cg) => {
     const h = textHeight(label, "Oswald", R * 1.1, size, 1);
     els.push(text({ x: cx - R * 0.55, y: cy - h / 2, width: R * 1.1, height: h, text: label, fontFamily: "Oswald", bold: true, fontSize: size, color: legibleOn(p.accent, "#ffffff", [p.fg, "#111111"]), align: "center", lineHeight: 1, name: "Badge text" }));
   }
-  if (input.author) els.push(...pill(input.author, f.x + f.width / 2, authorY, f.width - 20, "#ffffff", legibleOn("#ffffff", p.fg, ["#111111"], 4.5), "Inter", 13, "Author"));
-  return { elements: [...els, ...backAndSpine(input, cg, p.fg, "Inter")] };
+  if (input.author) els.push(...pill(input.author, f.x + f.width / 2, authorY, f.width - 20, "#ffffff", legibleOn("#ffffff", p.fg, ["#111111"], 4.5), face(input, "support", "Inter"), 13, "Author"));
+  return { elements: [...els, ...backAndSpine(input, cg, p.fg, face(input, "body", "Inter"))] };
 };
 
 const rainbow: Design = (input, cg) => {
@@ -309,11 +311,11 @@ const rainbow: Design = (input, cg) => {
     y = a.y + a.height + 18;
   }
   const subH = input.subtitle ? textHeight(input.subtitle, "Inter", inner.width, 14, 1.3) + 22 : 0;
-  const title = fitTitle(input.title, "Playfair Display", { ...inner, y }, 64, arcTop - 24 - y - subH, legibleOn(p.bg, p.fg, [p.accent]), "left", 5);
-  els.push(title);
+  const title = lockup(input, { box: { ...inner, y }, family: "Playfair Display", max: 76, maxH: arcTop - 24 - y - subH, color: legibleOn(p.bg, p.fg, [p.accent]), supportColor: legibleOn(p.bg, p.muted, [p.fg], 4.5), align: "left", maxLines: 5 });
+  els.push(...title.elements);
   els.push(rect({ x: inner.x, y: title.y + title.height + 10, width: 48, height: 4, fill: p.accent, name: "Accent" }));
   if (input.subtitle) els.push(para(input.subtitle, { ...inner, y: title.y + title.height + 24 }, "Inter", 14, legibleOn(p.bg, p.muted, [p.fg], 4.5), { align: "left", name: "Subtitle", lh: 1.3 }));
-  return { elements: [...els, ...backAndSpine(input, cg, p.fg, "Lora")] };
+  return { elements: [...els, ...backAndSpine(input, cg, p.fg, face(input, "body", "Lora"))] };
 };
 
 const label: Design = (input, cg) => {
@@ -326,7 +328,7 @@ const label: Design = (input, cg) => {
   const fill = mixHex(p.bg, "#ffffff", 0.8);
   const ink = legibleOn(fill, p.fg, [p.bg, "#111111"]);
   const accentInk = legibleOn(fill, p.accent, [ink]);
-  const title = fitTitle(input.title, "Playfair Display", { x: lx + 34, y: 0, width: lw - 68, height: 0 }, 50, cg.trimH * 0.3, ink);
+  const title = lockup(input, { box: { x: lx + 34, y: 0, width: lw - 68, height: 0 }, family: "Playfair Display", max: 58, maxH: cg.trimH * 0.32, color: ink, supportColor: accentInk });
   const sub = input.subtitle ? para(input.subtitle, { x: lx + 34, y: 0, width: lw - 68, height: 0 }, "Lora", 13, legibleOn(fill, p.muted, [ink], 4.5), { name: "Subtitle", lh: 1.3 }) : null;
   const lh = 38 + 12 + 16 + title.height + 16 + 12 + (sub ? sub.height + 14 : 0) + 34;
   const ly = f.y + f.height * 0.44 - lh / 2;
@@ -336,7 +338,7 @@ const label: Design = (input, cg) => {
   els.push(pathIn({ x: lx + lw * 0.25, y, width: lw * 0.5, height: 12 }, ornament(lw * 0.5, 12), { fill: accentInk, name: "Ornament" }));
   y += 12 + 16;
   title.y = y;
-  els.push(title);
+  els.push(...title.elements);
   y += title.height + 16;
   els.push(pathIn({ x: lx + lw * 0.25, y, width: lw * 0.5, height: 12 }, ornament(lw * 0.5, 12), { fill: accentInk, name: "Ornament" }));
   y += 12 + 14;
@@ -344,8 +346,8 @@ const label: Design = (input, cg) => {
     sub.y = y;
     els.push(sub);
   }
-  if (input.author) els.push(...pill(input.author, f.x + f.width / 2, f.y + f.height - 36, f.width, fill, ink, "Lora", 14, "Author"));
-  return { elements: [...els, ...backAndSpine(input, cg, p.fg, "Lora", "Lora")] };
+  if (input.author) els.push(...pill(input.author, f.x + f.width / 2, f.y + f.height - 36, f.width, fill, ink, face(input, "body", "Lora"), 14, "Author"));
+  return { elements: [...els, ...backAndSpine(input, cg, p.fg, face(input, "body", "Lora"), "Lora")] };
 };
 
 export const DESIGNS: Record<string, Design> = {
