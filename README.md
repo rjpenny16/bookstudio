@@ -91,7 +91,7 @@ src/
 │   ├── export/        KDP package builder (zip), metadata/provenance/license manifests
 │   ├── research/      CSV import, rank→sales estimates with intervals, niche scoring, sales reports
 │   └── storage/       IndexedDB persistence, zustand store with undo/redo and cover reflow
-│   ├── quality/       Content, design and listing checks; listing critique and visual review runners
+│   ├── quality/       Content, design and listing checks; puzzle measurements; listing critique and visual review runners
 ├── components/        Fabric.js editor, properties/layers panel, workspace tabs
 └── app/               Next.js routes + /api/ai
 ```
@@ -114,6 +114,15 @@ npx playwright test    # end-to-end: create → edit → quality → preflight �
 ```
 
 The e2e suite starts the production server itself (`npm start`), so run `npm run build` first. If your Playwright version doesn't match a locally installed Chromium, set `PW_CHROMIUM_PATH` to the browser executable.
+
+### Sample books (quality baseline)
+
+```bash
+npm run build
+npm run samples        # about a minute; writes to samples/ (git-ignored), or set SAMPLES_OUT
+```
+
+Builds six reference books through the real one-click start with the offline provider: large-print sudoku for seniors, a kids' activity book, a word-search book, a gratitude journal, a weekly planner and a log book. Randomness and the clock are fixed, so two runs give the same books. For each book you get `interior.pdf`, `cover.pdf`, `cover-front.png`, `cover-thumb.png` (160 px tall, as in Amazon search results), `cover-wrap.png`, `spreads.png` (the opening, the first spread of each section, the answer key and the end) and `report.json`. The report holds the scorecard, preflight problems, quality findings, repeated text and puzzle measurements: sudoku clue counts against the difficulty label, word-search direction mix and words that can be read twice, maze path length and dead ends. `samples/summary.md` compares the books in one table, and `samples/index.html` shows every cover and spread on one page. Run it before and after a change to see what improved.
 
 ## Roadmap
 
