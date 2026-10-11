@@ -55,8 +55,10 @@ export function AddPagesDialog({ open, onClose, project, currentIndex, onInsert 
         if (run) setRuns((x) => [...x, run]);
         setCfg({ ...cfg, prompts: r.output.prompts, aiRunId: run?.id });
         setAiNote(`${r.output.prompts.length} prompts from ${r.meta.provider} (${r.meta.model})`);
-      } else if (cfg.kind === "word-search") {
-        const r = await callAi("word-lists", { topic, audience: project.brief.audience || "adults", count: Math.max(1, cfg.puzzles.length), wordsPerPuzzle: cfg.difficulty === "easy" ? 10 : 15, maxLength: cfg.size - 2 });
+      } else if (cfg.kind === "word-search" || cfg.kind === "word-scramble") {
+        const r = cfg.kind === "word-search"
+          ? await callAi("word-lists", { topic, audience: project.brief.audience || "adults", count: Math.max(1, cfg.puzzles.length), wordsPerPuzzle: cfg.difficulty === "easy" ? 10 : 15, maxLength: cfg.size - 2 })
+          : await callAi("word-lists", { topic, audience: project.brief.audience || "adults", count: Math.max(1, cfg.puzzles.length), wordsPerPuzzle: 15, maxLength: 10 });
         const run = isModelOutput(r.meta) ? modelRun(r.meta, ["interior.word-lists"]) : null;
         if (run) setRuns((x) => [...x, run]);
         setCfg({ ...cfg, puzzles: r.output.puzzles, aiRunId: run?.id });
@@ -120,7 +122,7 @@ export function AddPagesDialog({ open, onClose, project, currentIndex, onInsert 
         </div>
 
         <div className="field-row">
-          {"count" in cfg && <Num label={cfg.kind === "sudoku" || cfg.kind === "maze" ? "Puzzles" : "Pages"} value={cfg.count} onChange={(count) => set({ count })} max={cfg.kind === "sudoku" ? 600 : 800} />}
+          {"count" in cfg && <Num label={cfg.kind === "sudoku" || cfg.kind === "maze" || cfg.kind === "number-search" ? "Puzzles" : cfg.kind === "monthly-calendar" ? "Months" : cfg.kind === "weekly-spread" ? "Weeks" : "Pages"} value={cfg.count} onChange={(count) => set({ count })} max={cfg.kind === "sudoku" ? 600 : 800} />}
           {(cfg.kind === "lined" || cfg.kind === "journal-prompts") && <Num label="Line spacing (in)" value={cfg.spacingIn} step={0.03125} min={0.2} max={1} onChange={(spacingIn) => set({ spacingIn })} />}
           {(cfg.kind === "dot-grid" || cfg.kind === "graph") && <Num label="Spacing (in)" value={cfg.spacingIn} step={0.0625} min={0.125} max={1} onChange={(spacingIn) => set({ spacingIn })} />}
           {cfg.kind === "graph" && <Num label="Bold line every" value={cfg.majorEvery} min={0} max={10} onChange={(majorEvery) => set({ majorEvery })} />}
@@ -128,7 +130,7 @@ export function AddPagesDialog({ open, onClose, project, currentIndex, onInsert 
           {cfg.kind === "music" && <Num label="Staves per page" value={cfg.staves} min={4} max={14} onChange={(staves) => set({ staves })} />}
           {cfg.kind === "habit-tracker" && <Num label="Habits" value={cfg.habits} min={3} max={30} onChange={(habits) => set({ habits })} />}
           {cfg.kind === "log" && <Num label="Rows per page" value={cfg.rows} min={5} max={50} onChange={(rows) => set({ rows })} />}
-          {(cfg.kind === "sudoku" || cfg.kind === "maze" || cfg.kind === "word-search") && (
+          {(cfg.kind === "sudoku" || cfg.kind === "maze" || cfg.kind === "word-search" || cfg.kind === "number-search" || cfg.kind === "cryptogram") && (
             <div className="field">
               <label>
                 Difficulty
@@ -153,10 +155,78 @@ export function AddPagesDialog({ open, onClose, project, currentIndex, onInsert 
               </label>
             </div>
           )}
-          {cfg.kind === "word-search" && <Num label="Grid size" value={cfg.size} min={8} max={24} onChange={(size) => set({ size })} />}
+          {(cfg.kind === "word-search" || cfg.kind === "number-search") && <Num label="Grid size" value={cfg.size} min={8} max={24} onChange={(size) => set({ size })} />}
+          {cfg.kind === "cryptogram" && (
+            <div className="field">
+              <label>
+                Per page
+                <select value={cfg.perPage} onChange={(e) => set({ perPage: Number(e.target.value) as 1 | 2 })}>
+                  <option value={1}>1 (large print)</option>
+                  <option value={2}>2</option>
+                </select>
+              </label>
+            </div>
+          )}
+          {(cfg.kind === "monthly-calendar" || cfg.kind === "weekly-spread") && (
+            <div className="field">
+              <label>
+                Start month (blank = undated)
+                <input type="month" value={cfg.startDate} onChange={(e) => set({ startDate: e.target.value })} />
+              </label>
+            </div>
+          )}
         </div>
 
-        {(cfg.kind === "sudoku" || cfg.kind === "maze" || cfg.kind === "word-search") && (
+        {(cfg.kind === "text-page" || cfg.kind === "section-divider") && (
+          <div className="stack">
+            <div className="field">
+              <label>
+                Heading
+                <input value={cfg.title} onChange={(e) => set({ title: e.target.value })} />
+              </label>
+            </div>
+            <div className="field">
+              <label>
+                {cfg.kind === "text-page" ? "Text (blank line between paragraphs)" : "Subtitle"}
+                <textarea rows={cfg.kind === "text-page" ? 8 : 2} value={cfg.kind === "text-page" ? cfg.body : cfg.subtitle} onChange={(e) => set(cfg.kind === "text-page" ? { body: e.target.value, aiRunId: undefined } : { subtitle: e.target.value, aiRunId: undefined })} />
+              </label>
+            </div>
+          </div>
+        )}
+
+        {cfg.kind === "table-of-contents" && (
+          <div className="field">
+            <label>
+              Entries (one per line: <code>Title | page</code>)
+              <textarea
+                rows={6}
+                value={cfg.entries.map((e) => `${e.title} | ${e.page}`).join("\n")}
+                onChange={(e) =>
+                  set({
+                    entries: e.target.value
+                      .split("\n")
+                      .map((ln) => {
+                        const [t, n] = ln.split("|");
+                        return { title: (t ?? "").trim(), page: Number(n) || 0 };
+                      })
+                      .filter((x) => x.title),
+                  })
+                }
+              />
+            </label>
+          </div>
+        )}
+
+        {cfg.kind === "cryptogram" && (
+          <div className="field">
+            <label>
+              Sayings (one per line, one puzzle each). Write your own or use sayings you have the rights to.
+              <textarea rows={6} value={cfg.phrases.join("\n")} onChange={(e) => set({ phrases: e.target.value.split("\n"), aiRunId: undefined })} />
+            </label>
+          </div>
+        )}
+
+        {(cfg.kind === "sudoku" || cfg.kind === "maze" || cfg.kind === "word-search" || cfg.kind === "number-search" || cfg.kind === "word-scramble" || cfg.kind === "cryptogram") && (
           <div className="row">
             <label className="check">
               <input type="checkbox" checked={cfg.solutions} onChange={(e) => set({ solutions: e.target.checked })} /> Include answer key
@@ -200,7 +270,7 @@ export function AddPagesDialog({ open, onClose, project, currentIndex, onInsert 
           </div>
         )}
 
-        {(cfg.kind === "journal-prompts" || cfg.kind === "word-search") && (
+        {(cfg.kind === "journal-prompts" || cfg.kind === "word-search" || cfg.kind === "word-scramble") && (
           <div className="card stack" style={{ boxShadow: "none" }}>
             <div className="row">
               <div className="field" style={{ flex: 1 }}>

@@ -77,6 +77,12 @@ test("autopilot drafts a puzzle book offline", async ({ page }) => {
   await page.getByRole("button", { name: "large print sudoku" }).click();
   await page.getByRole("button", { name: "Run autopilot" }).click();
   await expect(page.getByText("Draft ready for your review")).toBeVisible({ timeout: 90_000 });
+  // A complete book: difficulty sections plus front and back matter, not one repeated generator.
+  const sections = page.getByRole("list", { name: "Book sections" }).getByRole("listitem");
+  await expect(sections.filter({ hasText: /^Easy: \d+ pages/ })).toHaveCount(1);
+  await expect(sections.filter({ hasText: /^Expert: \d+ pages/ })).toHaveCount(1);
+  await expect(sections.filter({ hasText: /How to Play/ })).toHaveCount(1);
+  await expect(sections.filter({ hasText: /Answer key/ })).toHaveCount(1);
   if (shots) await page.screenshot({ path: `${shots}/autopilot.png`, fullPage: true });
   await page.getByRole("link", { name: "Open in studio" }).click();
   await expect(page.getByRole("listbox", { name: "Pages" })).toBeVisible();

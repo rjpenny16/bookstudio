@@ -11,7 +11,9 @@
  *   (back + spine + front, including bleed on all four sides).
  */
 
-export const SCHEMA_VERSION = "1.0";
+import type { GeneratorConfig } from "@/lib/generators/pages";
+
+export const SCHEMA_VERSION = "1.1";
 
 export type InteriorInk = "black" | "standard-color" | "premium-color";
 export type Paper = "white" | "cream";
@@ -158,6 +160,19 @@ export interface Page {
   /** Hide the automatic page number on this page. */
   hideNumber?: boolean;
   generator?: GeneratorRecord;
+  /** Interior section this page was generated for. */
+  sectionId?: string;
+}
+
+/**
+ * A generated part of the interior (front matter, a puzzle section, answer
+ * keys…). Keeping the config lets a section be regenerated or resized later.
+ */
+export interface InteriorSection {
+  id: string;
+  label: string;
+  role: "front" | "body" | "back";
+  config: GeneratorConfig;
 }
 
 export interface PageNumberSettings {
@@ -170,6 +185,7 @@ export interface PageNumberSettings {
 
 export interface Interior {
   pages: Page[];
+  sections: InteriorSection[];
   pageNumbers: PageNumberSettings;
 }
 

@@ -4,7 +4,7 @@ import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { offlineTask } from "./offline";
-import { SYSTEM_PROMPT, TASKS, taskPrompt, type TaskInput, type TaskName, type TaskOutput } from "./tasks";
+import { SYSTEM_PROMPT, TASK_EFFORT, TASKS, taskPrompt, type TaskInput, type TaskName, type TaskOutput } from "./tasks";
 
 export type ProviderName = "anthropic" | "ollama" | "offline";
 
@@ -57,7 +57,7 @@ async function runAnthropic<T extends TaskName>(task: T, prompt: string, model: 
       fallbacks: "default",
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: prompt }],
-      output_config: { effort: "medium", format: betaZodOutputFormat(schema) },
+      output_config: { effort: TASK_EFFORT[task], format: betaZodOutputFormat(schema) },
     });
     if (response.stop_reason === "refusal") throw new AiError(`The model declined this request${response.stop_details?.category ? ` (${response.stop_details.category})` : ""}.`, 422);
     if (response.stop_reason === "max_tokens") throw new AiError("The model ran out of output tokens; try a smaller request.");
