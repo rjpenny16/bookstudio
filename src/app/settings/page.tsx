@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { aiStatus, type AiStatus } from "@/lib/ai/client";
+import { imageStatus, type ImageStatus } from "@/lib/cover/artClient";
 import { downloadBlob } from "@/lib/export/package";
 import { RULES_VERSION } from "@/lib/kdp/rules";
 import { FONTS } from "@/lib/render/fonts";
@@ -10,8 +11,10 @@ import { getValue, listProjects, loadProject } from "@/lib/storage/db";
 export default function Settings() {
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [count, setCount] = useState<number | null>(null);
+  const [images, setImages] = useState<ImageStatus | null>(null);
   useEffect(() => {
     aiStatus().then(setStatus).catch(() => setStatus(null));
+    imageStatus().then(setImages).catch(() => setImages(null));
     listProjects().then((p) => setCount(p.length));
   }, []);
 
@@ -50,6 +53,25 @@ export default function Settings() {
             <li><code>ANTHROPIC_API_KEY</code>: Claude via the Anthropic API (default model <code>claude-opus-5-5</code>, override with <code>ANTHROPIC_MODEL</code>).</li>
             <li><code>AI_PROVIDER=ollama</code> with <code>OLLAMA_BASE_URL</code> and <code>OLLAMA_MODEL</code>: self-hosted open-weight models.</li>
             <li><code>AI_PROVIDER=offline</code>: deterministic templates only, no model calls.</li>
+          </ul>
+        </div>
+        <div className="card stack">
+          <h2 style={{ margin: 0 }}>Cover art</h2>
+          {images ? (
+            <>
+              <div className="row">
+                <span className={`badge ${images.configured ? "badge-pass" : "badge-warn"}`}>{images.provider}</span>
+                {images.model && <code>{images.model}</code>}
+              </div>
+              <p className="muted" style={{ margin: 0 }}>{images.detail}</p>
+            </>
+          ) : (
+            <span className="muted">Checking…</span>
+          )}
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
+            <li><code>OPENAI_API_KEY</code>: generate cover art with the OpenAI Images API (default model <code>gpt-image-2</code>, override with <code>OPENAI_IMAGE_MODEL</code>; <code>OPENAI_IMAGE_QUALITY</code> defaults to <code>high</code>).</li>
+            <li>gpt-image-2 is asked for art at 300 DPI for the cover size (up to its 8.3 MP limit). Older models return at most 1536 px, which is upscaled; preflight still reports the real resolution.</li>
+            <li>Generated images are marked AI-generated, so the KDP image disclosure is pre-filled.</li>
           </ul>
         </div>
         <div className="card stack">

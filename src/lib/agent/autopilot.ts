@@ -1,7 +1,9 @@
 import { produce } from "immer";
 import { callAi, isModelOutput, modelRun, type AiCallResult } from "@/lib/ai/client";
 import type { BlueprintOutput, BriefOutput, TaskName } from "@/lib/ai/tasks";
-import { buildCover, PALETTES } from "@/lib/cover/templates";
+import { suggestArtTemplate } from "@/lib/cover/art";
+import { designCover, directArt, generateCandidates, pickCandidate } from "@/lib/cover/artClient";
+import { PALETTES } from "@/lib/cover/templates";
 import { resolveCategories, suggestCategories } from "@/lib/kdp/categories";
 import { generatePages } from "@/lib/generators/pages";
 import { coverGeometry, findTrim } from "@/lib/kdp/geometry";
@@ -29,7 +31,12 @@ export interface AutopilotInput {
   trimId: string;
   author: string;
   notes: string;
+  /** Generate AI cover art (needs an image provider on the server). */
+  coverArt?: boolean;
 }
+
+/** Cover art candidates autopilot generates and picks from. */
+export const ART_CANDIDATES = 4;
 
 export type StepStatus = "pending" | "running" | "done" | "error";
 
@@ -48,6 +55,7 @@ export const AUTOPILOT_STEPS: { id: string; label: string }[] = [
   { id: "layout", label: "Lay out interior pages" },
   { id: "listing", label: "Write listing metadata" },
   { id: "critique", label: "Critique & revise listing" },
+  { id: "art", label: "Generate & pick cover art" },
   { id: "cover", label: "Design cover" },
   { id: "review", label: "Review rendered cover & pages" },
   { id: "preflight", label: "Run KDP preflight & auto-repair" },
@@ -252,22 +260,41 @@ export async function runAutopilot(
     }
   });
 
-  // 6. Cover
-  project = await step("cover", async () => {
-    const palette = PALETTES.find((p) => p.id === brief.palette) ?? PALETTES[0];
-    const cg = coverGeometry(project.spec, project.interior.pages.length);
-    const cover = buildCover(brief.coverTemplate, { title: project.metadata.title, subtitle: project.metadata.subtitle, author: input.author, backText: listing.output.backCoverBlurb, palette }, cg);
-    const next = produce(project, (d) => {
-      d.cover.background = cover.background;
-      d.cover.templateId = cover.templateId;
-      d.cover.elements = cover.elements.map((el) =>
-        listing.runId && el.type === "text" && (el.name === "Back blurb" || el.name === "Subtitle") ? { ...el, provenance: { origin: "ai-generated" as const, runId: listing.runId } } : el,
-      );
-    });
-    return [next, `${brief.coverTemplate} template, ${palette.name} palette`];
+  // 6. Cover art: art direction, candidates, and a pick (a vision model looks at them when one is available).
+  const palette = PALETTES.find((p) => p.id === brief.palette) ?? PALETTES[0];
+  const art = await step("art", async () => {
+    if (!input.coverArt) return [null, "Off: no image provider, using a vector template"];
+    try {
+      const { direction, run } = await directArt(project, ART_CANDIDATES, signal);
+      if (run) runs.push(run);
+      const layout = direction.layout ?? suggestArtTemplate(input.bookType);
+      const artPalette = PALETTES.find((p) => p.id === direction.palette) ?? palette;
+      const cg = coverGeometry(project.spec, project.interior.pages.length);
+      const gen = await generateCandidates(direction.concepts, layout, cg, signal);
+      runs.push(...gen.runs);
+      if (gen.errors.length) notes.push(`Some cover art failed: ${gen.errors.join("; ")}`);
+      const pick = await pickCandidate(project, gen.candidates, layout, artPalette, signal);
+      if (pick.run) runs.push(pick.run);
+      project = produce(project, (d) => {
+        d.coverArt = { candidates: gen.candidates, chosenId: gen.candidates[pick.index].id, pickReason: pick.reason };
+      });
+      return [{ layout, palette: artPalette }, `${gen.candidates.length} candidate(s), picked "${gen.candidates[pick.index].name}"`];
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      notes.push(`Cover art skipped: ${e instanceof Error ? e.message : e}`);
+      return [null, "skipped, using a vector template"];
+    }
   });
 
-  // 6b. Look at the rendered cover and sample pages (needs a vision-capable model).
+  // 6b. Cover layout: art template when there is art, else the brief's vector template; back cover gets the blurb, "What's inside" and page thumbnails.
+  project = await step("cover", async () => {
+    const templateId = art?.layout ?? brief.coverTemplate;
+    const pal = art?.palette ?? palette;
+    const next = await designCover(project, { templateId, palette: pal, backText: listing.output.backCoverBlurb, inside: true, thumbs: true, listingRunId: listing.runId });
+    return [next, `${templateId} template, ${pal.name} palette`];
+  });
+
+  // 6c. Look at the rendered cover and sample pages (needs a vision-capable model).
   project = await step("review", async () => {
     if (briefRes.meta.provider === "offline") return [project, "Offline: rule-based design checks only"];
     try {

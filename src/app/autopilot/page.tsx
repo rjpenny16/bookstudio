@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { aiStatus, type AiStatus } from "@/lib/ai/client";
-import { AUTOPILOT_STEPS, runAutopilot, type AgentStep, type AutopilotResult } from "@/lib/agent/autopilot";
+import { ART_CANDIDATES, AUTOPILOT_STEPS, runAutopilot, type AgentStep, type AutopilotResult } from "@/lib/agent/autopilot";
+import { imageStatus, type ImageStatus } from "@/lib/cover/artClient";
 import { TRIM_SIZES } from "@/lib/kdp/rules";
 import { BOOK_TYPES, type BookType } from "@/lib/schema/project";
 import { saveProject } from "@/lib/storage/db";
@@ -27,6 +28,8 @@ export default function AutopilotPage() {
 function Autopilot() {
   const params = useSearchParams();
   const [status, setStatus] = useState<AiStatus | null>(null);
+  const [images, setImages] = useState<ImageStatus | null>(null);
+  const [coverArt, setCoverArt] = useState(true);
   const [topic, setTopic] = useState(params.get("topic") ?? "");
   const [audience, setAudience] = useState(params.get("audience") ?? "");
   const [bookType, setBookType] = useState<BookType>("journal");
@@ -41,6 +44,7 @@ function Autopilot() {
 
   useEffect(() => {
     aiStatus().then(setStatus).catch(() => setStatus(null));
+    imageStatus().then(setImages).catch(() => setImages(null));
   }, []);
 
   const start = async () => {
@@ -52,7 +56,7 @@ function Autopilot() {
     abortRef.current = ctrl;
     try {
       const res = await runAutopilot(
-        { topic, audience, bookType, trimId, author: author || "Your Name", notes },
+        { topic, audience, bookType, trimId, author: author || "Your Name", notes, coverArt: Boolean(images?.configured && coverArt) },
         (id, st, detail) => setSteps((prev) => prev.map((s) => (s.id === id ? { ...s, status: st, detail } : s))),
         ctrl.signal,
       );
@@ -144,6 +148,12 @@ function Autopilot() {
                 <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Tone, must-haves, things to avoid" />
               </label>
             </div>
+            {images?.configured && (
+              <label className="check">
+                <input type="checkbox" checked={coverArt} onChange={(e) => setCoverArt(e.target.checked)} />
+                Generate AI cover art ({ART_CANDIDATES} images with {images.model}; the best one is picked for the cover)
+              </label>
+            )}
             <div className="row">
               <button className="btn btn-primary" onClick={start} disabled={running || !topic.trim()}>
                 {running && <span className="spinner" />} {running ? "Working…" : "Run autopilot"}
@@ -216,6 +226,14 @@ function Autopilot() {
                   )}
                 </ul>
               </div>
+              {result.project.coverArt?.chosenId && (
+                <div>
+                  <strong>Cover art</strong>
+                  <p style={{ margin: "4px 0 0" }}>
+                    Picked &ldquo;{result.project.coverArt.candidates.find((c) => c.id === result.project.coverArt!.chosenId)?.name}&rdquo; of {result.project.coverArt.candidates.length}: {result.project.coverArt.pickReason}. The others are on the Cover tab.
+                  </p>
+                </div>
+              )}
               {result.notes.length > 0 && (
                 <div className="notice notice-info">
                   {result.notes.map((n, i) => (
@@ -266,6 +284,17 @@ function Autopilot() {
                     Offline mode uses built-in templates instead of a language model, so nothing is flagged as AI-generated. Set <code>ANTHROPIC_API_KEY</code> or <code>AI_PROVIDER=ollama</code> for real drafting. See <Link href="/settings">Settings</Link>.
                   </p>
                 )}
+              </>
+            ) : (
+              <span className="muted">Checking…</span>
+            )}
+            <h3 style={{ margin: "8px 0 0" }}>Cover art</h3>
+            {images ? (
+              <>
+                <span className={`badge ${images.configured ? "badge-pass" : "badge-warn"}`}>{images.configured ? `${images.provider} · ${images.model}` : "none"}</span>
+                <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                  {images.detail}
+                </p>
               </>
             ) : (
               <span className="muted">Checking…</span>

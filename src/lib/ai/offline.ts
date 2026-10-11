@@ -133,6 +133,26 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
       };
       return out as TaskOutput<T>;
     }
+    case "cover-art-prompt": {
+      const i = input as TaskInput<"cover-art-prompt">;
+      const t = i.topic.trim() || i.title;
+      const kid = /kid|child|ages? \d/i.test(i.audience);
+      const mood = i.bookType === "puzzle" || i.bookType === "activity" || kid ? "bright, cheerful colors" : "calm, warm, muted colors";
+      const ideas = [
+        { name: "Iconic object", prompt: `A single iconic object that captures ${t}, centered, large and simple, on a softly textured plain background. Flat vector illustration, ${mood}, bold clean shapes.` },
+        { name: "Gentle scene", prompt: `A gentle scene about ${t} for ${i.audience || "adults"}, wide open sky above, details concentrated in the lower half. Gouache-style illustration, ${mood}.` },
+        { name: "Pattern", prompt: `A tidy repeating pattern of small motifs related to ${t}, evenly spaced, with a calmer band of plain color across the upper third. Flat illustration, ${mood}.` },
+        { name: "Still life", prompt: `A cozy still life arranged on a table that suggests ${t}, seen slightly from above, soft daylight. Painterly flat illustration, ${mood}.` },
+        { name: "Landscape", prompt: `A simple stylized landscape that evokes ${t}, layered hills and a big quiet sky. Paper-cut illustration style, ${mood}.` },
+      ];
+      const start = hash(t) % ideas.length;
+      const concepts = Array.from({ length: i.count }, (_, n) => ideas[(start + n) % ideas.length]);
+      const layout = i.bookType === "puzzle" || i.bookType === "activity" ? "art-panel" : i.bookType === "journal" || i.bookType === "notebook" ? "art-framed" : "art-full-bleed";
+      const palette = (["midnight", "sage", "blush", "ocean", "sunny", "forest", "charcoal", "cream"] as const)[hash(t) % 8];
+      return { layout, palette, concepts } as TaskOutput<T>;
+    }
+    case "cover-art-pick":
+      return { choice: 1, reason: "Offline mode can't look at images; picked by measured title contrast instead.", problems: [] } as TaskOutput<T>;
     case "visual-review":
       return { score: 0, summary: "Offline mode can't look at images; only the rule-based design checks ran.", thumbnailReadable: true, findings: [] } as TaskOutput<T>;
   }
