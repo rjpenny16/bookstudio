@@ -21,11 +21,18 @@ export async function aiStatus(): Promise<AiStatus> {
   return res.json();
 }
 
-export async function callAi<T extends TaskName>(task: T, input: TaskInput<T>, signal?: AbortSignal): Promise<AiCallResult<T>> {
+/** An image for a vision task: base64 without the data: prefix. */
+export interface AiImage {
+  label: string;
+  mediaType: "image/png" | "image/jpeg";
+  data: string;
+}
+
+export async function callAi<T extends TaskName>(task: T, input: TaskInput<T>, signal?: AbortSignal, images?: AiImage[]): Promise<AiCallResult<T>> {
   const res = await fetch("/api/ai", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ task, input }),
+    body: JSON.stringify(images?.length ? { task, input, images } : { task, input }),
     signal,
   });
   const body = await res.json().catch(() => ({ error: `AI request failed (${res.status})` }));

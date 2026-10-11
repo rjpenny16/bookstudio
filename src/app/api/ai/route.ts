@@ -10,7 +10,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  let body: { task?: string; input?: unknown };
+  let body: { task?: string; input?: unknown; images?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -19,7 +19,7 @@ export async function POST(req: Request) {
   const task = body.task as TaskName;
   if (!task || !(task in TASKS)) return NextResponse.json({ error: `Unknown task "${body.task}"` }, { status: 400 });
   try {
-    return NextResponse.json(await runTask(task, body.input));
+    return NextResponse.json(await runTask(task, body.input, body.images));
   } catch (err) {
     if (err instanceof AiError) return NextResponse.json({ error: err.message }, { status: err.status });
     console.error("AI task failed", err);

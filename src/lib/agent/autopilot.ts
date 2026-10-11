@@ -2,14 +2,18 @@ import { produce } from "immer";
 import { callAi, isModelOutput, modelRun, type AiCallResult } from "@/lib/ai/client";
 import type { BlueprintOutput, BriefOutput, TaskName } from "@/lib/ai/tasks";
 import { buildCover, PALETTES } from "@/lib/cover/templates";
+import { resolveCategories, suggestCategories } from "@/lib/kdp/categories";
+import { generatePages } from "@/lib/generators/pages";
 import { coverGeometry, findTrim } from "@/lib/kdp/geometry";
-import type { GeneratorConfig } from "@/lib/generators/pages";
 import { cleanKeywords, findProhibited } from "@/lib/metadata/validate";
 import { runPreflight, type FixId, type PreflightReport } from "@/lib/preflight";
 import { applyFix } from "@/lib/preflight/fixes";
+import { applyRevisedListing, qualityReport, type QualityReport } from "@/lib/quality";
+import { critiqueListing, reviewVisuals } from "@/lib/quality/review";
 import { createProject } from "@/lib/schema/factory";
 import type { BookType, ModelRun, Project } from "@/lib/schema/project";
-import { assembleBook, clampPageTarget, describeBook, planSections, validateBlueprint, type ContentNeed, type PlannedSection } from "./blueprint";
+import { assembleBook, clampPageTarget, describeBook, planSections, validateBlueprint, type PlannedSection } from "./blueprint";
+import { applyContent, refineContent, type ContentRequest } from "./content";
 
 /**
  * The publishing agent. It is a deterministic workflow with model calls inside
@@ -40,9 +44,12 @@ export const AUTOPILOT_STEPS: { id: string; label: string }[] = [
   { id: "brief", label: "Write publishing brief" },
   { id: "plan", label: "Plan sections & page budget" },
   { id: "content", label: "Write section content" },
+  { id: "check", label: "Check content for repeats & weak items" },
   { id: "layout", label: "Lay out interior pages" },
   { id: "listing", label: "Write listing metadata" },
+  { id: "critique", label: "Critique & revise listing" },
   { id: "cover", label: "Design cover" },
+  { id: "review", label: "Review rendered cover & pages" },
   { id: "preflight", label: "Run KDP preflight & auto-repair" },
   { id: "provenance", label: "Record provenance & disclosure" },
 ];
@@ -53,9 +60,31 @@ export interface AutopilotResult {
   repairs: string[];
   /** Notes worth showing the user (fallbacks, sections that came back short). */
   notes: string[];
+  /** Rule-based quality checks of the finished draft, plus the stored model reviews. */
+  quality: QualityReport;
 }
 
+/** Listing critiques scoring below this (or with a high-severity finding) get their revision applied. */
+const REVISE_BELOW = 8;
+
 const AUTO_FIXES: FixId[] = ["pad-min", "pad-even", "move-into-safe", "remove-spine-text", "clear-barcode", "clean-keywords", "suggest-ai-disclosure"];
+
+/** Regenerate the title page when the listing title or subtitle changed after layout, so book, cover and listing agree. */
+export function syncTitlePage(project: Project): Project {
+  const sec = project.interior.sections.find((s) => s.config.kind === "title-page");
+  if (!sec || sec.config.kind !== "title-page") return project;
+  const { title, subtitle } = project.metadata;
+  if (sec.config.title === title && sec.config.subtitle === subtitle) return project;
+  const config = { ...sec.config, title, subtitle };
+  const pages = generatePages(config, { spec: project.spec, pageCountHint: project.interior.pages.length }).map((p) => ({ ...p, sectionId: sec.id }));
+  return produce(project, (d) => {
+    const s = d.interior.sections.find((x) => x.id === sec.id)!;
+    s.config = config;
+    const first = d.interior.pages.findIndex((p) => p.sectionId === sec.id);
+    const count = d.interior.pages.filter((p) => p.sectionId === sec.id).length;
+    d.interior.pages.splice(first, count, ...pages);
+  });
+}
 
 /** Run async jobs with limited parallelism, keeping result order. */
 async function pool<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
@@ -70,24 +99,6 @@ async function pool<T, R>(items: T[], limit: number, fn: (item: T, index: number
     }),
   );
   return out;
-}
-
-/** Put model-written content into a planned section's config. */
-function applyContent(cfg: GeneratorConfig, need: ContentNeed, output: unknown, runId: string | undefined): GeneratorConfig {
-  if (need.task === "journal-prompts" && cfg.kind === "journal-prompts") {
-    const prompts = (output as { prompts: string[] }).prompts.map((p) => p.trim()).filter(Boolean);
-    return { ...cfg, prompts: [...new Set(prompts)].slice(0, need.count), aiRunId: runId };
-  }
-  if (need.task === "word-lists" && (cfg.kind === "word-search" || cfg.kind === "word-scramble")) {
-    const puzzles = (output as { puzzles: { title: string; words: string[] }[] }).puzzles.filter((p) => p.words.length).slice(0, need.count);
-    return { ...cfg, puzzles, aiRunId: runId };
-  }
-  if (need.task === "phrases") {
-    const phrases = [...new Set((output as { phrases: string[] }).phrases.map((p) => p.trim()).filter(Boolean))].slice(0, need.count);
-    if (cfg.kind === "cryptogram") return { ...cfg, phrases, aiRunId: runId };
-    if (cfg.kind === "gratitude") return { ...cfg, affirmations: phrases, aiRunId: runId };
-  }
-  return cfg;
 }
 
 export async function runAutopilot(
@@ -144,27 +155,29 @@ export async function runAutopilot(
   });
 
   // 3. Content for each section that needs it (prompts, word lists, sayings)
-  const filled: PlannedSection[] = await step("content", async () => {
+  const write = ({ need, sectionTitle, count, avoid }: ContentRequest) => {
+    const topic = need.theme;
+    const avoidList = avoid.length ? avoid : undefined;
+    if (need.task === "journal-prompts") return ai("journal-prompts", { topic, audience, count, bookTitle: title, sectionTitle, avoid: avoidList }, [`interior.prompts:${sectionTitle}`]);
+    if (need.task === "word-lists")
+      return ai("word-lists", { topic, audience, count, wordsPerPuzzle: need.wordsPerPuzzle, maxLength: need.maxLength, difficulty: need.difficulty, avoid: avoidList }, [`interior.word-lists:${sectionTitle}`]);
+    return ai("phrases", { topic, audience, count, maxLength: need.maxLength, style: need.style, bookTitle: title, avoid: avoidList }, [`interior.phrases:${sectionTitle}`]);
+  };
+  const written: PlannedSection[] = await step("content", async () => {
     const out = await pool(planned, 3, async (sec): Promise<PlannedSection> => {
       const need = sec.content;
       if (!need) return sec;
-      const topic = need.theme;
-      const r =
-        need.task === "journal-prompts"
-          ? await ai("journal-prompts", { topic, audience, count: need.count }, [`interior.prompts:${sec.label}`])
-          : need.task === "word-lists"
-            ? await ai("word-lists", { topic, audience, count: need.count, wordsPerPuzzle: need.wordsPerPuzzle, maxLength: need.maxLength }, [`interior.word-lists:${sec.label}`])
-            : await ai("phrases", { topic, audience, count: need.count, maxLength: need.maxLength, style: need.style }, [`interior.phrases:${sec.label}`]);
+      const r = await write({ need, sectionTitle: sec.label, count: need.count, avoid: [] });
       return { ...sec, config: applyContent(sec.config, need, r.output, r.runId) };
     });
-    for (let i = 0; i < out.length; i++) {
-      const need = planned[i].content;
-      if (!need) continue;
-      const got = out[i].config;
-      const n = got.kind === "journal-prompts" ? got.prompts.length : got.kind === "word-search" || got.kind === "word-scramble" ? got.puzzles.length : got.kind === "cryptogram" ? got.phrases.length : need.count;
-      if (n < need.count) notes.push(`${planned[i].label}: asked for ${need.count}, received ${n}; the rest of the page budget became notes pages.`);
-    }
     return [out, describeBook(out)];
+  });
+
+  // 3b. Check the whole book's content for repeats and weak items, and replace them.
+  const filled: PlannedSection[] = await step("check", async () => {
+    const r = await refineContent(written, write);
+    notes.push(...r.notes);
+    return [r.sections, r.removed ? `${r.removed} replaced or removed, ${r.added} new item(s)` : "No repeats or weak items found"];
   });
 
   // 4. Layout
@@ -179,6 +192,7 @@ export async function runAutopilot(
   });
 
   // 5. Listing
+  const categoryOptions = suggestCategories({ bookType: input.bookType, topic: input.topic, audience }, 12);
   const listing = await step("listing", async () => {
     const r = await ai(
       "listing",
@@ -193,6 +207,7 @@ export async function runAutopilot(
         pageCount: project.interior.pages.length,
         trim: trim.label,
         keywordIdeas: brief.keywordIdeas,
+        categoryOptions,
       },
       ["listing.title", "listing.description", "listing.keywords", "listing.backCover"],
     );
@@ -204,9 +219,37 @@ export async function runAutopilot(
     d.metadata.subtitle = L.subtitle;
     d.metadata.description = L.description;
     d.metadata.keywords = cleanKeywords(L.keywords);
-    d.metadata.categories = L.categories.slice(0, 3);
+    d.metadata.categories = resolveCategories(L.categories, categoryOptions).categories;
     if (L.suggestedPriceUsd > 0) d.metadata.listPriceUsd = Math.round(L.suggestedPriceUsd * 100) / 100;
     d.name = d.metadata.title;
+  });
+
+  // 5b. Critique the listing and apply the revision when it is clearly better.
+  project = await step("critique", async () => {
+    try {
+      const { review, run } = await critiqueListing(project, signal);
+      let next = produce(project, (d) => {
+        d.reviews = { ...d.reviews, listing: review };
+      });
+      let detail = run ? `score ${review.score}/10` : "Offline: rule-based listing checks only";
+      const weak = review.score < REVISE_BELOW || review.findings.some((f) => f.severity === "high");
+      if (run && review.revised && weak) {
+        const { metadata, changed } = applyRevisedListing(next, review.revised);
+        if (changed.length) {
+          next = produce(next, (d) => {
+            d.metadata = metadata;
+            d.name = metadata.title;
+          });
+          run.outputs.push(...changed.map((c) => `listing.${c}`));
+          detail += `, revised ${changed.join(", ")}`;
+        }
+      }
+      if (run) runs.push(run);
+      return [syncTitlePage(next), detail];
+    } catch (e) {
+      notes.push(`Listing critique skipped: ${e instanceof Error ? e.message : e}`);
+      return [syncTitlePage(project), "skipped"];
+    }
   });
 
   // 6. Cover
@@ -222,6 +265,23 @@ export async function runAutopilot(
       );
     });
     return [next, `${brief.coverTemplate} template, ${palette.name} palette`];
+  });
+
+  // 6b. Look at the rendered cover and sample pages (needs a vision-capable model).
+  project = await step("review", async () => {
+    if (briefRes.meta.provider === "offline") return [project, "Offline: rule-based design checks only"];
+    try {
+      const { review, run } = await reviewVisuals(project, signal);
+      if (run) runs.push(run);
+      const next = produce(project, (d) => {
+        d.reviews = { ...d.reviews, visual: review };
+      });
+      const serious = review.findings.filter((f) => f.severity !== "low").length;
+      return [next, `score ${review.score}/10${serious ? `, ${serious} finding(s) to look at` : ""}${review.thumbnailReadable ? "" : ", title hard to read as a thumbnail"}`];
+    } catch (e) {
+      notes.push(`Visual review skipped: ${e instanceof Error ? e.message : e}`);
+      return [project, "skipped"];
+    }
   });
 
   // 7. Preflight + repair loop
@@ -249,5 +309,5 @@ export async function runAutopilot(
     return [final, runs.length ? `${runs.length} model run(s) recorded; disclosure needs your confirmation` : "No model output used (offline heuristics)"];
   });
 
-  return { project, report: runPreflight(project), repairs, notes };
+  return { project, report: runPreflight(project), repairs, notes, quality: qualityReport(project) };
 }

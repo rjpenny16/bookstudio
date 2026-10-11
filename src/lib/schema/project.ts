@@ -268,6 +268,32 @@ export interface ModelRun {
   outputs: string[];
 }
 
+export interface ReviewFinding {
+  /** What the finding is about: a listing field, "cover", or an image label such as "Page 12". */
+  target: string;
+  severity: "high" | "medium" | "low";
+  issue: string;
+  suggestion: string;
+}
+
+/** A stored model review. Rule-based checks are recomputed live and not stored. */
+export interface StoredReview {
+  at: string;
+  provider: string;
+  model: string;
+  score: number;
+  summary: string;
+  findings: ReviewFinding[];
+}
+
+export interface ProjectReviews {
+  listing?: StoredReview & {
+    /** The critic's revised listing, offered for one-click apply. */
+    revised?: { title: string; subtitle: string; description: string; keywords: string[]; categories: string[] };
+  };
+  visual?: StoredReview & { thumbnailReadable: boolean; images: string[] };
+}
+
 export interface Project {
   schemaVersion: typeof SCHEMA_VERSION;
   id: string;
@@ -282,6 +308,8 @@ export interface Project {
   metadata: ListingMetadata;
   assets: Asset[];
   modelRuns: ModelRun[];
+  /** Latest model reviews of the listing and the rendered book (optional; added in Phase 2, no migration needed). */
+  reviews?: ProjectReviews;
 }
 
 export function isLowContent(bookType: BookType): boolean {
