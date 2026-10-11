@@ -1,6 +1,7 @@
 "use client";
 
 import { createStore, del, get, set, type UseStore } from "idb-keyval";
+import { migrateProject } from "@/lib/schema/migrate";
 import type { Project } from "@/lib/schema/project";
 
 export interface ProjectSummary {
@@ -26,7 +27,8 @@ export async function listProjects(): Promise<ProjectSummary[]> {
 }
 
 export async function loadProject(id: string): Promise<Project | undefined> {
-  return get<Project>(`project:${id}`, db());
+  const p = await get<Project>(`project:${id}`, db());
+  return p ? migrateProject(p) : undefined;
 }
 
 export async function saveProject(p: Project): Promise<void> {

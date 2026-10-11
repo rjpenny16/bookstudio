@@ -5,6 +5,7 @@ import { aiUsage } from "@/lib/preflight/aiUsage";
 import { runPreflight, type PreflightReport } from "@/lib/preflight";
 import { fontDef, type FontBytesLoader } from "@/lib/render/fonts";
 import { renderCoverPdf, renderInteriorPdf } from "@/lib/render/pdf";
+import { isReadableSchema, migrateProject } from "@/lib/schema/migrate";
 import { isLowContent, SCHEMA_VERSION, type Element, type Project } from "@/lib/schema/project";
 import { round, ptToIn } from "@/lib/util/ids";
 
@@ -180,10 +181,10 @@ export async function buildKdpPackage(project: Project, opts: PackageOptions): P
 
 export function parseProjectFile(text: string): Project {
   const data = JSON.parse(text) as Project;
-  if (!data || typeof data !== "object" || data.schemaVersion !== SCHEMA_VERSION || !data.spec || !data.interior?.pages || !data.cover) {
-    throw new Error("This is not a BookStudio project file (schema 1.0).");
+  if (!data || typeof data !== "object" || !isReadableSchema(data.schemaVersion) || !data.spec || !data.interior?.pages || !data.cover) {
+    throw new Error(`This is not a BookStudio project file (schema ${SCHEMA_VERSION} or earlier).`);
   }
-  return data;
+  return migrateProject(data);
 }
 
 export function downloadBlob(blob: Blob, filename: string) {

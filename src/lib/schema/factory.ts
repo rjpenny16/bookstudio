@@ -1,9 +1,12 @@
 import { buildCover, PALETTES, suggestTemplate } from "@/lib/cover/templates";
 import { coverGeometry, findTrim } from "@/lib/kdp/geometry";
 import { RULES_VERSION } from "@/lib/kdp/rules";
-import { generatePages, type GeneratorConfig } from "@/lib/generators/pages";
+import { estimatePageCount, generatePages, generatorInfo, type GeneratorConfig } from "@/lib/generators/pages";
 import { newId } from "@/lib/util/ids";
-import { SCHEMA_VERSION, type BookType, type InteriorInk, type Paper, type Project } from "./project";
+import { SCHEMA_VERSION, type BookType, type InteriorInk, type InteriorSection, type Paper, type Project } from "./project";
+
+/** One interior section to generate: a bare config, or a config with a label and role. */
+export type SectionInput = GeneratorConfig | { label: string; role?: InteriorSection["role"]; config: GeneratorConfig };
 
 export interface NewProjectInput {
   name: string;
@@ -13,8 +16,8 @@ export interface NewProjectInput {
   ink: InteriorInk;
   bleed: boolean;
   author?: string;
-  /** Initial interior. Defaults to 120 lined pages. */
-  interior?: GeneratorConfig[];
+  /** Initial interior, one entry per section. Defaults to 120 lined pages. */
+  interior?: SectionInput[];
 }
 
 export function emptyBrief(): Project["brief"] {
@@ -44,7 +47,7 @@ export function createProject(input: NewProjectInput): Project {
       rulesVersion: RULES_VERSION,
     },
     brief: emptyBrief(),
-    interior: { pages: [], pageNumbers: { enabled: input.bookType !== "coloring", fontFamily: "Inter", fontSize: 9, startAt: 3 } },
+    interior: { pages: [], sections: [], pageNumbers: { enabled: input.bookType !== "coloring", fontFamily: "Inter", fontSize: 9, startAt: 3 } },
     cover: { background: "#ffffff", elements: [], barcode: "kdp" },
     metadata: {
       title: input.name || "",
@@ -64,9 +67,17 @@ export function createProject(input: NewProjectInput): Project {
     assets: [],
     modelRuns: [],
   };
-  const configs = input.interior ?? [{ kind: "lined", count: 120, spacingIn: 0.3125, header: true }];
-  const hint = 120;
-  for (const cfg of configs) project.interior.pages.push(...generatePages(cfg, { spec: project.spec, pageCountHint: hint }));
+  const inputs = input.interior ?? [{ kind: "lined", count: 120, spacingIn: 0.3125, header: true }];
+  const sections: InteriorSection[] = inputs.map((s) =>
+    "config" in s ? { id: newId("sec"), label: s.label, role: s.role ?? "body", config: s.config } : { id: newId("sec"), label: generatorInfo(s.kind).label, role: "body", config: s },
+  );
+  // The gutter depends on the final page count, so generate against the planned total.
+  const hint = sections.reduce((n, s) => n + estimatePageCount(s.config), 0);
+  for (const sec of sections) {
+    const pages = generatePages(sec.config, { spec: project.spec, pageCountHint: hint });
+    project.interior.pages.push(...pages.map((p) => ({ ...p, sectionId: sec.id })));
+  }
+  project.interior.sections = sections;
   const cg = coverGeometry(project.spec, project.interior.pages.length);
   Object.assign(
     project.cover,

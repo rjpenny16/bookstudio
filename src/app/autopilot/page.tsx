@@ -71,7 +71,7 @@ function Autopilot() {
         <div>
           <h1>AI Autopilot</h1>
           <p>
-            Describe the book. The agent writes a brief, builds the interior with deterministic generators, drafts the listing, designs the cover, runs KDP preflight and repairs what it safely can. It stops for your approval and never publishes for you.
+            Describe the book. The agent writes a brief, plans the sections (how-to page, difficulty ramp, contents, answer keys), writes their content, builds the interior with deterministic generators, drafts the listing, designs the cover, runs KDP preflight and repairs what it safely can. It stops for your approval and never publishes for you.
           </p>
         </div>
       </div>
@@ -181,6 +181,30 @@ function Autopilot() {
                 <b>{result.project.metadata.title}</b>: {result.project.interior.pages.length} pages, preflight {result.report.passed}/{result.report.total}
                 {result.report.blocking ? `, ${result.report.blocking} blocking` : ""}.
               </p>
+              {result.project.interior.sections.some((s) => s.role === "body") && (
+                <div>
+                  <strong>What&apos;s inside</strong>
+                  <ul aria-label="Book sections" style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                    {result.project.interior.sections
+                      .filter((s) => s.role === "body" && s.config.kind !== "section-divider")
+                      .map((s) => (
+                        <li key={s.id}>
+                          {s.label}: {result.project.interior.pages.filter((p) => p.sectionId === s.id).length} pages
+                        </li>
+                      ))}
+                    <li>
+                      Plus: {result.project.interior.sections.filter((s) => s.role !== "body" && !s.label.endsWith(": answers")).map((s) => s.label).join(", ")}
+                    </li>
+                  </ul>
+                </div>
+              )}
+              {result.notes.length > 0 && (
+                <div className="notice notice-info">
+                  {result.notes.map((n, i) => (
+                    <div key={i}>{n}</div>
+                  ))}
+                </div>
+              )}
               {result.repairs.length > 0 && (
                 <details>
                   <summary>{result.repairs.length} automatic repair(s)</summary>

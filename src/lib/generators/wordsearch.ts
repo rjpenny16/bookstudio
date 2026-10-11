@@ -41,8 +41,12 @@ export interface WordSearch {
   seed: number;
 }
 
-export function normalizeWord(w: string): string {
-  return w.toUpperCase().replace(/[^A-Z]/g, "");
+export const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+export const DIGITS = "0123456789";
+
+/** Uppercase and keep only characters of the grid alphabet (letters by default). */
+export function normalizeWord(w: string, alphabet: string = LETTERS): string {
+  return [...w.toUpperCase()].filter((ch) => alphabet.includes(ch)).join("");
 }
 
 function tryPlace(rng: Rng, grid: string[][], word: string, dirs: [number, number][]): PlacedWord | null {
@@ -77,15 +81,17 @@ export function generateWordSearch(
   size: number,
   difficulty: WordSearchDifficulty,
   seed: number,
+  alphabet: string = LETTERS,
 ): WordSearch {
   const rng = createRng(seed);
   const grid: string[][] = Array.from({ length: size }, () => Array<string>(size).fill(""));
-  const clean = Array.from(new Set(words.map(normalizeWord).filter((w) => w.length >= 2 && w.length <= size)));
+  const norm = (w: string) => normalizeWord(w, alphabet);
+  const clean = Array.from(new Set(words.map(norm).filter((w) => w.length >= 2 && w.length <= size)));
   // Longest first gives the best packing.
   const ordered = shuffle(rng, clean).sort((a, b) => b.length - a.length);
   const placed: PlacedWord[] = [];
   const skipped: string[] = words.filter((w) => {
-    const n = normalizeWord(w);
+    const n = norm(w);
     return n.length < 2 || n.length > size;
   });
   for (const word of ordered) {
@@ -93,8 +99,7 @@ export function generateWordSearch(
     if (p) placed.push(p);
     else skipped.push(word);
   }
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  for (const row of grid) for (let c = 0; c < size; c++) if (row[c] === "") row[c] = alphabet[Math.floor(rng() * 26)];
+  for (const row of grid) for (let c = 0; c < size; c++) if (row[c] === "") row[c] = alphabet[Math.floor(rng() * alphabet.length)];
   return { size, grid, placed, skipped, seed };
 }
 

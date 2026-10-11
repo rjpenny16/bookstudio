@@ -1,3 +1,4 @@
+import { recipeBlueprint } from "@/lib/agent/recipes";
 import type { TaskInput, TaskName, TaskOutput } from "./tasks";
 
 /**
@@ -44,6 +45,58 @@ const GENERIC_PROMPTS = [
   "Write about a time you were brave.",
   "What are three things you love about where you live?",
   "Which worry can you set down for today?",
+];
+
+// Traditional proverbs (public domain) for offline cryptograms.
+const SAYINGS = [
+  "Slow and steady wins the race.",
+  "A journey of a thousand miles begins with a single step.",
+  "Many hands make light work.",
+  "Where there is a will there is a way.",
+  "Practice makes perfect.",
+  "Every cloud has a silver lining.",
+  "Actions speak louder than words.",
+  "The early bird catches the worm.",
+  "Rome was not built in a day.",
+  "Little by little the bird builds its nest.",
+  "A smooth sea never made a skilled sailor.",
+  "Patience is a virtue.",
+  "Two heads are better than one.",
+  "Laughter is the best medicine.",
+  "Better late than never.",
+  "Every day is a fresh start.",
+  "Kindness costs nothing.",
+  "Good things come to those who wait.",
+  "Fortune favors the bold.",
+  "Knowledge is power.",
+  "Still waters run deep.",
+  "Home is where the heart is.",
+  "Hope for the best and prepare for the worst.",
+  "The best things in life are worth waiting for.",
+  "A friend in need is a friend indeed.",
+  "No rain, no flowers.",
+  "Tomorrow is another day.",
+  "Great minds think alike.",
+  "One step at a time.",
+  "Small steps lead to big changes.",
+];
+
+const AFFIRMATIONS = [
+  "I am allowed to take today one moment at a time.",
+  "I notice the good things around me.",
+  "I am growing a little every day.",
+  "I give myself the same kindness I give others.",
+  "I am grateful for the people who support me.",
+  "I can do hard things.",
+  "My best is enough today.",
+  "I choose calm over hurry.",
+  "I make room for rest and joy.",
+  "I welcome new beginnings.",
+  "I am proud of how far I have come.",
+  "Small moments of peace add up.",
+  "I trust myself to handle what comes.",
+  "I celebrate small wins.",
+  "I deserve good things.",
 ];
 
 const THEMES: Record<string, string[]> = {
@@ -93,6 +146,16 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
         risks: ["Offline mode: no market research was performed. Check competing titles and trademarks before publishing."],
       };
       return out as TaskOutput<T>;
+    }
+    case "blueprint": {
+      const i = input as TaskInput<"blueprint">;
+      return recipeBlueprint({ bookType: i.bookType, topic: i.topic, audience: i.audience, notes: i.notes }) as TaskOutput<T>;
+    }
+    case "phrases": {
+      const i = input as TaskInput<"phrases">;
+      const pool = (i.style === "affirmation" ? AFFIRMATIONS : SAYINGS).filter((p) => p.length <= i.maxLength);
+      const start = hash(i.topic) % pool.length;
+      return { phrases: Array.from({ length: Math.min(i.count, pool.length) }, (_, k) => pool[(start + k) % pool.length]) } as TaskOutput<T>;
     }
     case "listing": {
       const i = input as TaskInput<"listing">;
