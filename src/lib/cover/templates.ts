@@ -5,7 +5,9 @@ import { createRng } from "@/lib/generators/rng";
 import { legibleOn, legibleOnAll, mixHex } from "@/lib/util/color";
 import { artBox, isArtTemplate, type ArtTemplateId } from "./art";
 import { DESIGNS } from "./designs";
-import { backCover, fitTitle, spineText, titleBlock } from "./layout";
+import { genreOf, type TypeSystem } from "./genres";
+import { backCover, balanceElement, face, spineText } from "./layout";
+import { lockup } from "./lockup";
 
 export { fitFontSize } from "./layout";
 
@@ -31,6 +33,15 @@ export const PALETTES: Palette[] = [
   { id: "terracotta", name: "Terracotta", bg: "#f3e3d3", fg: "#3a2418", accent: "#c8643b", muted: "#7a4b35" },
   { id: "mint", name: "Mint", bg: "#e3f6ef", fg: "#12352b", accent: "#2a9d78", muted: "#2f5d50" },
   { id: "plum", name: "Plum", bg: "#3d1e3f", fg: "#fff3f8", accent: "#f2a65a", muted: "#e8cfe0" },
+  { id: "newsprint", name: "Newsprint", bg: "#f4efe4", fg: "#1c1c1a", accent: "#c8102e", muted: "#4a4945" },
+  { id: "royal", name: "Royal", bg: "#1d3c8f", fg: "#ffffff", accent: "#ffcc29", muted: "#dbe4ff" },
+  { id: "candy", name: "Candy", bg: "#fff1bd", fg: "#2b2250", accent: "#ff4f87", muted: "#4b3f72" },
+  { id: "sky", name: "Sky", bg: "#d4efff", fg: "#0c2d48", accent: "#ff7a29", muted: "#2e5a7a" },
+  { id: "linen", name: "Linen", bg: "#efe7dc", fg: "#2f2a25", accent: "#7f8f52", muted: "#5f5347" },
+  { id: "dusk", name: "Dusk", bg: "#283552", fg: "#fdf6ec", accent: "#e8b86d", muted: "#c9cfe0" },
+  { id: "ivory-gold", name: "Ivory & gold", bg: "#fbf7ef", fg: "#26231f", accent: "#a87a2c", muted: "#5f574a" },
+  { id: "kraft", name: "Kraft", bg: "#c9a77c", fg: "#24180b", accent: "#f6efe3", muted: "#3f2c19" },
+  { id: "slate", name: "Slate", bg: "#2f4354", fg: "#ffffff", accent: "#f2c230", muted: "#d6dde4" },
 ];
 
 /** Shelf a design is filed under in the template library. */
@@ -112,6 +123,8 @@ export interface CoverInput {
   /** Series name and volume number, for the series template. */
   series?: string;
   volume?: string;
+  /** The genre's type system; templates fall back to their own faces without one. */
+  type?: TypeSystem;
 }
 
 export function buildCover(templateId: string, input: CoverInput, cg: CoverGeometry): Pick<Cover, "background" | "elements" | "templateId"> {
@@ -137,12 +150,12 @@ export function buildCover(templateId: string, input: CoverInput, cg: CoverGeome
       const bandY = cg.front.y + cg.trimH * 0.3;
       const bandH = cg.trimH * 0.3;
       els.push(rect({ x: fullFront.x, y: bandY, width: fullFront.width, height: bandH, fill: p.accent, name: "Band" }));
-      const title = fitTitle(input.title, "Oswald", { ...f, x: f.x + 12, width: f.width - 24 }, 64, bandH - 16, legibleOn(p.accent, p.bg, [p.fg]));
+      const title = lockup(input, { box: { ...f, x: f.x + 12, width: f.width - 24 }, family: "Oswald", max: 72, maxH: bandH - 16, color: legibleOn(p.accent, p.bg, [p.fg]) });
       title.y = bandY + (bandH - title.height) / 2;
-      els.push(title);
-      if (input.subtitle) els.push(text({ x: f.x + 12, y: bandY + bandH + 20, width: f.width - 24, height: 40, text: input.subtitle, fontFamily: "Inter", fontSize: 14, color: p.fg, align: "center", name: "Subtitle" }));
-      if (input.author) els.push(text({ x: f.x, y: f.y + f.height - 40, width: f.width, height: 18, text: input.author, fontFamily: "Inter", bold: true, fontSize: 15, color: p.fg, align: "center", name: "Author" }));
-      els.push(...backCover(cg, input, p.fg, "Inter"));
+      els.push(...title.elements);
+      if (input.subtitle) els.push(text({ x: f.x + 12, y: bandY + bandH + 20, width: f.width - 24, height: 40, text: input.subtitle, fontFamily: face(input, "support", "Inter"), fontSize: 14, color: p.fg, align: "center", name: "Subtitle" }));
+      if (input.author) els.push(text({ x: f.x, y: f.y + f.height - 40, width: f.width, height: 18, text: input.author, fontFamily: face(input, "support", "Inter"), bold: true, fontSize: 15, color: p.fg, align: "center", name: "Author" }));
+      els.push(...backCover(cg, input, p.fg, face(input, "body", "Inter")));
       els.push(...spineText(cg, input, p.fg));
       break;
     }
@@ -151,12 +164,12 @@ export function buildCover(templateId: string, input: CoverInput, cg: CoverGeome
       els.push(rect({ x: f.x + 10, y: f.y + 10, width: f.width - 20, height: f.height - 20, fill: null, stroke: p.accent, strokeWidth: 3, name: "Frame outer" }));
       els.push(rect({ x: f.x + 20, y: f.y + 20, width: f.width - 40, height: f.height - 40, fill: null, stroke: p.accent, strokeWidth: 1, name: "Frame inner" }));
       const inner = { ...f, x: f.x + 40, width: f.width - 80 };
-      const title = titleBlock(input.title, "Playfair Display", inner, f.y + f.height * 0.3, 54, p.fg);
-      els.push(title);
+      const title = lockup(input, { box: { ...inner, y: f.y + f.height * 0.24 }, family: "Playfair Display", max: 64, maxH: f.height * 0.42, color: p.fg, supportColor: legibleOn(p.bg, p.muted, [p.fg], 4.5) });
+      els.push(...title.elements);
       els.push(line({ x: f.x + f.width / 2 - 40, y: title.y + title.height + 16, width: 80, height: 0, stroke: p.accent, strokeWidth: 2 }));
-      if (input.subtitle) els.push(text({ x: inner.x, y: title.y + title.height + 32, width: inner.width, height: 40, text: input.subtitle, fontFamily: "Lora", fontSize: 14, color: p.muted, align: "center", name: "Subtitle" }));
-      if (input.author) els.push(text({ x: inner.x, y: f.y + f.height - 70, width: inner.width, height: 18, text: input.author, fontFamily: "Lora", fontSize: 15, color: p.fg, align: "center", name: "Author" }));
-      els.push(...backCover(cg, input, p.fg));
+      if (input.subtitle) els.push(text({ x: inner.x, y: title.y + title.height + 32, width: inner.width, height: 40, text: input.subtitle, fontFamily: face(input, "body", "Lora"), fontSize: 14, color: p.muted, align: "center", name: "Subtitle" }));
+      if (input.author) els.push(text({ x: inner.x, y: f.y + f.height - 70, width: inner.width, height: 18, text: input.author, fontFamily: face(input, "body", "Lora"), fontSize: 15, color: p.fg, align: "center", name: "Author" }));
+      els.push(...backCover(cg, input, p.fg, face(input, "body", "Lora")));
       els.push(...spineText(cg, input, p.fg, "Lora"));
       break;
     }
@@ -167,23 +180,23 @@ export function buildCover(templateId: string, input: CoverInput, cg: CoverGeome
         els.push(ellipse({ x: cg.front.x + rng() * cg.trimW - d / 2, y: cg.front.y + rng() * cg.trimH - d / 2, width: d, height: d, fill: i % 2 ? p.accent : p.muted, opacity: 0.35, name: "Circle" }));
       }
       const plateY = f.y + f.height * 0.38;
-      const title = titleBlock(input.title.toUpperCase(), "Montserrat", { ...f, x: f.x + 24, width: f.width - 48 }, plateY + 18, 52, p.fg);
+      const title = lockup(input, { box: { ...f, x: f.x + 24, width: f.width - 48, y: plateY + 18 }, family: "Montserrat", max: 60, maxH: f.height * 0.36, color: p.fg, upper: true });
       els.push(rect({ x: f.x, y: plateY, width: f.width, height: title.height + 36 + (input.subtitle ? 30 : 0), fill: p.bg, opacity: 0.92, cornerRadius: 6, name: "Title plate" }));
-      els.push(title);
-      if (input.subtitle) els.push(text({ x: f.x + 24, y: title.y + title.height + 8, width: f.width - 48, height: 18, text: input.subtitle, fontFamily: "Inter", fontSize: 13, color: p.fg, align: "center", name: "Subtitle" }));
-      if (input.author) els.push(text({ x: f.x, y: f.y + f.height - 34, width: f.width, height: 18, text: input.author, fontFamily: "Montserrat", bold: true, fontSize: 14, color: p.fg, align: "center", name: "Author" }));
-      els.push(...backCover(cg, input, p.fg, "Inter"));
+      els.push(...title.elements);
+      if (input.subtitle) els.push(text({ x: f.x + 24, y: title.y + title.height + 8, width: f.width - 48, height: 18, text: input.subtitle, fontFamily: face(input, "support", "Inter"), fontSize: 13, color: p.fg, align: "center", name: "Subtitle" }));
+      if (input.author) els.push(text({ x: f.x, y: f.y + f.height - 34, width: f.width, height: 18, text: input.author, fontFamily: face(input, "support", "Montserrat"), bold: true, fontSize: 14, color: p.fg, align: "center", name: "Author" }));
+      els.push(...backCover(cg, input, p.fg, face(input, "body", "Inter")));
       els.push(...spineText(cg, input, p.fg));
       break;
     }
     case "minimal": {
       const inner = { ...f, x: f.x + 20, width: f.width - 40 };
-      const title = titleBlock(input.title, "Playfair Display", inner, f.y + 50, 60, p.fg, "left", 4);
-      els.push(title);
+      const title = lockup(input, { box: { ...inner, y: f.y + 50 }, family: "Playfair Display", max: 72, maxH: f.height * 0.55, color: p.fg, supportColor: legibleOn(p.bg, p.muted, [p.fg], 4.5), align: "left", maxLines: 4 });
+      els.push(...title.elements);
       els.push(rect({ x: inner.x, y: title.y + title.height + 18, width: 60, height: 4, fill: p.accent, name: "Accent" }));
-      if (input.subtitle) els.push(text({ x: inner.x, y: title.y + title.height + 36, width: inner.width, height: 40, text: input.subtitle, fontFamily: "Inter", fontSize: 13, color: p.muted, name: "Subtitle" }));
-      if (input.author) els.push(text({ x: inner.x, y: f.y + f.height - 40, width: inner.width, height: 18, text: input.author, fontFamily: "Inter", fontSize: 14, color: p.fg, name: "Author" }));
-      els.push(...backCover(cg, input, p.fg));
+      if (input.subtitle) els.push(text({ x: inner.x, y: title.y + title.height + 36, width: inner.width, height: 40, text: input.subtitle, fontFamily: face(input, "support", "Inter"), fontSize: 13, color: p.muted, name: "Subtitle" }));
+      if (input.author) els.push(text({ x: inner.x, y: f.y + f.height - 40, width: inner.width, height: 18, text: input.author, fontFamily: face(input, "support", "Inter"), fontSize: 14, color: p.fg, name: "Author" }));
+      els.push(...backCover(cg, input, p.fg, face(input, "body", "Lora")));
       els.push(...spineText(cg, input, p.fg));
       break;
     }
@@ -191,12 +204,13 @@ export function buildCover(templateId: string, input: CoverInput, cg: CoverGeome
       els.push(pattern({ x: 0, y: 0, width: cg.width, height: cg.height, pattern: { kind: "dots", spacing: 18, radius: 2.2 }, stroke: p.accent, strokeWidth: 0.5, opacity: 0.35, name: "Dots" }));
       const plate = { x: f.x + 12, y: f.y + f.height * 0.22, width: f.width - 24, height: f.height * 0.42 };
       els.push(rect({ ...plate, fill: "#ffffff", stroke: p.accent, strokeWidth: 4, cornerRadius: 28, name: "Title plate" }));
-      const title = titleBlock(input.title, "Pacifico", { ...plate, x: plate.x + 20, width: plate.width - 40 }, 0, 48, legibleOn("#ffffff", p.accent, [p.fg, p.bg]));
+      const onPlate = legibleOn("#ffffff", p.accent, [p.fg, p.bg]);
+      const title = lockup(input, { box: { ...plate, x: plate.x + 20, width: plate.width - 40 }, family: "Pacifico", bold: false, supportFamily: "Inter", max: 56, maxH: plate.height - 40 - (input.subtitle ? 24 : 0), color: onPlate, supportColor: legibleOn("#ffffff", p.fg, ["#333333"], 4.5) });
       title.y = plate.y + (plate.height - title.height) / 2 - (input.subtitle ? 12 : 0);
-      els.push(title);
-      if (input.subtitle) els.push(text({ x: plate.x + 20, y: title.y + title.height + 6, width: plate.width - 40, height: 18, text: input.subtitle, fontFamily: "Inter", bold: true, fontSize: 12, color: "#333333", align: "center", name: "Subtitle" }));
-      if (input.author) els.push(text({ x: f.x, y: f.y + f.height - 34, width: f.width, height: 18, text: input.author, fontFamily: "Inter", bold: true, fontSize: 14, color: p.fg, align: "center", name: "Author" }));
-      els.push(...backCover(cg, input, p.fg, "Inter"));
+      els.push(...title.elements);
+      if (input.subtitle) els.push(text({ x: plate.x + 20, y: title.y + title.height + 6, width: plate.width - 40, height: 18, text: input.subtitle, fontFamily: face(input, "support", "Inter"), bold: true, fontSize: 12, color: "#333333", align: "center", name: "Subtitle" }));
+      if (input.author) els.push(text({ x: f.x, y: f.y + f.height - 34, width: f.width, height: 18, text: input.author, fontFamily: face(input, "support", "Inter"), bold: true, fontSize: 14, color: p.fg, align: "center", name: "Author" }));
+      els.push(...backCover(cg, input, p.fg, face(input, "body", "Inter")));
       els.push(...spineText(cg, input, p.fg));
       break;
     }
@@ -204,12 +218,12 @@ export function buildCover(templateId: string, input: CoverInput, cg: CoverGeome
     default: {
       els.push(pattern({ x: 0, y: 0, width: cg.width, height: cg.height, pattern: { kind: "grid", spacing: 24 }, stroke: p.muted, strokeWidth: 0.8, opacity: 0.25, name: "Grid" }));
       const plateY = f.y + f.height * 0.18;
-      const title = titleBlock(input.title.toUpperCase(), "Anton", { ...f, x: f.x + 16, width: f.width - 32 }, plateY + 16, 96, legibleOn(p.accent, p.bg, [p.fg]), "center", 3);
+      const title = lockup(input, { box: { ...f, x: f.x + 16, width: f.width - 32, y: plateY + 16 }, family: "Anton", bold: false, supportFamily: "Oswald", max: 120, maxH: f.height * 0.5, color: legibleOn(p.accent, p.bg, [p.fg]), upper: true, maxLines: 3 });
       els.push(rect({ x: fullFront.x, y: plateY, width: fullFront.width, height: title.height + 32, fill: p.accent, name: "Title band" }));
-      els.push(title);
-      if (input.subtitle) els.push(text({ x: f.x + 16, y: plateY + title.height + 48, width: f.width - 32, height: 40, text: input.subtitle, fontFamily: "Oswald", fontSize: 18, color: p.fg, align: "center", name: "Subtitle" }));
-      if (input.author) els.push(text({ x: f.x, y: f.y + f.height - 36, width: f.width, height: 18, text: input.author, fontFamily: "Oswald", fontSize: 16, color: p.fg, align: "center", name: "Author" }));
-      els.push(...backCover(cg, input, p.fg, "Inter"));
+      els.push(...title.elements);
+      if (input.subtitle) els.push(text({ x: f.x + 16, y: plateY + title.height + 48, width: f.width - 32, height: 40, text: input.subtitle, fontFamily: face(input, "support", "Oswald"), fontSize: 18, color: p.fg, align: "center", name: "Subtitle" }));
+      if (input.author) els.push(text({ x: f.x, y: f.y + f.height - 36, width: f.width, height: 18, text: input.author, fontFamily: face(input, "support", "Oswald"), fontSize: 16, color: p.fg, align: "center", name: "Author" }));
+      els.push(...backCover(cg, input, p.fg, face(input, "body", "Inter")));
       els.push(...spineText(cg, input, p.fg, "Oswald"));
       break;
     }
@@ -217,7 +231,7 @@ export function buildCover(templateId: string, input: CoverInput, cg: CoverGeome
   return {
     background,
     templateId,
-    elements: els.map((e) =>
+    elements: els.map((e) => (e.type === "text" && (e.name === "Subtitle" || e.name === "Author") ? balanceElement(e) : e)).map((e) =>
       e.type === "image" && e.assetId === input.art?.assetId
         ? { ...e, provenance: { origin: "ai-generated", ...(input.art.runId ? { runId: input.art.runId } : {}) } }
         : { ...e, provenance: { origin: "generated", generator: `cover:${templateId}` } },
@@ -244,10 +258,10 @@ function artCover(templateId: ArtTemplateId, input: CoverInput, cg: CoverGeometr
     const titleColor = legibleOnAll(seen, p.fg, [p.accent, p.muted]);
     const inner = { ...f, x: f.x + 22, width: f.width - 44 };
     const plateY = f.y + 14;
-    const title = titleBlock(input.title, "Playfair Display", inner, plateY + 18, 60, titleColor);
+    const title = lockup(input, { box: { ...inner, y: plateY + 18 }, family: "Playfair Display", max: 68, maxH: f.height * 0.36, color: titleColor });
     const subH = input.subtitle ? 34 : 0;
     els.push(rect({ x: f.x, y: plateY, width: f.width, height: title.height + 36 + subH, fill: p.bg, opacity, cornerRadius: 8, name: "Title plate" }));
-    els.push(title);
+    els.push(...title.elements);
     if (input.subtitle) els.push(text({ x: inner.x, y: title.y + title.height + 8, width: inner.width, height: 30, text: input.subtitle, fontFamily: "Inter", fontSize: 13, color: legibleOnAll(seen, p.fg, [p.muted], 4.5), align: "center", name: "Subtitle" }));
     if (input.author) {
       const w = Math.min(f.width, Math.max(140, input.author.length * 9 + 48));
@@ -260,11 +274,9 @@ function artCover(templateId: ArtTemplateId, input: CoverInput, cg: CoverGeometr
     const avail = box.y - 18 - (f.y + 10);
     const inner = { ...f, x: f.x + 12, width: f.width - 24 };
     const subH = input.subtitle ? 36 : 0;
-    let max = 72;
-    let title = titleBlock(input.title, "Oswald", inner, 0, max, p.fg);
-    while (title.height + subH > avail && max > 18) title = titleBlock(input.title, "Oswald", inner, 0, (max -= 4), p.fg);
+    const title = lockup(input, { box: { ...inner, y: 0 }, family: "Oswald", max: 72, maxH: avail - subH, color: p.fg });
     title.y = f.y + 10 + (avail - title.height - subH) / 2;
-    els.push(title);
+    els.push(...title.elements);
     if (input.subtitle) els.push(text({ x: inner.x, y: title.y + title.height + 8, width: inner.width, height: 30, text: input.subtitle, fontFamily: "Inter", fontSize: 13, color: legibleOn(p.bg, p.muted, [p.fg], 4.5), align: "center", name: "Subtitle" }));
     if (input.author) {
       const w = Math.min(f.width, Math.max(140, input.author.length * 9 + 48));
@@ -274,25 +286,19 @@ function artCover(templateId: ArtTemplateId, input: CoverInput, cg: CoverGeometr
   } else {
     const inner = { ...f, x: f.x + 24, width: f.width - 48 };
     const avail = box.y - 24 - (f.y + 20);
-    let max = 56;
-    let title = titleBlock(input.title, "Playfair Display", inner, 0, max, p.fg);
-    while (title.height > avail && max > 18) title = titleBlock(input.title, "Playfair Display", inner, 0, (max -= 4), p.fg);
+    const title = lockup(input, { box: { ...inner, y: 0 }, family: "Playfair Display", max: 60, maxH: avail, color: p.fg });
     title.y = f.y + 20 + (avail - title.height) / 2;
-    els.push(title);
+    els.push(...title.elements);
     els.push(rect({ x: box.x - 9, y: box.y - 9, width: box.width + 18, height: box.height + 18, fill: null, stroke: p.accent, strokeWidth: 3, name: "Art frame" }));
     els.push(pic);
     if (input.subtitle) els.push(text({ x: inner.x, y: box.y + box.height + 22, width: inner.width, height: 34, text: input.subtitle, fontFamily: "Lora", fontSize: 13, color: legibleOn(p.bg, p.muted, [p.fg], 4.5), align: "center", name: "Subtitle" }));
     if (input.author) els.push(text({ x: inner.x, y: f.y + f.height - 24, width: inner.width, height: 18, text: input.author, fontFamily: "Lora", fontSize: 15, color: p.fg, align: "center", name: "Author" }));
   }
-  els.push(...backCover(cg, input, p.fg, templateId === "art-panel" ? "Inter" : "Lora"));
+  els.push(...backCover(cg, input, p.fg, face(input, "body", templateId === "art-panel" ? "Inter" : "Lora")));
   els.push(...spineText(cg, input, p.fg, templateId === "art-panel" ? "Oswald" : "Lora"));
   return els;
 }
 
-export function suggestTemplate(bookType: string): string {
-  if (bookType === "puzzle" || bookType === "activity") return "puzzle";
-  if (bookType === "coloring") return "playful";
-  if (bookType === "planner" || bookType === "log-book") return "band";
-  if (bookType === "journal") return "framed";
-  return "minimal";
+export function suggestTemplate(bookType: string, topic = "", audience = ""): string {
+  return genreOf({ bookType, topic, audience }).templates[0];
 }

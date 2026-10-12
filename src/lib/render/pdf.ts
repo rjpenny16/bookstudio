@@ -1,11 +1,18 @@
 import fontkit from "@pdf-lib/fontkit";
 import {
   LineCapStyle,
+  LineJoinStyle,
   PDFDocument,
+  TextRenderingMode,
   concatTransformationMatrix,
   popGraphicsState,
   pushGraphicsState,
   rgb,
+  setCharacterSpacing,
+  setLineJoin,
+  setLineWidth,
+  setStrokingColor,
+  setTextRenderingMode,
   type PDFEmbeddedPage,
   type PDFFont,
   type PDFImage,
@@ -185,22 +192,35 @@ async function drawElement(ctx: Ctx, page: PDFPage, el: Element, o: Origin): Pro
     }
     case "text": {
       const font = await getFont(ctx, el.fontFamily, el.bold);
-      const measure = (s: string) => font.widthOfTextAtSize(s, el.fontSize);
+      // Character spacing (Tc) follows every character, as on the canvas and in Fabric.
+      const spacing = (el.letterSpacing ?? 0) * el.fontSize;
+      const measure = (s: string) => font.widthOfTextAtSize(s, el.fontSize) + [...s].length * spacing;
       const lines = wrapText(el.text, el.width + 0.5, measure);
       const color = hexToRgb(el.color);
-      lines.forEach((ln, i) => {
-        if (!ln) return;
-        const w = measure(ln);
-        const dx = el.align === "center" ? (el.width - w) / 2 : el.align === "right" ? el.width - w : 0;
-        page.drawText(ln, {
-          x: X(el.x + dx),
-          y: Y(el.y + baselineOffset(i, el.fontSize, el.lineHeight)),
-          size: el.fontSize,
-          font,
-          color,
-          opacity,
+      const outline = el.strokeColor && el.strokeWidth ? el.strokeWidth : 0;
+      const draw = () =>
+        lines.forEach((ln, i) => {
+          if (!ln) return;
+          const w = measure(ln);
+          const dx = el.align === "center" ? (el.width - w) / 2 : el.align === "right" ? el.width - w : 0;
+          page.drawText(ln, {
+            x: X(el.x + dx),
+            y: Y(el.y + baselineOffset(i, el.fontSize, el.lineHeight)),
+            size: el.fontSize,
+            font,
+            color,
+            opacity,
+          });
         });
-      });
+      if (spacing) page.pushOperators(pushGraphicsState(), setCharacterSpacing(spacing));
+      if (outline) {
+        // The outline is stroked first and the letters filled over it, so it sits outside the glyph edge.
+        page.pushOperators(pushGraphicsState(), setTextRenderingMode(TextRenderingMode.Outline), setStrokingColor(hexToRgb(el.strokeColor!)), setLineWidth(outline * 2), setLineJoin(LineJoinStyle.Round));
+        draw();
+        page.pushOperators(popGraphicsState());
+      }
+      draw();
+      if (spacing) page.pushOperators(popGraphicsState());
       break;
     }
     case "image": {

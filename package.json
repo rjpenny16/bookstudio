@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "samples": "SAMPLES=1 playwright test e2e/samples.spec.ts"
+    "samples": "SAMPLES=1 playwright test e2e/samples.spec.ts",
+    "font-metrics": "WRITE_FONT_METRICS=1 vitest run tests/font-metrics.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",

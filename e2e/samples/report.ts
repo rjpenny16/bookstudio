@@ -2,12 +2,17 @@
  * Node half of the sample harness: the reference books, which spreads to
  * show, and the per-book report plus the cross-book summary.
  */
-import { isRecto } from "@/lib/kdp/geometry";
 import { runPreflight } from "@/lib/preflight";
 import { qualityReport, trimLabel } from "@/lib/quality";
 import { puzzleStats, type PuzzleStats } from "@/lib/quality/puzzles";
 import { scorecard } from "@/lib/quality/scorecard";
-import type { Project } from "@/lib/schema/project";
+import { genreOfProject } from "@/lib/cover/genres";
+import { coverGeometry, isRecto } from "@/lib/kdp/geometry";
+import { backdrop, THUMBNAIL_PX } from "@/lib/quality/design";
+import { capHeight } from "@/lib/render/metrics";
+import { elementBounds } from "@/lib/schema/elements";
+import type { Element, Project, TextElement } from "@/lib/schema/project";
+import { contrastRatio } from "@/lib/util/color";
 import type { Spread } from "./render";
 
 export interface SampleBook {
@@ -64,7 +69,18 @@ export interface SampleReport {
   trim: string;
   pages: number;
   sections: { label: string; role: string; kind: string; pages: number }[];
-  cover: { templateId?: string; paletteId?: string; elements: number };
+  cover: {
+    templateId?: string;
+    paletteId?: string;
+    genre: string;
+    elements: number;
+    /** Cap height of the hero title words in a 160 px tall thumbnail. */
+    heroCapPx: number;
+    frontTextItems: number;
+    /** Lowest contrast of any front text against what's behind it. */
+    minFrontContrast: number | null;
+    backCopyChars: number;
+  };
   score: number;
   scoreRows: { id: string; points: number; max: number; detail: string }[];
   preflight: { passed: number; total: number; problems: { id: string; status: string; title: string; summary: string }[] };
@@ -76,6 +92,29 @@ export interface SampleReport {
   };
   text: { journalPrompts: { total: number; unique: number }; affirmations: { pages: number; unique: number } };
   puzzles: PuzzleStats;
+}
+
+function coverFacts(project: Project): SampleReport["cover"] {
+  const cg = coverGeometry(project.spec, project.interior.pages.length);
+  const els = project.cover.elements;
+  const onFront = (e: Element) => {
+    const b = elementBounds(e);
+    return b.x + b.width / 2 >= cg.front.x;
+  };
+  const front = els.filter((e): e is TextElement => e.type === "text" && onFront(e));
+  const hero = front.find((e) => e.name === "Title") ?? [...front].sort((a, b) => b.fontSize - a.fontSize)[0];
+  const contrasts = front.map((t) => contrastRatio(t.color, backdrop(els, t, project.cover.background))).filter((c): c is number => c !== null);
+  const back = els.filter((e): e is TextElement => e.type === "text" && (e.name === "Back hook" || e.name === "Back blurb"));
+  return {
+    templateId: project.cover.templateId,
+    paletteId: project.cover.paletteId,
+    genre: genreOfProject(project).id,
+    elements: els.length,
+    heroCapPx: hero ? Math.round(((capHeight(hero.fontFamily, hero.bold, hero.fontSize) * THUMBNAIL_PX) / cg.front.height) * 10) / 10 : 0,
+    frontTextItems: front.length,
+    minFrontContrast: contrasts.length ? Math.round(Math.min(...contrasts) * 10) / 10 : null,
+    backCopyChars: back.reduce((n, e) => n + e.text.length, 0),
+  };
 }
 
 export function sampleReport(id: string, project: Project): SampleReport {
@@ -102,7 +141,7 @@ export function sampleReport(id: string, project: Project): SampleReport {
     trim: trimLabel(project),
     pages: pages.length,
     sections: project.interior.sections.map((s) => ({ label: s.label, role: s.role, kind: s.config.kind, pages: pages.filter((p) => p.sectionId === s.id).length })),
-    cover: { templateId: project.cover.templateId, paletteId: project.cover.paletteId, elements: project.cover.elements.length },
+    cover: coverFacts(project),
     score: Math.round(card.score),
     scoreRows: card.rows.map((r) => ({ id: r.id, points: Math.round(r.points * 10) / 10, max: r.max, detail: r.detail })),
     preflight: { passed: preflight.passed, total: preflight.total, problems: preflight.checks.filter((c) => c.status === "fail" || c.status === "warn").map((c) => ({ id: c.id, status: c.status, title: c.title, summary: c.summary })) },
@@ -137,14 +176,16 @@ export function summaryMarkdown(reports: SampleReport[]): string {
   const rows = reports.map((r) => {
     const q = r.quality.counts;
     const text = [r.text.journalPrompts.total && `${r.text.journalPrompts.unique}/${r.text.journalPrompts.total} unique prompts`, r.text.affirmations.pages && `${r.text.affirmations.unique} affirmations for ${r.text.affirmations.pages} pages`].filter(Boolean).join(", ");
-    return `| ${r.id} | ${r.trim} | ${r.pages} | **${r.score}** | ${r.preflight.passed}/${r.preflight.total} | ${q.high}/${q.medium}/${q.low} | ${r.cover.templateId ?? "–"} / ${r.cover.paletteId ?? "–"} | ${text || "–"} | ${puzzleNotes(r.puzzles)} |`;
+    const c = r.cover;
+    const cover = `${c.genre}: ${c.templateId ?? "–"} / ${c.paletteId ?? "–"}, hero ${c.heroCapPx} px, ${c.frontTextItems} front texts, min contrast ${c.minFrontContrast ?? "–"}, back ${c.backCopyChars} chars`;
+    return `| ${r.id} | ${r.trim} | ${r.pages} | **${r.score}** | ${r.preflight.passed}/${r.preflight.total} | ${q.high}/${q.medium}/${q.low} | ${cover} | ${text || "–"} | ${puzzleNotes(r.puzzles)} |`;
   });
   return [
     "# Sample books",
     "",
     "Built offline by `npm run samples`. Quality findings are high/medium/low. The score includes the AI-disclosure row, which stays unconfirmed in these runs.",
     "",
-    "| Book | Trim | Pages | Score | Preflight | Quality | Cover template / palette | Text | Puzzles |",
+    "| Book | Trim | Pages | Score | Preflight | Quality | Cover | Text | Puzzles |",
     "|---|---|---|---|---|---|---|---|---|",
     ...rows,
     "",

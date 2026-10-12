@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PDFDocument } from "pdf-lib";
+import { inflateSync } from "node:zlib";
 import { createProject } from "@/lib/schema/factory";
 import { renderCoverPdf, renderInteriorPdf } from "@/lib/render/pdf";
 import { coverGeometry, interiorGeometry } from "@/lib/kdp/geometry";
@@ -32,6 +33,28 @@ describe("PDF rendering", () => {
     const cg = coverGeometry(p.spec, p.interior.pages.length);
     expect(cover.getPage(0).getSize().width).toBeCloseTo(cg.width, 3);
     expect(cover.getPage(0).getSize().height).toBeCloseTo(cg.height, 3);
+  });
+
+  it("draws letter spacing and outlined text", async () => {
+    const p = createProject({ name: "Sudoku", bookType: "puzzle", trimId: "6x9", paper: "white", ink: "black", bleed: false, author: "Me", interior: [{ kind: "blank", count: 24 }] });
+    const title = p.cover.elements.find((e) => e.type === "text" && e.name === "Title")!;
+    p.cover.elements = p.cover.elements.map((e) => (e.id === title.id && e.type === "text" ? { ...e, letterSpacing: 0.12, strokeColor: "#ffffff", strokeWidth: 2 } : e));
+    const bytes = await renderCoverPdf(p, { loadFont: nodeFontLoader });
+    const doc = await PDFDocument.load(bytes);
+    expect(doc.getPageCount()).toBe(1);
+    // Content streams are compressed; inflate them to find the text-state operators.
+    const raw = Buffer.from(bytes).toString("latin1");
+    const ops = [...raw.matchAll(/stream\r?\n([\s\S]*?)endstream/g)]
+      .map((m) => {
+        try {
+          return inflateSync(Buffer.from(m[1], "latin1")).toString("latin1");
+        } catch {
+          return "";
+        }
+      })
+      .join("\n");
+    expect(ops).toMatch(/[\d.]+ Tc/);
+    expect(ops).toMatch(/\b1 Tr\b/);
   });
 
   it("generates every generator kind", () => {

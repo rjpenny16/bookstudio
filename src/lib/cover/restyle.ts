@@ -44,13 +44,16 @@ const PALETTE_WORDS: [RegExp, PaletteId][] = [
 const asTemplate = (id: string): Template | null => ((TEMPLATE_CHOICES as readonly string[]).includes(id) ? (id as Template) : null);
 const asPalette = (id: string): PaletteId | null => ((PALETTE_CHOICES as readonly string[]).includes(id) ? (id as PaletteId) : null);
 
-export function restyleOffline(feedback: string, currentTemplate: string, currentPalette: string): CoverStyleOutput {
+/** `palettes`: the genre's palettes, best first; with no style words matched, the next of these is tried. */
+export function restyleOffline(feedback: string, currentTemplate: string, currentPalette: string, palettes: readonly string[] = PALETTE_CHOICES): CoverStyleOutput {
   const template = TEMPLATE_WORDS.find(([re]) => re.test(feedback))?.[1];
   const palette = PALETTE_WORDS.find(([re]) => re.test(feedback))?.[1];
   const curT = asTemplate(currentTemplate) ?? "band";
   const curP = asPalette(currentPalette) ?? "midnight";
   if (!template && !palette) {
-    const next = PALETTE_CHOICES[(PALETTE_CHOICES.indexOf(curP) + 1) % PALETTE_CHOICES.length];
+    const cycle = palettes.map(asPalette).filter((x): x is PaletteId => x !== null);
+    const pool = cycle.length > 1 ? cycle : [...PALETTE_CHOICES];
+    const next = pool[(pool.indexOf(curP) + 1) % pool.length];
     return { template: curT, palette: next, reason: "Offline: no style words recognized in the feedback, so the next palette was tried." };
   }
   return {

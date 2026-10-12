@@ -103,6 +103,11 @@ export interface TextElement extends BaseElement {
   color: string;
   align: TextAlign;
   lineHeight: number;
+  /** Extra space after each character, as a fraction of the font size (optional; no migration needed). */
+  letterSpacing?: number;
+  /** Outline drawn behind the letters, `strokeWidth` points wide outside the glyph edge (optional). */
+  strokeColor?: string;
+  strokeWidth?: number;
 }
 
 export interface ImageElement extends BaseElement {

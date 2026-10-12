@@ -135,7 +135,10 @@ export function ElementPanel({ elements, selectedId, onSelect, onUpdate, onReord
               <div className="prop-grid">
                 <NumberField label="Size" suffix="pt" value={el.fontSize} step={0.5} digits={1} min={4} max={400} onCommit={(v) => set({ fontSize: v })} />
                 <NumberField label="Line height" value={el.lineHeight} step={0.05} digits={2} min={0.6} max={3} onCommit={(v) => set({ lineHeight: v })} />
+                <NumberField label="Letter spacing" suffix="%" value={Math.round((el.letterSpacing ?? 0) * 1000) / 10} step={1} digits={1} min={-10} max={60} onCommit={(v) => set({ letterSpacing: v / 100 })} />
+                <NumberField label="Outline" suffix="pt" value={el.strokeColor ? (el.strokeWidth ?? 0) : 0} step={0.25} digits={2} min={0} max={20} onCommit={(v) => set(v > 0 ? { strokeWidth: v, strokeColor: el.strokeColor ?? "#ffffff" } : { strokeWidth: undefined, strokeColor: undefined })} />
               </div>
+              {el.strokeColor && <ColorField label="Outline color" value={el.strokeColor} onChange={(v) => set(v ? { strokeColor: v } : { strokeWidth: undefined, strokeColor: undefined })} />}
               <div className="row">
                 <ColorField label="Color" value={el.color} onChange={(v) => set({ color: v ?? "#000000" })} />
                 <div className="field">

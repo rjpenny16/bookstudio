@@ -40,7 +40,8 @@ test("create a book, edit it, pass preflight and export a KDP package", async ({
   // Cover: rebuild from template.
   await page.getByRole("tab", { name: "Cover" }).click();
   await page.getByRole("button", { name: "Build cover from listing" }).click();
-  await expect(page.getByRole("option", { name: /Morning Pages Journal/ }).first()).toBeVisible();
+  // The title is laid out as a lockup: "Morning Pages" large, "Journal" set smaller beneath it.
+  await expect(page.getByRole("option", { name: /Morning Pages/i }).first()).toBeVisible();
   if (shots) await page.screenshot({ path: `${shots}/cover.png` });
 
   // Listing: fill required fields with the offline drafter, then confirm disclosure.

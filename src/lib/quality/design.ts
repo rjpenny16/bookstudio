@@ -27,7 +27,7 @@ const center = (b: Box) => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 });
 const inside = (p: { x: number; y: number }, b: Box) => p.x >= b.x && p.x <= b.x + b.width && p.y >= b.y && p.y <= b.y + b.height;
 
 /** The color drawn behind `el`: the topmost opaque filled shape under its center, else the cover background. */
-function backdrop(elements: Element[], el: Element, fallback: string): string {
+export function backdrop(elements: Element[], el: Element, fallback: string): string {
   const idx = elements.indexOf(el);
   const c = center(elementBounds(el));
   for (let i = idx - 1; i >= 0; i--) {

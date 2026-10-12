@@ -20,6 +20,14 @@ export const FONTS: FontDef[] = [
   { family: "Pacifico", label: "Pacifico", category: "script", regular: "Pacifico_400Regular.ttf", copyright: "Copyright 2018 The Pacifico Project Authors" },
   { family: "Caveat", label: "Caveat", category: "script", regular: "Caveat_400Regular.ttf", bold: "Caveat_700Bold.ttf", copyright: "Copyright 2014 The Caveat Project Authors" },
   { family: "Roboto Mono", label: "Roboto Mono", category: "mono", regular: "RobotoMono_400Regular.ttf", bold: "RobotoMono_700Bold.ttf", copyright: "Copyright 2015 The Roboto Mono Project Authors" },
+  { family: "Bebas Neue", label: "Bebas Neue", category: "display", regular: "BebasNeue_400Regular.ttf", copyright: "Copyright 2019 The Bebas Neue Project Authors" },
+  { family: "Archivo Black", label: "Archivo Black", category: "display", regular: "ArchivoBlack_400Regular.ttf", copyright: "Copyright 2017 The Archivo Black Project Authors" },
+  { family: "Fredoka", label: "Fredoka", category: "display", regular: "Fredoka_600SemiBold.ttf", bold: "Fredoka_700Bold.ttf", copyright: "Copyright 2016 The Fredoka Project Authors" },
+  { family: "Lilita One", label: "Lilita One", category: "display", regular: "LilitaOne_400Regular.ttf", copyright: "Copyright 2011 Juan Montoreano, with Reserved Font Names \"Lilita One\"" },
+  { family: "DM Serif Display", label: "DM Serif Display", category: "serif", regular: "DMSerifDisplay_400Regular.ttf", copyright: "Copyright 2014-2017 Adobe Systems Incorporated, with Reserved Font Name 'Source'. Copyright 2019 Google LLC." },
+  { family: "Abril Fatface", label: "Abril Fatface", category: "display", regular: "AbrilFatface_400Regular.ttf", copyright: "Copyright 2011 TypeTogether, with Reserved Font Names \"Abril\" and \"Abril Fatface\"" },
+  { family: "Roboto Slab", label: "Roboto Slab", category: "serif", regular: "RobotoSlab_400Regular.ttf", bold: "RobotoSlab_700Bold.ttf", copyright: "Copyright 2018 The Roboto Slab Project Authors" },
+  { family: "Raleway", label: "Raleway", category: "sans", regular: "Raleway_400Regular.ttf", bold: "Raleway_700Bold.ttf", copyright: "Copyright 2010 The Raleway Project Authors" },
 ];
 
 export const DEFAULT_FONT = "Inter";

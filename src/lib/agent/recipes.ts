@@ -59,6 +59,12 @@ function puzzleSections(i: RecipeInput): Section[] {
       ];
 }
 
+/** "Bird watching log book" becomes "Bird Watching Log", not "Bird watching log book Log". */
+function logLabel(topic: string): string {
+  const base = topic.trim().replace(/\s*\b(log ?book|log|journal|record book|tracker)\s*$/i, "").trim() || "Record";
+  return `${base.replace(/\b\w/g, (c) => c.toUpperCase())} Log`.slice(0, 40);
+}
+
 function lowContentSections(i: RecipeInput): Section[] {
   const t = `${i.topic} ${i.notes}`.toLowerCase();
   const theme = i.topic;
@@ -71,7 +77,7 @@ function lowContentSections(i: RecipeInput): Section[] {
         sec("habit-tracker", "Habit Trackers", 10, "medium", theme),
       ];
     case "log-book":
-      return [sec("log", `${i.topic} Log`.slice(0, 40), 100, "medium", theme)];
+      return [sec("log", logLabel(i.topic), 100, "medium", theme)];
     case "journal":
       if (/gratitude|thank/.test(t)) return [sec("gratitude", "Daily Gratitude", 85, "medium", theme), sec("free-write", "Reflections", 15, "medium", theme)];
       return [

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { genreOfProject } from "@/lib/cover/genres";
 import { coverBadge, seriesName, seriesVolume } from "@/lib/cover/inside";
 import { captureCoverTemplate, isSavedTemplateId, SAVED_TEMPLATE_PREFIX, type SavedCoverTemplate } from "@/lib/cover/library";
 import { ART_COVER_TEMPLATES, buildCover, COVER_TEMPLATES, PALETTES, TEMPLATE_TAGS, type CoverTemplate, type Palette, type TemplateTag } from "@/lib/cover/templates";
@@ -76,6 +77,7 @@ function Library({ onClose, project, palette, onPalette, onUse, onUseSaved, busy
         badge: project.cover.badge ?? coverBadge(project),
         series: seriesName(m.series),
         volume: seriesVolume(m.series),
+        type: genreOfProject(project).type,
       };
       const artAsset: Asset | null = art
         ? { id: "preview-art", name: "preview", mime: "image/png", dataUrl: art.dataUrl, widthPx: art.widthPx, heightPx: art.heightPx, origin: "ai-generated", license: { license: "", author: "", source: "", commercialUse: true }, contentHash: "", createdAt: "" }
