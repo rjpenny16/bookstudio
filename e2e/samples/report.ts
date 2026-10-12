@@ -11,7 +11,7 @@ import { coverGeometry, isRecto } from "@/lib/kdp/geometry";
 import { backdrop, THUMBNAIL_PX } from "@/lib/quality/design";
 import { capHeight } from "@/lib/render/metrics";
 import { elementBounds } from "@/lib/schema/elements";
-import type { Element, Project, TextElement } from "@/lib/schema/project";
+import type { CoverAnalysis, Element, Project, TextElement } from "@/lib/schema/project";
 import { contrastRatio } from "@/lib/util/color";
 import type { Spread } from "./render";
 
@@ -80,6 +80,15 @@ export interface SampleReport {
     /** Lowest contrast of any front text against what's behind it. */
     minFrontContrast: number | null;
     backCopyChars: number;
+    /** Pixel score of the cover (0-100) and its parts, when it was analyzed. */
+    score: number | null;
+    scoreParts: CoverAnalysis["parts"] | null;
+    /** Lowest front text contrast measured on the rendered pixels. */
+    minPixelContrast: number | null;
+    /** Designs autopilot scored, best first; the first is on the cover. */
+    variants: { templateId: string; paletteId: string; score: number }[];
+    variantReason: string | null;
+    edgeDensity: number | null;
   };
   score: number;
   scoreRows: { id: string; points: number; max: number; detail: string }[];
@@ -101,7 +110,7 @@ function coverFacts(project: Project): SampleReport["cover"] {
     const b = elementBounds(e);
     return b.x + b.width / 2 >= cg.front.x;
   };
-  const front = els.filter((e): e is TextElement => e.type === "text" && onFront(e));
+  const front = els.filter((e): e is TextElement => e.type === "text" && !e.name?.startsWith("Motif") && onFront(e));
   const hero = front.find((e) => e.name === "Title") ?? [...front].sort((a, b) => b.fontSize - a.fontSize)[0];
   const contrasts = front.map((t) => contrastRatio(t.color, backdrop(els, t, project.cover.background))).filter((c): c is number => c !== null);
   const back = els.filter((e): e is TextElement => e.type === "text" && (e.name === "Back hook" || e.name === "Back blurb"));
@@ -114,6 +123,12 @@ function coverFacts(project: Project): SampleReport["cover"] {
     frontTextItems: front.length,
     minFrontContrast: contrasts.length ? Math.round(Math.min(...contrasts) * 10) / 10 : null,
     backCopyChars: back.reduce((n, e) => n + e.text.length, 0),
+    score: project.cover.analysis?.score ?? null,
+    scoreParts: project.cover.analysis?.parts ?? null,
+    minPixelContrast: project.cover.analysis?.minContrast ?? null,
+    variants: (project.cover.variants ?? []).map((v) => ({ templateId: v.templateId, paletteId: v.paletteId, score: v.score })),
+    edgeDensity: project.cover.analysis?.edgeDensity ?? null,
+    variantReason: project.cover.variants?.[0]?.reason ?? null,
   };
 }
 
@@ -177,16 +192,17 @@ export function summaryMarkdown(reports: SampleReport[]): string {
     const q = r.quality.counts;
     const text = [r.text.journalPrompts.total && `${r.text.journalPrompts.unique}/${r.text.journalPrompts.total} unique prompts`, r.text.affirmations.pages && `${r.text.affirmations.unique} affirmations for ${r.text.affirmations.pages} pages`].filter(Boolean).join(", ");
     const c = r.cover;
-    const cover = `${c.genre}: ${c.templateId ?? "–"} / ${c.paletteId ?? "–"}, hero ${c.heroCapPx} px, ${c.frontTextItems} front texts, min contrast ${c.minFrontContrast ?? "–"}, back ${c.backCopyChars} chars`;
-    return `| ${r.id} | ${r.trim} | ${r.pages} | **${r.score}** | ${r.preflight.passed}/${r.preflight.total} | ${q.high}/${q.medium}/${q.low} | ${cover} | ${text || "–"} | ${puzzleNotes(r.puzzles)} |`;
+    const cover = `${c.genre}: ${c.templateId ?? "–"} / ${c.paletteId ?? "–"}, score ${c.score ?? "–"}, hero ${c.heroCapPx} px, ${c.frontTextItems} front texts, min contrast ${c.minPixelContrast ?? c.minFrontContrast ?? "–"}, back ${c.backCopyChars} chars`;
+    const variants = c.variants.length ? c.variants.map((v) => `${v.templateId}/${v.paletteId} ${Math.round(v.score)}`).join(", ") : "–";
+    return `| ${r.id} | ${r.trim} | ${r.pages} | **${r.score}** | ${r.preflight.passed}/${r.preflight.total} | ${q.high}/${q.medium}/${q.low} | ${cover} | ${variants} | ${text || "–"} | ${puzzleNotes(r.puzzles)} |`;
   });
   return [
     "# Sample books",
     "",
     "Built offline by `npm run samples`. Quality findings are high/medium/low. The score includes the AI-disclosure row, which stays unconfirmed in these runs.",
     "",
-    "| Book | Trim | Pages | Score | Preflight | Quality | Cover | Text | Puzzles |",
-    "|---|---|---|---|---|---|---|---|---|",
+    "| Book | Trim | Pages | Score | Preflight | Quality | Cover | Variants (best first) | Text | Puzzles |",
+    "|---|---|---|---|---|---|---|---|---|---|",
     ...rows,
     "",
   ].join("\n");

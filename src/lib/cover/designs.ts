@@ -59,13 +59,21 @@ const colorBlocks: Design = (input, cg) => {
   const gx = f.x + (f.width - size) / 2;
   const gy = y + 14 + (bottom - (y + 14) - size) / 2;
   const cell = size / 3;
-  const rng = createRng(input.title.length * 131 + 7);
+  const rng = createRng((input.seed ?? input.title.length) * 131 + 7);
   const hues = [0, 40, 80, 130, 180, 220, 260, 300, 340].sort(() => rng() - 0.5);
   hues.forEach((h, i) => {
     const c = shiftHue(p.accent, h);
     els.push(rect({ x: gx + (i % 3) * cell, y: gy + Math.floor(i / 3) * cell, width: cell, height: cell, fill: mixHex(c, "#ffffff", i % 2 ? 0.35 : 0.12), name: "Color block" }));
   });
   els.push(pattern({ x: gx, y: gy, width: size, height: size, pattern: { kind: "grid", spacing: size / 9, majorEvery: 3 }, stroke: "#ffffff", strokeWidth: 1.4, opacity: 0.85, name: "Puzzle grid" }));
+  // The book's own first puzzle, set in the mosaic.
+  if (input.motif) {
+    const cell = size / 9;
+    const sizePt = cell * (input.motif.kind === "digits" ? 0.6 : 0.54);
+    input.motif.cells.slice(0, 81).forEach((c, i) => {
+      if (c) els.push(text({ x: gx + (i % 9) * cell, y: gy + Math.floor(i / 9) * cell + (cell - sizePt * 1.13) / 2, width: cell, height: sizePt * 1.13, text: c, fontFamily: face(input, "support", "Oswald"), bold: true, fontSize: sizePt, color: "#1a1a1a", align: "center", lineHeight: 1, name: "Motif cell" }));
+    });
+  }
   els.push(rect({ x: gx, y: gy, width: size, height: size, fill: null, stroke: titleColor, strokeWidth: 3, name: "Grid border" }));
   if (input.author) els.push(para(input.author, { ...inner, y: f.y + f.height - 22 }, face(input, "support", "Montserrat"), 14, p.fg, { bold: true, name: "Author" }));
   return { elements: [...els, ...backAndSpine(input, cg, p.fg, face(input, "body", "Inter"))] };
@@ -75,7 +83,7 @@ const botanical: Design = (input, cg) => {
   const p = input.palette;
   const f = cg.frontSafe;
   const box = front(cg);
-  const rng = createRng(input.title.length * 977 + 3);
+  const rng = createRng((input.seed ?? input.title.length) * 977 + 3);
   const petals = [p.accent, mixHex(p.accent, p.bg, 0.45), mixHex(shiftHue(p.accent, 40), p.bg, 0.15)];
   const leaf = mixHex("#4f7a52", p.bg, 0.25);
   const center = mixHex("#f2c14e", p.bg, 0.15);
@@ -252,7 +260,7 @@ const kidsBold: Design = (input, cg) => {
   const subH = input.subtitle ? 30 : 0;
   const subY = plateY + plateH + 22;
   // Confetti, kept clear of the plate, the subtitle and the author.
-  const rng = createRng(input.title.length * 313 + 11);
+  const rng = createRng((input.seed ?? input.title.length) * 313 + 11);
   const R = input.badge ? Math.min(f.width * 0.17, 64) : 0;
   const authorY = f.y + f.height - 40;
   const badge = { cx: f.x + f.width - R - 10, cy: (subY + subH + authorY) / 2 };

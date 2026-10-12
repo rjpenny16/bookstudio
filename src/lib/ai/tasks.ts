@@ -68,6 +68,7 @@ export const BriefOutput = z.object({
   angle: z.string().describe("One-sentence positioning: who it is for and why it is different"),
   audience: z.string(),
   titleIdeas: z.array(z.string()).describe("5 title ideas, no prohibited terms like 'bestseller' or 'free'"),
+  titleHero: z.string().describe("The 1-3 words of your first title idea a shopper would search for (e.g. 'Sudoku', 'Gratitude'), copied exactly from it; set largest on the cover. Empty if no words stand out"),
   subtitle: z.string(),
   keywordIdeas: z.array(z.string()).describe("10 buyer search phrases, each under 50 characters"),
   interiorPlan: z.string().describe("Short description of the interior"),
@@ -298,6 +299,23 @@ export const CoverArtPickOutput = z.object({
   choice: z.number().int().describe("1-based number of the best candidate"),
   reason: z.string().describe("One sentence on why it beats the others"),
   problems: z.array(z.string()).describe("Visible problems with the chosen cover, if any (text in the art, clashing title area, off-genre)"),
+  textInArt: z.array(z.number().int()).describe("1-based numbers of every candidate whose artwork (not the typeset title) contains text, letters, numbers or lettering-like marks; empty if none"),
+});
+
+export const CoverVariantPickInput = z.object({
+  title: z.string(),
+  bookType: z.string(),
+  audience: z.string(),
+  /** The book's genre profile, e.g. "Large print". */
+  genre: z.string(),
+  /** Labels of the attached images, in order: each design full size, then as a search thumbnail. */
+  images: z.array(z.string()),
+});
+
+export const CoverVariantPickOutput = z.object({
+  choice: z.number().int().describe("1-based number of the best design"),
+  reason: z.string().describe("One sentence on why it beats the others"),
+  problems: z.array(z.string()).describe("Visible problems with the chosen design, if any"),
 });
 
 export const CoverStyleInput = z.object({
@@ -329,11 +347,12 @@ export const TASKS = {
   "visual-review": { input: VisualReviewInput, output: VisualReviewOutput },
   "cover-art-prompt": { input: CoverArtPromptInput, output: CoverArtPromptOutput },
   "cover-art-pick": { input: CoverArtPickInput, output: CoverArtPickOutput },
+  "cover-variant-pick": { input: CoverVariantPickInput, output: CoverVariantPickOutput },
   "cover-style": { input: CoverStyleInput, output: CoverStyleOutput },
 } as const;
 
 /** Tasks whose prompt is accompanied by images. */
-export const VISION_TASKS: TaskName[] = ["visual-review", "cover-art-pick"];
+export const VISION_TASKS: TaskName[] = ["visual-review", "cover-art-pick", "cover-variant-pick"];
 
 export type TaskName = keyof typeof TASKS;
 
@@ -350,6 +369,7 @@ export const TASK_EFFORT: Record<TaskName, "low" | "medium" | "high"> = {
   "visual-review": "high",
   "cover-art-prompt": "high",
   "cover-art-pick": "medium",
+  "cover-variant-pick": "medium",
   "cover-style": "medium",
 };
 export type TaskInput<T extends TaskName> = z.infer<(typeof TASKS)[T]["input"]>;
@@ -484,7 +504,15 @@ ruleFindings lists problems an automatic checker already found; address them in 
 
 The attached images are, in order: ${i.images.map((l, n) => `(${n + 1}) ${l}`).join(", ")}.
 
-Pick the one a shopper scrolling Amazon search results is most likely to click and be happy with: title readable at thumbnail size, art that clearly says what the book is about for this audience, fits the genre, looks professional. Reject any candidate whose artwork contains stray text, letters, garbled lettering, logos, deformed figures or anything off-topic. Reply with its number in choice.`;
+Pick the one a shopper scrolling Amazon search results is most likely to click and be happy with: title readable at thumbnail size, art that clearly says what the book is about for this audience, fits the genre, looks professional. Reject any candidate whose artwork contains stray text, letters, garbled lettering, logos, deformed figures or anything off-topic. Reply with its number in choice, and list in textInArt every candidate whose artwork itself (not the typeset title, subtitle or author) shows any text, letters, numbers or lettering-like marks.`;
+    }
+    case "cover-variant-pick": {
+      const i = input as TaskInput<"cover-variant-pick">;
+      return `These are alternative typeset front covers for one KDP paperback: the same title and author in different layouts and colors. Each design is shown full size and again as a search-result thumbnail.\n\n${data}
+
+The attached images are, in order: ${i.images.map((l, n) => `(${n + 1}) ${l}`).join(", ")}.
+
+Pick the design a shopper scrolling Amazon search results is most likely to click and be happy with. In order of importance: the main title words read instantly at thumbnail size; it looks like a professional, bestselling ${i.genre.toLowerCase()} cover for this audience; nothing is cramped, clipped or clashing. Reply with the design number (not the image number) in choice.`;
     }
     case "cover-style":
       return `Restyle the typeset cover of this KDP paperback. The publisher gave feedback on the current template and palette.\n\n${data}

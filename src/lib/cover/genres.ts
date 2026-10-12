@@ -38,6 +38,8 @@ export interface GenreProfile {
   type: TypeSystem;
   /** Style line for AI cover art in this genre. */
   artStyle: string;
+  /** How busy a background the genre wears comfortably (share of edge pixels); see quality/coverScore. */
+  clutterOk: number;
 }
 
 export const GENRES: Record<GenreId, GenreProfile> = {
@@ -48,6 +50,7 @@ export const GENRES: Record<GenreId, GenreProfile> = {
     palettes: ["newsprint", "midnight", "ocean", "royal", "charcoal"],
     type: { hero: "Bebas Neue", heroBold: false, heroUpper: true, support: "Oswald", supportBold: true, supportUpper: true, kicker: "Raleway", body: "Inter" },
     artStyle: "bold flat vector illustration with clean shapes and strong color blocks",
+    clutterOk: 0.12,
   },
   "large-print": {
     id: "large-print",
@@ -56,6 +59,7 @@ export const GENRES: Record<GenreId, GenreProfile> = {
     palettes: ["royal", "sunny", "midnight", "newsprint"],
     type: { hero: "Archivo Black", heroBold: false, heroUpper: true, support: "Montserrat", supportBold: true, supportUpper: true, kicker: "Montserrat", body: "Inter" },
     artStyle: "cheerful, high-contrast flat illustration with large simple shapes",
+    clutterOk: 0.12,
   },
   kids: {
     id: "kids",
@@ -64,6 +68,7 @@ export const GENRES: Record<GenreId, GenreProfile> = {
     palettes: ["candy", "sky", "sunny", "mint"],
     type: { hero: "Lilita One", heroBold: false, heroUpper: false, support: "Fredoka", supportBold: true, supportUpper: false, kicker: "Fredoka", body: "Inter" },
     artStyle: "bright, friendly cartoon illustration with rounded shapes and thick outlines",
+    clutterOk: 0.2,
   },
   wellness: {
     id: "wellness",
@@ -72,6 +77,7 @@ export const GENRES: Record<GenreId, GenreProfile> = {
     palettes: ["linen", "sage", "blush", "lavender", "cream"],
     type: { hero: "DM Serif Display", heroBold: false, heroUpper: false, support: "Raleway", supportBold: false, supportUpper: true, kicker: "Raleway", body: "Lora" },
     artStyle: "soft watercolor or gouache botanical illustration with gentle light and a muted palette",
+    clutterOk: 0.1,
   },
   faith: {
     id: "faith",
@@ -80,6 +86,7 @@ export const GENRES: Record<GenreId, GenreProfile> = {
     palettes: ["ivory-gold", "dusk", "cream", "plum"],
     type: { hero: "Playfair Display", heroBold: true, heroUpper: false, support: "Lora", supportBold: false, supportUpper: false, kicker: "Raleway", body: "Lora" },
     artStyle: "serene painterly landscape or botanical illustration with warm golden light",
+    clutterOk: 0.06,
   },
   journal: {
     id: "journal",
@@ -88,6 +95,7 @@ export const GENRES: Record<GenreId, GenreProfile> = {
     palettes: ["cream", "sage", "terracotta", "midnight", "blush"],
     type: { hero: "DM Serif Display", heroBold: false, heroUpper: false, support: "Raleway", supportBold: false, supportUpper: true, kicker: "Raleway", body: "Lora" },
     artStyle: "elegant illustrated pattern or still life with a refined, limited palette",
+    clutterOk: 0.06,
   },
   planner: {
     id: "planner",
@@ -96,6 +104,7 @@ export const GENRES: Record<GenreId, GenreProfile> = {
     palettes: ["slate", "sage", "blush", "charcoal", "mint"],
     type: { hero: "Montserrat", heroBold: true, heroUpper: true, support: "Raleway", supportBold: false, supportUpper: true, kicker: "Raleway", body: "Inter" },
     artStyle: "modern abstract shapes or a tidy desk flat-lay, clean and minimal",
+    clutterOk: 0.06,
   },
   "log-book": {
     id: "log-book",
@@ -104,6 +113,7 @@ export const GENRES: Record<GenreId, GenreProfile> = {
     palettes: ["kraft", "forest", "slate", "charcoal"],
     type: { hero: "Roboto Slab", heroBold: true, heroUpper: true, support: "Oswald", supportBold: false, supportUpper: true, kicker: "Raleway", body: "Inter" },
     artStyle: "detailed vintage field-guide illustration with a textured, natural palette",
+    clutterOk: 0.1,
   },
 };
 

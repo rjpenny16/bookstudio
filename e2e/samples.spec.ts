@@ -15,16 +15,51 @@ import { indexHtml, pickSpreads, sampleReport, SAMPLE_BOOKS, summaryMarkdown, ty
  * `npm run samples` before and after a change and compare the output.
  */
 
-const OUT = path.resolve(process.env.SAMPLES_OUT ?? "samples");
+/** SAMPLES_ART=mock stands in synthetic artwork for the image provider, so the art layouts, crop and scrim are covered without a key. */
+const MOCK_ART = process.env.SAMPLES_ART === "mock";
+const OUT = path.resolve(process.env.SAMPLES_OUT ?? (MOCK_ART ? "samples/art" : "samples"));
 const FIXED_NOW = new Date("2026-01-05T09:00:00Z");
 
 test.describe.configure({ mode: "serial" });
 test.skip(!process.env.SAMPLES, "Set SAMPLES=1 (npm run samples) to build the sample books");
 
 let renderer = "";
+let mockArt: string[] = [];
 const reports: SampleReport[] = [];
 
-test.beforeAll(async () => {
+/** Portrait scenes taller than a cover: a calm sky over busy ground, and busy ground over a calm sea, so the crop has a choice. */
+function drawMockArt(): string[] {
+  const scene = (calmTop: boolean, hue: number) => {
+    const c = document.createElement("canvas");
+    c.width = 1024;
+    c.height = 1792;
+    const ctx = c.getContext("2d")!;
+    const calm = ctx.createLinearGradient(0, 0, 0, c.height);
+    calm.addColorStop(0, `hsl(${hue}, 55%, 78%)`);
+    calm.addColorStop(1, `hsl(${hue}, 45%, 60%)`);
+    ctx.fillStyle = calm;
+    ctx.fillRect(0, 0, c.width, c.height);
+    let seed = hue + 1;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const busyFrom = calmTop ? c.height * 0.5 : 0;
+    const busyTo = calmTop ? c.height : c.height * 0.5;
+    for (let i = 0; i < 900; i++) {
+      ctx.fillStyle = `hsl(${(hue + rnd() * 160) % 360}, 65%, ${25 + rnd() * 50}%)`;
+      ctx.beginPath();
+      ctx.arc(rnd() * c.width, busyFrom + rnd() * (busyTo - busyFrom), 6 + rnd() * 30, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return c.toDataURL("image/jpeg", 0.9).split(",")[1];
+  };
+  return [scene(true, 200), scene(false, 30), scene(true, 120), scene(false, 280)];
+}
+
+test.beforeAll(async ({ browser }) => {
+  if (MOCK_ART) {
+    const page = await browser.newPage();
+    mockArt = await page.evaluate(drawMockArt);
+    await page.close();
+  }
   const bundle = await build({
     entryPoints: [path.resolve("e2e/samples/render.ts")],
     bundle: true,
@@ -77,6 +112,14 @@ for (const book of SAMPLE_BOOKS) {
   test(`sample: ${book.id}`, async ({ page }) => {
     test.setTimeout(300_000);
     await seedRandom(page, hash(book.id));
+    if (MOCK_ART) {
+      let n = 0;
+      await page.route("/api/image", async (route) => {
+        if (route.request().method() === "GET") return route.fulfill({ json: { provider: "openai", model: "mock-art", configured: true, detail: "mocked" } });
+        const data = mockArt[n++ % mockArt.length];
+        return route.fulfill({ json: { data, mediaType: "image/jpeg", widthPx: 1024, heightPx: 1792, provider: "openai", model: "mock-art", promptHash: `sha256:mock${n}` } });
+      });
+    }
     await page.clock.setFixedTime(FIXED_NOW);
     const params = new URLSearchParams({
       topic: book.topic,
@@ -85,7 +128,7 @@ for (const book of SAMPLE_BOOKS) {
       trimId: book.trimId,
       pageTarget: String(book.pageTarget),
       author: "Sample Author",
-      coverArt: "0",
+      coverArt: MOCK_ART ? "1" : "0",
       go: "1",
     });
     await page.goto(`/autopilot?${params}`);

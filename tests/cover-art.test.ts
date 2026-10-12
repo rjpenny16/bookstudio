@@ -128,9 +128,9 @@ describe("image-aware cover templates", () => {
           const project = { ...p, cover: { ...p.cover, ...cover } };
           const notes = checkDesign(project).filter((n) => n.area === "cover" && n.severity !== "low");
           expect(notes, label).toEqual([]);
-          // On full bleed the title is read against the plate with the art showing through.
+          // On full bleed the title is read against the scrim with the art showing through.
           if (t.id === "art-full-bleed" && tone) {
-            const plate = cover.elements.find((e) => e.name === "Title plate")!;
+            const plate = cover.elements.find((e) => e.name === "Title scrim")!;
             const title = cover.elements.find((e) => e.name === "Title")!;
             if (plate.type !== "rect" || title.type !== "text") throw new Error("shape");
             const seen = mixHex(plate.fill!, tone.mean, 1 - (plate.opacity ?? 1));
@@ -140,10 +140,10 @@ describe("image-aware cover templates", () => {
         }
   });
 
-  it("busy art gets a more opaque plate than calm art", () => {
+  it("busy art gets a more opaque scrim than calm art", () => {
     const p = puzzleBook();
     const cg = coverGeometry(p.spec, p.interior.pages.length);
-    const plate = (tone: ArtTone) => buildCover("art-full-bleed", { title: "T", subtitle: "", author: "", backText: "", palette: PALETTES[0], art: { assetId: "a", tone } }, cg).elements.find((e) => e.name === "Title plate")!.opacity!;
+    const plate = (tone: ArtTone) => buildCover("art-full-bleed", { title: "T", subtitle: "", author: "", backText: "", palette: PALETTES[0], art: { assetId: "a", tone } }, cg).elements.find((e) => e.name === "Title scrim")!.opacity!;
     expect(plate({ mean: "#202020", spread: 0.3 })).toBeGreaterThan(plate({ mean: "#202020", spread: 0.02 }));
   });
 

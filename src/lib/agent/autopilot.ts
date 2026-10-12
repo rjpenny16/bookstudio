@@ -2,8 +2,10 @@ import { produce } from "immer";
 import { callAi, isModelOutput, modelRun, type AiCallResult } from "@/lib/ai/client";
 import type { BlueprintOutput, BriefOutput, TaskName } from "@/lib/ai/tasks";
 import { isArtTemplate, suggestArtTemplate } from "@/lib/cover/art";
-import { designCover, directArt, generateCandidates, pickCandidate } from "@/lib/cover/artClient";
+import { designCover, directArt, generateCandidates, paletteFromArt, pickCandidate } from "@/lib/cover/artClient";
 import { PALETTES } from "@/lib/cover/templates";
+import { chooseVariant, redesignTarget, storedVariants, type VariantChoice } from "@/lib/cover/variants";
+import { coverSettings } from "@/lib/cover/settings";
 import { resolveCategories, suggestCategories } from "@/lib/kdp/categories";
 import { generatePages } from "@/lib/generators/pages";
 import { coverGeometry, findTrim } from "@/lib/kdp/geometry";
@@ -17,6 +19,7 @@ import type { BookType, ModelRun, Project } from "@/lib/schema/project";
 import { assembleBook, clampPageTarget, describeBook, planSections, validateBlueprint, type PlannedSection } from "./blueprint";
 import { ART_CANDIDATES } from "./constants";
 import { applyContent, contentCall, refineContent, type ContentRequest } from "./content";
+import { genreOfProject } from "@/lib/cover/genres";
 
 /**
  * The publishing agent. It is a deterministic workflow with model calls inside
@@ -78,6 +81,9 @@ export interface AutopilotResult {
   /** Rule-based quality checks of the finished draft, plus the stored model reviews. */
   quality: QualityReport;
 }
+
+/** Covers the visual review scores below this (out of 10) get one redesign. */
+const REDESIGN_BELOW = 6;
 
 /** Listing critiques scoring below this (or with a high-severity finding) get their revision applied. */
 const REVISE_BELOW = 8;
@@ -201,7 +207,7 @@ export async function runAutopilot(
   onPreview?.(project, "layout");
   const interiorSummary = describeBook(filled);
   project = produce(project, (d) => {
-    d.brief = { topic: input.topic, audience, notes: input.notes, angle: brief.angle, titleIdeas: brief.titleIdeas, keywordIdeas: brief.keywordIdeas, interiorPlan: interiorSummary, coverDirection: brief.coverDirection, risks: brief.risks };
+    d.brief = { topic: input.topic, audience, notes: input.notes, angle: brief.angle, titleIdeas: brief.titleIdeas, ...(brief.titleHero.trim() ? { titleHero: brief.titleHero.trim() } : {}), keywordIdeas: brief.keywordIdeas, interiorPlan: interiorSummary, coverDirection: brief.coverDirection, risks: brief.risks };
   });
 
   // 5. Listing
@@ -278,11 +284,26 @@ export async function runAutopilot(
       const layout = (isArtTemplate(chosenTemplate) ? chosenTemplate : direction.layout) ?? suggestArtTemplate(input.bookType);
       const artPalette = input.style?.paletteId ? palette : (PALETTES.find((p) => p.id === direction.palette) ?? palette);
       const cg = coverGeometry(project.spec, project.interior.pages.length);
-      const gen = await generateCandidates(direction.concepts, layout, cg, signal);
+      const style = genreOfProject(project).artStyle;
+      const gen = await generateCandidates(direction.concepts, layout, cg, signal, style);
       runs.push(...gen.runs);
       if (gen.errors.length) notes.push(`Some cover art failed: ${gen.errors.join("; ")}`);
-      const pick = await pickCandidate(project, gen.candidates, layout, artPalette, signal);
+      let pick = await pickCandidate(project, gen.candidates, layout, artPalette, signal);
       if (pick.run) runs.push(pick.run);
+      // Every image had lettering in it: one more try with the rule spelled out, then pick again from all of them.
+      if (gen.candidates.length > 1 && pick.textInArt.length === gen.candidates.length) {
+        const strict = { ...direction.concepts[0], prompt: `${direction.concepts[0].prompt} The picture must contain no letters, words, numbers, signs or labels of any kind; any sign, book or surface in it is blank.` };
+        try {
+          const extra = await generateCandidates([strict], layout, cg, signal, style);
+          runs.push(...extra.runs);
+          gen.candidates.push(...extra.candidates);
+          pick = await pickCandidate(project, gen.candidates, layout, artPalette, signal);
+          if (pick.run) runs.push(pick.run);
+        } catch (e) {
+          if (signal?.aborted) throw e;
+        }
+        if (pick.textInArt.includes(pick.index)) notes.push("The cover art may contain stray lettering; check it closely or regenerate it.");
+      }
       project = produce(project, (d) => {
         d.coverArt = { candidates: gen.candidates, chosenId: gen.candidates[pick.index].id, pickReason: pick.reason };
       });
@@ -296,10 +317,28 @@ export async function runAutopilot(
 
   // 6b. Cover layout: art template when there is art, else the brief's vector template; back cover gets the blurb, "What's inside" and page thumbnails.
   project = await step("cover", async () => {
-    const templateId = art?.layout ?? (chosenTemplate && !isArtTemplate(chosenTemplate) ? chosenTemplate : brief.coverTemplate);
-    const pal = art?.palette ?? palette;
-    const next = await designCover(project, { templateId, palette: pal, backText: listing.output.backCoverBlurb, inside: true, thumbs: true, listingRunId: listing.runId });
-    return [next, `${templateId} template, ${pal.name} palette`];
+    let templateId = art?.layout ?? (chosenTemplate && !isArtTemplate(chosenTemplate) ? chosenTemplate : brief.coverTemplate);
+    let pal = art?.palette ?? palette;
+    let choice: VariantChoice | null = null;
+    // A template or palette the publisher picked is kept as it is; otherwise try the genre's designs and keep the best.
+    if (!input.style?.templateId && !input.style?.paletteId) {
+      // Art covers also try a palette taken from the chosen art.
+      const chosenArt = project.coverArt?.candidates.find((c) => c.id === project.coverArt?.chosenId);
+      const fromArt = art && chosenArt ? await paletteFromArt(chosenArt.dataUrl).catch(() => null) : null;
+      choice = await chooseVariant(project, { templateId, palette: pal }, fromArt ? [fromArt] : [], signal);
+      if (choice.run) runs.push(choice.run);
+      templateId = choice.winner.templateId;
+      pal = choice.winner.palette;
+    }
+    let next = await designCover(project, { templateId, palette: pal, backText: listing.output.backCoverBlurb, inside: true, thumbs: true, listingRunId: listing.runId });
+    if (choice) {
+      const variants = storedVariants(choice);
+      next = produce(next, (d) => {
+        d.cover.variants = variants;
+      });
+    }
+    const score = next.cover.analysis ? `, score ${Math.round(next.cover.analysis.score)}/100` : "";
+    return [next, `${templateId} template, ${pal.name} palette${score}${choice ? ` (best of ${choice.ranked.length}: ${choice.reason})` : ""}`];
   });
   onPreview?.(project, "cover");
 
@@ -307,13 +346,33 @@ export async function runAutopilot(
   project = await step("review", async () => {
     if (briefRes.meta.provider === "offline") return [project, "Offline: rule-based design checks only"];
     try {
-      const { review, run } = await reviewVisuals(project, signal);
-      if (run) runs.push(run);
-      const next = produce(project, (d) => {
+      const first = await reviewVisuals(project, signal);
+      if (first.run) runs.push(first.run);
+      let review = first.review;
+      let current = project;
+      let redesign = "";
+      // A cover the reviewer says doesn't work gets one redesign; the better-reviewed version stays.
+      const coverFails = review.score < REDESIGN_BELOW || !review.thumbnailReadable || review.findings.some((f) => f.severity === "high" && /cover/i.test(f.target));
+      const target = coverFails ? redesignTarget(project) : null;
+      if (target) {
+        const firstScore = review.score;
+        const before = `${project.cover.templateId}/${project.cover.palette?.name ?? project.cover.paletteId}`;
+        const alt = await designCover(project, { ...coverSettings(project), templateId: target.templateId, palette: target.palette, listingRunId: listing.runId });
+        const second = await reviewVisuals(alt, signal);
+        if (second.run) runs.push(second.run);
+        const better = second.review.score > review.score || (!review.thumbnailReadable && second.review.thumbnailReadable && second.review.score >= review.score);
+        if (better) {
+          current = alt;
+          review = second.review;
+          redesign = `, redesigned after review: ${before} → ${target.templateId}/${target.palette.name}`;
+          notes.push(`The first cover scored ${firstScore}/10 in the visual review, so it was redesigned (${before} → ${target.templateId}/${target.palette.name}).`);
+        } else redesign = ", a redesign was tried and the original kept";
+      }
+      const next = produce(current, (d) => {
         d.reviews = { ...d.reviews, visual: review };
       });
       const serious = review.findings.filter((f) => f.severity !== "low").length;
-      return [next, `score ${review.score}/10${serious ? `, ${serious} finding(s) to look at` : ""}${review.thumbnailReadable ? "" : ", title hard to read as a thumbnail"}`];
+      return [next, `score ${review.score}/10${serious ? `, ${serious} finding(s) to look at` : ""}${review.thumbnailReadable ? "" : ", title hard to read as a thumbnail"}${redesign}`];
     } catch (e) {
       notes.push(`Visual review skipped: ${e instanceof Error ? e.message : e}`);
       return [project, "skipped"];

@@ -8,6 +8,7 @@ import { DESIGNS } from "./designs";
 import { genreOf, type TypeSystem } from "./genres";
 import { backCover, balanceElement, face, spineText } from "./layout";
 import { lockup } from "./lockup";
+import { motifGrid, type CoverMotif } from "./motif";
 
 export { fitFontSize } from "./layout";
 
@@ -125,6 +126,12 @@ export interface CoverInput {
   volume?: string;
   /** The genre's type system; templates fall back to their own faces without one. */
   type?: TypeSystem;
+  /** Title words to set largest (from the brief), when they appear in the title. */
+  titleHero?: string;
+  /** A piece of the book's own first puzzle, for puzzle designs. */
+  motif?: CoverMotif;
+  /** Seeds the decoration (flowers, circles, confetti) so each book's layout is its own. */
+  seed?: number;
 }
 
 export function buildCover(templateId: string, input: CoverInput, cg: CoverGeometry): Pick<Cover, "background" | "elements" | "templateId"> {
@@ -174,7 +181,7 @@ export function buildCover(templateId: string, input: CoverInput, cg: CoverGeome
       break;
     }
     case "geometric": {
-      const rng = createRng(input.title.length * 7919 + 17);
+      const rng = createRng((input.seed ?? input.title.length) * 7919 + 17);
       for (let i = 0; i < 7; i++) {
         const d = cg.trimW * (0.25 + rng() * 0.45);
         els.push(ellipse({ x: cg.front.x + rng() * cg.trimW - d / 2, y: cg.front.y + rng() * cg.trimH - d / 2, width: d, height: d, fill: i % 2 ? p.accent : p.muted, opacity: 0.35, name: "Circle" }));
@@ -218,11 +225,21 @@ export function buildCover(templateId: string, input: CoverInput, cg: CoverGeome
     default: {
       els.push(pattern({ x: 0, y: 0, width: cg.width, height: cg.height, pattern: { kind: "grid", spacing: 24 }, stroke: p.muted, strokeWidth: 0.8, opacity: 0.25, name: "Grid" }));
       const plateY = f.y + f.height * 0.18;
-      const title = lockup(input, { box: { ...f, x: f.x + 16, width: f.width - 32, y: plateY + 16 }, family: "Anton", bold: false, supportFamily: "Oswald", max: 120, maxH: f.height * 0.5, color: legibleOn(p.accent, p.bg, [p.fg]), upper: true, maxLines: 3 });
+      const title = lockup(input, { box: { ...f, x: f.x + 16, width: f.width - 32, y: plateY + 16 }, family: "Anton", bold: false, supportFamily: "Oswald", max: 120, maxH: f.height * (input.motif ? 0.36 : 0.5), color: legibleOn(p.accent, p.bg, [p.fg]), upper: true, maxLines: 3 });
       els.push(rect({ x: fullFront.x, y: plateY, width: fullFront.width, height: title.height + 32, fill: p.accent, name: "Title band" }));
       els.push(...title.elements);
-      if (input.subtitle) els.push(text({ x: f.x + 16, y: plateY + title.height + 48, width: f.width - 32, height: 40, text: input.subtitle, fontFamily: face(input, "support", "Oswald"), fontSize: 18, color: p.fg, align: "center", name: "Subtitle" }));
+      const subY = plateY + title.height + 48;
+      if (input.subtitle) els.push(text({ x: f.x + 16, y: subY, width: f.width - 32, height: 40, text: input.subtitle, fontFamily: face(input, "support", "Oswald"), fontSize: 18, color: p.fg, align: "center", name: "Subtitle" }));
       if (input.author) els.push(text({ x: f.x, y: f.y + f.height - 36, width: f.width, height: 18, text: input.author, fontFamily: face(input, "support", "Oswald"), fontSize: 16, color: p.fg, align: "center", name: "Author" }));
+      // The book's own first puzzle in the space between the subtitle and the author.
+      if (input.motif) {
+        const top = subY + (input.subtitle ? 56 : 8);
+        const size = Math.min(f.width * 0.62, f.y + f.height - 50 - top);
+        if (size >= f.width * 0.3) {
+          const card = mixHex(p.bg, "#ffffff", 0.9);
+          els.push(...motifGrid(input.motif, { x: f.x + (f.width - size) / 2, y: top + (f.y + f.height - 50 - top - size) / 2, width: size, height: size }, { line: legibleOn(card, p.fg, ["#111111"]), ink: legibleOn(card, p.fg, ["#111111"], 4.5), fill: card, family: face(input, "support", "Oswald") }));
+        }
+      }
       els.push(...backCover(cg, input, p.fg, face(input, "body", "Inter")));
       els.push(...spineText(cg, input, p.fg, "Oswald"));
       break;
@@ -237,6 +254,22 @@ export function buildCover(templateId: string, input: CoverInput, cg: CoverGeome
         : { ...e, provenance: { origin: "generated", generator: `cover:${templateId}` } },
     ),
   };
+}
+
+/**
+ * A wash of `color` over art: solid (at `opacity`) from `from` to `to`, then
+ * fading to clear over `fade` points below it ("down") or above it ("up").
+ * Stacked bands, so the canvas, Fabric and the PDF draw it the same.
+ */
+function scrim(x: number, width: number, from: number, to: number, fade: number, color: string, opacity: number, dir: "down" | "up", name: string): Element[] {
+  const steps = 24;
+  const band = fade / steps;
+  const els: Element[] = [rect({ x, y: from, width, height: to - from, fill: color, opacity, name })];
+  for (let k = 0; k < steps; k++) {
+    const y = dir === "down" ? to + k * band : from - (k + 1) * band;
+    els.push(rect({ x, y, width, height: band + 0.2, fill: color, opacity: opacity * (1 - (k + 1) / (steps + 1)), name }));
+  }
+  return els;
 }
 
 /** Plate opacity over art: see-through when the art behind the title is calm, nearly solid when it's busy. */
@@ -260,13 +293,14 @@ function artCover(templateId: ArtTemplateId, input: CoverInput, cg: CoverGeometr
     const plateY = f.y + 14;
     const title = lockup(input, { box: { ...inner, y: plateY + 18 }, family: "Playfair Display", max: 68, maxH: f.height * 0.36, color: titleColor });
     const subH = input.subtitle ? 34 : 0;
-    els.push(rect({ x: f.x, y: plateY, width: f.width, height: title.height + 36 + subH, fill: p.bg, opacity, cornerRadius: 8, name: "Title plate" }));
+    // The title sits on a wash of the palette color that fades into the art, rather than a box on top of it.
+    const full = { x: cg.front.x, width: cg.width - cg.front.x };
+    els.push(...scrim(full.x, full.width, 0, plateY + title.height + 36 + subH, f.height * 0.14, p.bg, opacity, "down", "Title scrim"));
     els.push(...title.elements);
-    if (input.subtitle) els.push(text({ x: inner.x, y: title.y + title.height + 8, width: inner.width, height: 30, text: input.subtitle, fontFamily: "Inter", fontSize: 13, color: legibleOnAll(seen, p.fg, [p.muted], 4.5), align: "center", name: "Subtitle" }));
+    if (input.subtitle) els.push(text({ x: inner.x, y: title.y + title.height + 8, width: inner.width, height: 30, text: input.subtitle, fontFamily: face(input, "support", "Inter"), fontSize: 13, color: legibleOnAll(seen, p.fg, [p.muted], 4.5), align: "center", name: "Subtitle" }));
     if (input.author) {
-      const w = Math.min(f.width, Math.max(140, input.author.length * 9 + 48));
-      els.push(rect({ x: f.x + (f.width - w) / 2, y: f.y + f.height - 40, width: w, height: 30, fill: p.bg, opacity, cornerRadius: 15, name: "Author plate" }));
-      els.push(text({ x: f.x, y: f.y + f.height - 33, width: f.width, height: 18, text: input.author, fontFamily: "Inter", bold: true, fontSize: 14, color: legibleOnAll(seen, p.fg, [p.muted], 4.5), align: "center", name: "Author" }));
+      els.push(...scrim(full.x, full.width, f.y + f.height - 44, cg.height, f.height * 0.08, p.bg, opacity, "up", "Author scrim"));
+      els.push(text({ x: f.x, y: f.y + f.height - 33, width: f.width, height: 18, text: input.author, fontFamily: face(input, "support", "Inter"), bold: true, fontSize: 14, color: legibleOnAll(seen, p.fg, [p.muted], 4.5), align: "center", name: "Author" }));
     }
   } else if (templateId === "art-panel") {
     els.push(pic);
