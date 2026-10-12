@@ -7,6 +7,7 @@ import { randomSeed } from "@/lib/generators/rng";
 import { styleOf } from "@/lib/generators/style";
 import type { Asset, ModelRun, Page, Project } from "@/lib/schema/project";
 import { fileToAsset } from "@/lib/storage/assets";
+import { CommitTextarea } from "@/components/ui/CommitTextarea";
 
 interface Props {
   open: boolean;
@@ -64,6 +65,12 @@ export function AddPagesDialog({ open, onClose, project, currentIndex, onInsert 
         if (run) setRuns((x) => [...x, run]);
         setCfg({ ...cfg, puzzles: r.output.puzzles, aiRunId: run?.id });
         setAiNote(`${r.output.puzzles.length} word lists from ${r.meta.provider} (${r.meta.model})`);
+      } else if (cfg.kind === "crossword") {
+        const r = await callAi("crossword-clues", { topic, audience: project.brief.audience || "adults", count: Math.max(1, cfg.puzzles.length), entriesPerPuzzle: { easy: 10, medium: 14, hard: 18 }[cfg.difficulty], maxLength: Math.min(cfg.size - 2, 11), difficulty: cfg.difficulty });
+        const run = isModelOutput(r.meta) ? modelRun(r.meta, ["interior.crossword-clues"]) : null;
+        if (run) setRuns((x) => [...x, run]);
+        setCfg({ ...cfg, puzzles: r.output.puzzles, aiRunId: run?.id });
+        setAiNote(`${r.output.puzzles.length} crosswords from ${r.meta.provider} (${r.meta.model})`);
       }
     } catch (e) {
       setAiNote(e instanceof Error ? e.message : String(e));
@@ -131,7 +138,7 @@ export function AddPagesDialog({ open, onClose, project, currentIndex, onInsert 
           {cfg.kind === "music" && <Num label="Staves per page" value={cfg.staves} min={4} max={14} onChange={(staves) => set({ staves })} />}
           {cfg.kind === "habit-tracker" && <Num label="Habits" value={cfg.habits} min={3} max={30} onChange={(habits) => set({ habits })} />}
           {cfg.kind === "log" && <Num label="Rows per page" value={cfg.rows} min={5} max={50} onChange={(rows) => set({ rows })} />}
-          {(cfg.kind === "sudoku" || cfg.kind === "maze" || cfg.kind === "word-search" || cfg.kind === "number-search" || cfg.kind === "cryptogram") && (
+          {(cfg.kind === "sudoku" || cfg.kind === "maze" || cfg.kind === "word-search" || cfg.kind === "number-search" || cfg.kind === "cryptogram" || cfg.kind === "crossword") && (
             <div className="field">
               <label>
                 Difficulty
@@ -157,6 +164,7 @@ export function AddPagesDialog({ open, onClose, project, currentIndex, onInsert 
             </div>
           )}
           {(cfg.kind === "word-search" || cfg.kind === "number-search") && <Num label="Grid size" value={cfg.size} min={8} max={24} onChange={(size) => set({ size })} />}
+          {cfg.kind === "crossword" && <Num label="Max grid size" value={cfg.size} min={9} max={21} onChange={(size) => set({ size })} />}
           {cfg.kind === "cryptogram" && (
             <div className="field">
               <label>
@@ -227,7 +235,7 @@ export function AddPagesDialog({ open, onClose, project, currentIndex, onInsert 
           </div>
         )}
 
-        {(cfg.kind === "sudoku" || cfg.kind === "maze" || cfg.kind === "word-search" || cfg.kind === "number-search" || cfg.kind === "word-scramble" || cfg.kind === "cryptogram") && (
+        {(cfg.kind === "sudoku" || cfg.kind === "maze" || cfg.kind === "word-search" || cfg.kind === "number-search" || cfg.kind === "word-scramble" || cfg.kind === "cryptogram" || cfg.kind === "crossword") && (
           <div className="row">
             <label className="check">
               <input type="checkbox" checked={cfg.solutions} onChange={(e) => set({ solutions: e.target.checked })} /> Include answer key
@@ -322,6 +330,41 @@ export function AddPagesDialog({ open, onClose, project, currentIndex, onInsert 
                 </label>
               </div>
             )}
+            {cfg.aiRunId && <span className="badge badge-info">AI-generated text: will be flagged for KDP disclosure</span>}
+          </div>
+        )}
+
+        {cfg.kind === "crossword" && (
+          <div className="card stack" style={{ boxShadow: "none" }}>
+            <div className="row">
+              <div className="field" style={{ flex: 1 }}>
+                <label>
+                  Topic for AI
+                  <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. ocean animals, classic movies" />
+                </label>
+              </div>
+              <Num label="Puzzles" value={cfg.puzzles.length} max={200} onChange={(n) => set({ puzzles: Array.from({ length: n }, (_, i) => cfg.puzzles[i] ?? { title: `Crossword ${i + 1}`, entries: [] }) })} />
+              <button className="btn btn-primary" style={{ alignSelf: "end" }} onClick={aiFill} disabled={aiBusy || !topic.trim()}>
+                {aiBusy ? <span className="spinner" /> : null} Generate with AI
+              </button>
+            </div>
+            {aiNote && <div className="notice notice-info">{aiNote}</div>}
+            <CommitTextarea
+              label="Clues: a line starting with # starts a crossword, then one answer: clue per line"
+              rows={10}
+              value={cfg.puzzles.map((p) => [`# ${p.title}`, ...p.entries.map((e) => `${e.answer}: ${e.clue}`)].join("\n")).join("\n")}
+              onCommit={(text) => {
+                const puzzles: { title: string; entries: { answer: string; clue: string }[] }[] = [];
+                for (const ln of text.split("\n")) {
+                  if (ln.startsWith("#")) puzzles.push({ title: ln.replace(/^#+/, "").trim(), entries: [] });
+                  else if (ln.includes(":")) {
+                    if (!puzzles.length) puzzles.push({ title: "Crossword 1", entries: [] });
+                    puzzles[puzzles.length - 1].entries.push({ answer: ln.slice(0, ln.indexOf(":")).trim(), clue: ln.slice(ln.indexOf(":") + 1).trim() });
+                  }
+                }
+                set({ puzzles, aiRunId: undefined });
+              }}
+            />
             {cfg.aiRunId && <span className="badge badge-info">AI-generated text: will be flagged for KDP disclosure</span>}
           </div>
         )}

@@ -1,6 +1,6 @@
 import type { TaskInput } from "@/lib/ai/tasks";
 import type { GeneratorConfig } from "@/lib/generators/pages";
-import { cleanPhrases, cleanPrompts, cleanWordList, openerKey, phraseProblems, promptProblems, repeatedPuzzles, type WordListOptions } from "@/lib/quality/content";
+import { cleanCrossword, cleanPhrases, cleanPrompts, cleanWordList, type CrosswordEntry, openerKey, phraseProblems, promptProblems, repeatedPuzzles, type WordListOptions } from "@/lib/quality/content";
 import type { ContentNeed, PlannedSection } from "./blueprint";
 
 /**
@@ -11,6 +11,9 @@ import type { ContentNeed, PlannedSection } from "./blueprint";
  */
 
 type Puzzle = { title: string; words: string[] };
+type CrosswordPuzzle = { title: string; entries: CrosswordEntry[] };
+/** A crossword as a word list, for the book-wide repeat checks. */
+const asWords = (p: CrosswordPuzzle): Puzzle => ({ title: p.title, words: p.entries.map((e) => e.answer) });
 
 /** Put model-written content into a planned section's config. */
 export function applyContent(cfg: GeneratorConfig, need: ContentNeed, output: unknown, runId: string | undefined): GeneratorConfig {
@@ -20,6 +23,10 @@ export function applyContent(cfg: GeneratorConfig, need: ContentNeed, output: un
   }
   if (need.task === "word-lists" && (cfg.kind === "word-search" || cfg.kind === "word-scramble")) {
     const puzzles = (output as { puzzles: Puzzle[] }).puzzles.filter((p) => p.words.length).slice(0, need.count);
+    return { ...cfg, puzzles, aiRunId: runId };
+  }
+  if (need.task === "crossword-clues" && cfg.kind === "crossword") {
+    const puzzles = (output as { puzzles: CrosswordPuzzle[] }).puzzles.filter((p) => p.entries.length).slice(0, need.count);
     return { ...cfg, puzzles, aiRunId: runId };
   }
   if (need.task === "phrases") {
@@ -37,6 +44,7 @@ export function contentCount(cfg: GeneratorConfig): number {
       return cfg.prompts.length;
     case "word-search":
     case "word-scramble":
+    case "crossword":
       return cfg.puzzles.length;
     case "cryptogram":
       return cfg.phrases.length;
@@ -57,7 +65,7 @@ export interface ContentRequest {
   feedback?: string;
 }
 
-type ContentTask = "journal-prompts" | "word-lists" | "phrases";
+type ContentTask = "journal-prompts" | "word-lists" | "crossword-clues" | "phrases";
 
 /** The AI task, its input and the provenance outputs for a content request. */
 export function contentCall(req: ContentRequest, ctx: { audience: string; bookTitle: string }): { task: ContentTask; input: TaskInput<ContentTask>; outputs: string[] } {
@@ -69,6 +77,8 @@ export function contentCall(req: ContentRequest, ctx: { audience: string; bookTi
   if (need.task === "journal-prompts") return { task: need.task, input: { topic, audience, count, bookTitle, sectionTitle, avoid, feedback }, outputs: [`interior.prompts:${sectionTitle}`] };
   if (need.task === "word-lists")
     return { task: need.task, input: { topic, audience, count, wordsPerPuzzle: need.wordsPerPuzzle, maxLength: need.maxLength, difficulty: need.difficulty, avoid, feedback }, outputs: [`interior.word-lists:${sectionTitle}`] };
+  if (need.task === "crossword-clues")
+    return { task: need.task, input: { topic, audience, count, entriesPerPuzzle: need.entriesPerPuzzle, maxLength: need.maxLength, difficulty: need.difficulty, avoid, feedback }, outputs: [`interior.crossword-clues:${sectionTitle}`] };
   return { task: need.task, input: { topic, audience, count, maxLength: need.maxLength, style: need.style, bookTitle, avoid, feedback }, outputs: [`interior.phrases:${sectionTitle}`] };
 }
 
@@ -78,7 +88,7 @@ const wordOptions = (cfg: GeneratorConfig, need: ContentNeed): WordListOptions =
   maxLength: need.task === "word-lists" ? need.maxLength : 12,
   scramble: cfg.kind === "word-scramble",
 });
-const minWords = (need: ContentNeed) => (need.task === "word-lists" ? Math.max(6, Math.floor(need.wordsPerPuzzle * 0.6)) : 6);
+const minWords = (need: ContentNeed) => (need.task === "word-lists" ? Math.max(6, Math.floor(need.wordsPerPuzzle * 0.6)) : need.task === "crossword-clues" ? Math.max(6, Math.floor(need.entriesPerPuzzle * 0.6)) : 6);
 
 /** Book-wide memory of what is already used, so sections don't repeat each other. */
 interface Seen {
@@ -107,6 +117,22 @@ function keep(cfg: GeneratorConfig, need: ContentNeed, items: unknown[], room: n
     seen[style].push(...kept);
     return { kept, dropped: r.dropped.length };
   }
+  if (cfg.kind === "crossword") {
+    const maxLength = need.task === "crossword-clues" ? need.maxLength : cfg.size;
+    const cleaned = (items as CrosswordPuzzle[]).map((p) => ({ title: (p.title ?? "").trim() || "Crossword", entries: cleanCrossword(p.entries ?? [], maxLength).kept }));
+    const repeated = new Set(repeatedPuzzles([...seen.puzzles, ...cleaned.map(asWords)], []).map((r) => r.index - seen.puzzles.length));
+    const kept: CrosswordPuzzle[] = [];
+    let dropped = 0;
+    cleaned.forEach((p, i) => {
+      if (kept.length >= room || repeated.has(i) || p.entries.length < minWords(need)) {
+        dropped++;
+        return;
+      }
+      kept.push(p);
+      seen.puzzles.push(asWords(p));
+    });
+    return { kept, dropped };
+  }
   if (cfg.kind === "word-search" || cfg.kind === "word-scramble") {
     const o = wordOptions(cfg, need);
     const cleaned = (items as Puzzle[]).map((p) => ({ title: p.title.trim() || "Puzzle", words: cleanWordList(p.words, o).kept }));
@@ -133,6 +159,8 @@ function withItems(cfg: GeneratorConfig, items: unknown[]): GeneratorConfig {
     case "word-search":
     case "word-scramble":
       return { ...cfg, puzzles: items as Puzzle[] };
+    case "crossword":
+      return { ...cfg, puzzles: items as CrosswordPuzzle[] };
     case "cryptogram":
       return { ...cfg, phrases: items as string[] };
     case "gratitude":
@@ -148,6 +176,7 @@ function itemsOf(cfg: GeneratorConfig): unknown[] {
       return cfg.prompts;
     case "word-search":
     case "word-scramble":
+    case "crossword":
       return cfg.puzzles;
     case "cryptogram":
       return cfg.phrases;
@@ -161,6 +190,7 @@ function itemsOf(cfg: GeneratorConfig): unknown[] {
 function newItems(cfg: GeneratorConfig, output: unknown): unknown[] {
   if (cfg.kind === "journal-prompts") return (output as { prompts?: string[] }).prompts ?? [];
   if (cfg.kind === "word-search" || cfg.kind === "word-scramble") return (output as { puzzles?: Puzzle[] }).puzzles ?? [];
+  if (cfg.kind === "crossword") return (output as { puzzles?: CrosswordPuzzle[] }).puzzles ?? [];
   return (output as { phrases?: string[] }).phrases ?? [];
 }
 
@@ -443,9 +473,10 @@ export async function rewriteSection(cfg: GeneratorConfig, need: ContentNeed, ot
     else if (o.kind === "cryptogram") seen.saying.push(...o.phrases);
     else if (o.kind === "gratitude") seen.affirmation.push(...(o.affirmations ?? []));
     else if (o.kind === "word-search" || o.kind === "word-scramble") seen.puzzles.push(...o.puzzles);
+    else if (o.kind === "crossword") seen.puzzles.push(...o.puzzles.map(asWords));
   }
   const old = itemsOf(cfg);
-  const oldText = old.map((x) => (typeof x === "string" ? x : (x as Puzzle).title));
+  const oldText = old.map((x) => (typeof x === "string" ? x : (x as { title: string }).title));
   const target = need.count;
   let items: unknown[] = [];
   let runId: string | undefined;

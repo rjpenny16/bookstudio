@@ -36,6 +36,7 @@ export const SAMPLE_BOOKS: SampleBook[] = [
   { id: "gratitude-journal", topic: "Daily gratitude journal", audience: "Women who want a calm five-minute morning routine", bookType: "journal", trimId: "6x9", pageTarget: 120 },
   { id: "weekly-planner", topic: "Undated weekly planner for teachers", audience: "Teachers", bookType: "planner", trimId: "7x10", pageTarget: 120 },
   { id: "bird-log", topic: "Bird watching log book", audience: "Backyard birders", bookType: "log-book", trimId: "6x9", pageTarget: 110 },
+  { id: "crosswords", topic: "Crossword puzzles for adults", audience: "Adults who enjoy a relaxing puzzle", bookType: "puzzle", trimId: "8.5x11", pageTarget: 100 },
   { id: "nurse-journal", topic: "Guided journal for nurses", audience: "Nurses in their first years on the job", bookType: "journal", trimId: "6x9", pageTarget: 140 },
 ];
 
@@ -216,6 +217,7 @@ function puzzleNotes(p: PuzzleStats): string {
   for (const w of p.wordSearch) notes.push(`${w.kind} ${w.difficulty} ${w.size}×${w.size}: ${pct(w.directions.backward)} backward, ${pct(w.directions.diagonal)} diagonal, ${w.duplicateReads} double reads`);
   for (const m of p.maze) notes.push(`maze ${m.difficulty} ${m.cols}×${m.rows}: path ${pct(m.avgSolutionShare)} of cells, ${pct(m.avgDeadEndShare)} dead ends`);
   for (const s of p.scramble) notes.push(`scramble: ${pct(s.avgInPlace)} letters in place, ${s.anagramCollisions} anagram clashes`);
+  for (const c of p.crossword) notes.push(`crossword ${c.difficulty} (max ${c.size}): ${c.avgWords} answers in ${c.avgRows}×${c.avgCols}, ${pct(c.avgCrossing)} crossed, ${c.skipped} skipped, ${c.strayRuns} stray runs`);
   for (const c of p.cryptogram) notes.push(`cryptogram ${c.difficulty}: ${c.avgLetters} letters, ${c.avgHints} hints`);
   return notes.join("; ") || "–";
 }

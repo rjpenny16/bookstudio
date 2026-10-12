@@ -17,7 +17,7 @@ export const MIN_PAGES = 24;
 export const MAX_PAGES = 300;
 const MAX_SECTIONS = 6;
 
-export const PUZZLE_KINDS: SectionKind[] = ["sudoku", "word-search", "number-search", "maze", "word-scramble", "cryptogram"];
+export const PUZZLE_KINDS: SectionKind[] = ["sudoku", "word-search", "number-search", "maze", "word-scramble", "cryptogram", "crossword"];
 export const LOW_CONTENT_KINDS: SectionKind[] = ["journal-prompts", "free-write", "gratitude", "daily-planner", "weekly-spread", "monthly-calendar", "habit-tracker", "log", "dot-grid", "graph"];
 
 /** Most pages a section kind should get before the rest of the budget goes elsewhere. */
@@ -64,6 +64,7 @@ export function validateBlueprint(bp: BlueprintOutput, ctx: BlueprintContext): {
 export type ContentNeed =
   | { task: "journal-prompts"; theme: string; count: number }
   | { task: "word-lists"; theme: string; count: number; wordsPerPuzzle: number; maxLength: number; difficulty?: "easy" | "medium" | "hard" }
+  | { task: "crossword-clues"; theme: string; count: number; entriesPerPuzzle: number; maxLength: number; difficulty: "easy" | "medium" | "hard" }
   | { task: "phrases"; theme: string; count: number; maxLength: number; style: "saying" | "affirmation" };
 
 export interface PlannedSection {
@@ -92,6 +93,15 @@ const WS_SIZE = {
   narrowLarge: { easy: 10, medium: 12, hard: 13 },
 } as const;
 const NS_SIZE = { wide: { easy: 12, medium: 14, hard: 16 }, narrow: { easy: 11, medium: 13, hard: 14 } } as const;
+/** Most crossword squares across or down: room for more answers as puzzles get harder, fewer and bigger squares in large print. */
+const CW_SIZE = {
+  wide: { easy: 13, medium: 15, hard: 17 },
+  narrow: { easy: 11, medium: 13, hard: 15 },
+  wideLarge: { easy: 11, medium: 13, hard: 13 },
+  narrowLarge: { easy: 9, medium: 11, hard: 11 },
+} as const;
+/** Answers per crossword. */
+const CW_ENTRIES = { easy: 10, medium: 14, hard: 18 } as const;
 const wsSize = (z: Sizing, d: "easy" | "medium" | "hard") => WS_SIZE[`${z.wideTrim ? "wide" : "narrow"}${z.largePrint ? "Large" : ""}`][d];
 
 const capDifficulty = (d: BlueprintOutput["sections"][number]["difficulty"]): "easy" | "medium" | "hard" => (d === "expert" ? "hard" : d);
@@ -114,6 +124,10 @@ function puzzleConfig(kind: SectionKind, n: number, difficulty: BlueprintOutput[
       return { kind: "maze", count: n, difficulty: d, solutions: true, seed };
     case "word-scramble":
       return { kind: "word-scramble", puzzles: Array.from({ length: n }, (_, i) => ({ title: `Scramble ${i + 1}`, words: ["ABC"] })), difficulty: d, solutions: true, seed };
+    case "crossword": {
+      const size = CW_SIZE[`${z.wideTrim ? "wide" : "narrow"}${z.largePrint ? "Large" : ""}`][d];
+      return { kind: "crossword", puzzles: Array.from({ length: n }, (_, i) => ({ title: `Crossword ${i + 1}`, entries: [{ answer: "ABC", clue: "x" }] })), size, difficulty: d, solutions: true, seed };
+    }
     default:
       return { kind: "cryptogram", phrases: Array.from({ length: n }, () => "A"), difficulty: d, perPage: z.largePrint || !z.wideTrim ? 1 : 2, solutions: true, seed };
   }
@@ -136,6 +150,8 @@ function puzzleContent(cfg: GeneratorConfig, theme: string, difficulty: "easy" |
   if (cfg.kind === "word-search") return { task: "word-lists", theme, count: cfg.puzzles.length, wordsPerPuzzle: cfg.size <= 12 ? 10 : cfg.size <= 15 ? 15 : 18, maxLength: wordSearchMaxLength(cfg.size), difficulty: cfg.difficulty };
   // Longer words are harder to unscramble.
   if (cfg.kind === "word-scramble") return { task: "word-lists", theme, count: cfg.puzzles.length, wordsPerPuzzle: 15, maxLength: { easy: 6, medium: 8, hard: 10 }[cfg.difficulty ?? "medium"], difficulty };
+  // Fewer answers in a smaller grid, so they all fit.
+  if (cfg.kind === "crossword") return { task: "crossword-clues", theme, count: cfg.puzzles.length, entriesPerPuzzle: Math.min(CW_ENTRIES[cfg.difficulty], cfg.size + 1), maxLength: Math.min(cfg.size - 2, 11), difficulty: cfg.difficulty };
   if (cfg.kind === "cryptogram") return { task: "phrases", theme, count: cfg.phrases.length, maxLength: cfg.perPage === 2 ? 90 : 120, style: "saying" };
   return null;
 }
@@ -193,6 +209,7 @@ const PUZZLE_NAME: Partial<Record<GeneratorConfig["kind"], [string, string]>> = 
   maze: ["Maze", "Mazes"],
   "word-scramble": ["Word scramble", "Word scrambles"],
   cryptogram: ["Cryptogram", "Cryptograms"],
+  crossword: ["Crossword", "Crosswords"],
 };
 
 /** What a section holds, in one line, for its divider. */
@@ -224,6 +241,8 @@ export function howToPlay(cfg: GeneratorConfig): string {
       return "Start at START and draw the one path through to FINISH without crossing a wall. Dead ends mean it's time to back up and try another way.";
     case "word-scramble":
       return "The letters of each word are mixed up. Rearrange them to spell a word from the theme, and write it on the line.";
+    case "crossword":
+      return `Read each clue and write the answer in the squares that start at its number, across or down. Answers that cross share a letter, so each one you solve helps with the others.${cfg.difficulty === "easy" ? " The word bank under the clues lists every answer." : ""}`;
     case "cryptogram":
       return "Each saying is written in a code where every letter stands for a different one, the same way throughout the puzzle. Write in the letters you work out; short words and repeated letters are good places to start.";
     default:
@@ -389,6 +408,7 @@ const NOUN: Record<SectionKind, string> = {
   maze: "mazes",
   "word-scramble": "word scrambles",
   cryptogram: "cryptograms",
+  crossword: "crosswords",
 };
 
 /** One-line description of the planned interior, for the listing and the run log. */

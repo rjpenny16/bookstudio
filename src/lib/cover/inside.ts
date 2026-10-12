@@ -21,6 +21,7 @@ const NOUN: Record<string, [string, string]> = {
   maze: ["maze", "mazes"],
   "word-scramble": ["word scramble", "word scrambles"],
   cryptogram: ["cryptogram", "cryptograms"],
+  crossword: ["crossword", "crosswords"],
   coloring: ["coloring page", "coloring pages"],
 };
 

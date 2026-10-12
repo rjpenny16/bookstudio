@@ -28,6 +28,7 @@ export const PUZZLE_RULES: Partial<Record<SectionKind, string>> = {
   maze: "Mazes: trace a path from START to FINISH without crossing a wall.",
   "word-scramble": "Word scramble: rearrange the letters to spell a word from the page's theme.",
   cryptogram: "Cryptograms: each letter stands for a different letter. Use the hints and common short words to crack the code.",
+  crossword: "Crosswords: read each clue and write the answer in the squares that start at its number, across or down. Crossing answers share letters, so each one you solve helps with the others.",
 };
 
 function puzzleSections(i: RecipeInput): Section[] {
@@ -44,6 +45,10 @@ function puzzleSections(i: RecipeInput): Section[] {
       ? [sec("word-search", "Easy Searches", 55, "easy", theme), sec("word-search", "Super Searchers", 45, "medium", theme)]
       : [sec("word-search", "Warm-Up", 30, "easy", theme), sec("word-search", "Steady", 40, "medium", theme), sec("word-search", "Tricky", 30, "hard", theme)];
   if (/maze/.test(t)) return [sec("maze", "Easy Mazes", 35, "easy", theme), sec("maze", "Medium Mazes", 35, "medium", theme), kids ? sec("maze", "Tricky Mazes", 30, "medium", theme) : sec("maze", "Hard Mazes", 30, "hard", theme)];
+  if (/crossword/.test(t))
+    return kids
+      ? [sec("crossword", "Easy Crosswords", 60, "easy", theme), sec("crossword", "Clever Crosswords", 40, "medium", theme)]
+      : [sec("crossword", "Easy Crosswords", 30, "easy", theme), sec("crossword", "Crosswords", 40, "medium", theme), sec("crossword", "Hard Crosswords", 30, "hard", theme)];
   if (/cryptogram|cipher|code/.test(t)) return [sec("cryptogram", "Starter Codes", 40, "easy", theme), sec("cryptogram", "Code Breaker", 35, "medium", theme), sec("cryptogram", "Master Codes", 25, "hard", theme)];
   if (/scramble|jumble|anagram/.test(t)) return [sec("word-scramble", "Easy Scrambles", 50, "easy", theme), sec("word-scramble", "Harder Scrambles", 50, "medium", theme)];
   if (/number/.test(t)) return [sec("number-search", "Easy", 35, "easy", theme), sec("number-search", "Medium", 35, "medium", theme), sec("number-search", "Hard", 30, "hard", theme)];
@@ -51,11 +56,12 @@ function puzzleSections(i: RecipeInput): Section[] {
   return kids
     ? [sec("word-search", "Word Searches", 35, "easy", theme), sec("maze", "Mazes", 30, "easy", theme), sec("word-scramble", "Word Scrambles", 20, "easy", theme), sec("sudoku", "Number Puzzles", 15, "easy", theme)]
     : [
-        sec("word-search", "Word Searches", 30, "medium", theme),
-        sec("sudoku", "Sudoku", 25, "medium", theme),
-        sec("word-scramble", "Word Scrambles", 15, "medium", theme),
-        sec("cryptogram", "Cryptograms", 15, "medium", theme),
-        sec("maze", "Mazes", 15, "medium", theme),
+        sec("word-search", "Word Searches", 25, "medium", theme),
+        sec("sudoku", "Sudoku", 20, "medium", theme),
+        sec("crossword", "Crosswords", 20, "medium", theme),
+        sec("word-scramble", "Word Scrambles", 12, "medium", theme),
+        sec("cryptogram", "Cryptograms", 12, "medium", theme),
+        sec("maze", "Mazes", 11, "medium", theme),
       ];
 }
 

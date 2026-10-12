@@ -15,7 +15,7 @@ import { contentCount, rewriteSection, type ContentAsk } from "./content";
  * the book is left alone. Pure apart from `ask`, so tests run it offline.
  */
 
-const PUZZLE_KINDS = new Set(["sudoku", "word-search", "number-search", "maze", "word-scramble", "cryptogram"]);
+const PUZZLE_KINDS = new Set(["sudoku", "word-search", "number-search", "maze", "word-scramble", "cryptogram", "crossword"]);
 const isPuzzle = (cfg: GeneratorConfig) => PUZZLE_KINDS.has(cfg.kind);
 
 /** Sections worth a Regenerate box: body sections with written content or puzzles (not answer keys). */
@@ -34,6 +34,8 @@ export function needForSection(cfg: GeneratorConfig, theme: string): ContentNeed
       return { task: "word-lists", theme, count: Math.max(1, cfg.puzzles.length), wordsPerPuzzle: cfg.size <= 12 ? 10 : cfg.size <= 15 ? 15 : 18, maxLength: wordSearchMaxLength(cfg.size), difficulty: cfg.difficulty };
     case "word-scramble":
       return { task: "word-lists", theme, count: Math.max(1, cfg.puzzles.length), wordsPerPuzzle: 15, maxLength: 10 };
+    case "crossword":
+      return { task: "crossword-clues", theme, count: Math.max(1, cfg.puzzles.length), entriesPerPuzzle: Math.max(6, ...cfg.puzzles.map((p) => p.entries.length)), maxLength: Math.min(cfg.size - 2, 11), difficulty: cfg.difficulty };
     case "cryptogram":
       return { task: "phrases", theme, count: Math.max(1, cfg.phrases.length), maxLength: CRYPTOGRAM_MAX(cfg.perPage), style: "saying" };
     case "gratitude":

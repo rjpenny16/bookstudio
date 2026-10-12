@@ -14,6 +14,7 @@ const offlineAsk = async ({ need, count, avoid, sectionTitle }: ContentRequest) 
   const audience = "adults";
   if (need.task === "journal-prompts") return { output: offlineTask("journal-prompts", { topic: need.theme, audience, count, sectionTitle, avoid }) };
   if (need.task === "word-lists") return { output: offlineTask("word-lists", { topic: need.theme, audience, count, wordsPerPuzzle: need.wordsPerPuzzle, maxLength: need.maxLength, avoid }) };
+  if (need.task === "crossword-clues") return { output: offlineTask("crossword-clues", { topic: need.theme, audience, count, entriesPerPuzzle: need.entriesPerPuzzle, maxLength: need.maxLength, difficulty: need.difficulty, avoid }) };
   return { output: offlineTask("phrases", { topic: need.theme, audience, count, maxLength: need.maxLength, style: need.style, avoid }) };
 };
 

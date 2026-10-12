@@ -4,6 +4,7 @@ import { splitTitle } from "@/lib/cover/lockup";
 import { restyleOffline } from "@/lib/cover/restyle";
 import { nearDuplicate, openerKey } from "@/lib/quality/content";
 import { AFFIRMATION_BANK, PROMPT_GROUPS, SAYING_BANK, THEME_BANK } from "./offlineBanks";
+import { CLUE_BANK } from "./offlineClues";
 import { AFFIRMATION_TOPICS, PROMPT_TOPICS, type Orientation } from "./offlineTopics";
 import type { TaskInput, TaskName, TaskOutput } from "./tasks";
 
@@ -274,6 +275,42 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
         if (avoid.has(title.toLowerCase())) continue;
         const offset = round * step;
         puzzles.push({ title, words: Array.from({ length: Math.min(i.wordsPerPuzzle, words.length) }, (_, n) => words[(offset + n) % words.length]) });
+      }
+      return { puzzles } as TaskOutput<T>;
+    }
+    case "crossword-clues": {
+      const i = input as TaskInput<"crossword-clues">;
+      const names = Object.keys(CLUE_BANK);
+      const match = names.find((n) => i.topic.toLowerCase().includes(n.toLowerCase().replace(/s$/, "")));
+      const start = match ? names.indexOf(match) : hash(i.topic) % names.length;
+      const avoid = new Set((i.avoid ?? []).map((t) => t.trim().toLowerCase()));
+      // Like the word lists: later rounds take a different window of each theme, so no two crosswords share most answers.
+      const step = Math.floor(i.entriesPerPuzzle / 2) + 1;
+      const puzzles: { title: string; entries: { answer: string; clue: string }[] }[] = [];
+      for (let k = 0; puzzles.length < i.count && k < names.length * 6; k++) {
+        const name = names[(start + k) % names.length];
+        const round = Math.floor(k / names.length);
+        const entries = CLUE_BANK[name].filter(([a]) => a.length <= i.maxLength);
+        if (round >= Math.floor(entries.length / step)) continue;
+        const title = round ? `${name} ${round + 1}` : name;
+        if (avoid.has(title.toLowerCase())) continue;
+        const offset = round * step;
+        const n = Math.min(i.entriesPerPuzzle, entries.length);
+        puzzles.push({ title, entries: Array.from({ length: n }, (_, j) => entries[(offset + j) % entries.length]).map(([answer, clue]) => ({ answer, clue })) });
+      }
+      // When the themes run out, "Mixed Bag" puzzles take one answer from each of several themes, a different
+      // one each time, so they share almost nothing with the themed puzzles or each other.
+      const pool = names.map((n) => CLUE_BANK[n].filter(([a]) => a.length <= i.maxLength));
+      const depth = Math.min(...pool.map((p) => p.length));
+      for (let m = 1, cursor = 0; puzzles.length < i.count && cursor + i.entriesPerPuzzle <= names.length * depth; m++, cursor += i.entriesPerPuzzle) {
+        const title = `Mixed Bag ${m}`;
+        if (avoid.has(title.toLowerCase())) continue;
+        const entries = Array.from({ length: i.entriesPerPuzzle }, (_, j) => {
+          const at = cursor + j;
+          const [answer, clue] = pool[(start + at) % names.length][Math.floor(at / names.length) % depth];
+          return { answer, clue };
+        });
+        puzzles.push({ title, entries });
       }
       return { puzzles } as TaskOutput<T>;
     }
