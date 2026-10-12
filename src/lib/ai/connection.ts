@@ -35,7 +35,9 @@ export function capabilities(): Capabilities {
   const vision =
     text.provider === "anthropic"
       ? { available: true, detail: "Claude reviews the rendered cover and pages and picks cover art" }
-      : text.provider === "ollama"
+      : text.provider === "codex"
+        ? { available: true, detail: "ChatGPT (through codex) reviews the rendered cover and pages and picks cover art" }
+        : text.provider === "ollama"
         ? { available: null, detail: `Depends on whether ${text.model} is a vision model; use Test connection to check` }
         : { available: false, detail: "Offline mode can't look at images; rule-based design checks still run" };
   return { text, vision, images: imageStatus(), envWarnings: envWarnings() };
@@ -115,6 +117,7 @@ async function testText(): Promise<string> {
     if (!names.some((n) => n === s.model || n === `${s.model}:latest`)) throw new Error(`Ollama is running but ${s.model} isn't pulled. Run: ollama pull ${s.model}`);
     return `Ollama is running and ${s.model} is available`;
   }
+  if (s.provider === "codex") return `${await codexLogin()}; no request was made`;
   return "Offline mode: nothing to connect to. Built-in heuristics are always available.";
 }
 
@@ -127,17 +130,14 @@ async function testVision(): Promise<string> {
     if (!info.capabilities.includes("vision")) throw new Error(`${s.model} can't read images. Pick a vision model (for example a Qwen-VL or Gemma 3 model) in OLLAMA_MODEL.`);
     return `${s.model} can read images`;
   }
+  if (s.provider === "codex") return `${await codexLogin()}; images are attached to codex requests`;
   throw new Error("Offline mode can't look at images.");
 }
 
-/** codex is installed, logged in with ChatGPT, and the bridge script is in place. Generates nothing. */
-async function testCodex(): Promise<string> {
-  const bridge = codexBridgePath();
-  await access(bridge, constants.R_OK).catch(() => {
-    throw new Error(`The image bridge isn't at ${bridge}. Set CODEX_IMAGE_BRIDGE or restore .claude/skills/gpt-image-bridge.`);
-  });
+/** codex is installed and logged in with ChatGPT (not an API key). Sends nothing to the model. */
+async function codexLogin(): Promise<string> {
   const status = await new Promise<string>((resolve, reject) =>
-    // Through the bridge's own bash, so this sees the same codex that image generation will.
+    // Through the bridge's own bash, so this sees the same codex that writing and image generation will.
     execFile(bridgeShell(), ["-c", "codex login status"], { timeout: 15_000, windowsHide: true }, (err, stdout, stderr) => {
       const text = `${stdout}${stderr}`.trim();
       const code = (err as NodeJS.ErrnoException | null)?.code;
@@ -147,8 +147,17 @@ async function testCodex(): Promise<string> {
       else resolve(text);
     }),
   );
-  if (/api key/i.test(status) && !/chatgpt/i.test(status)) throw new Error(`codex is logged in with an API key, not ChatGPT, so images would be billed per call. Run: codex login`);
-  return `codex is logged in (${status.split("\n")[0] || "ok"}); no image was generated`;
+  if (/api key/i.test(status) && !/chatgpt/i.test(status)) throw new Error(`codex is logged in with an API key, not ChatGPT, so requests would be billed per call. Run: codex login`);
+  return `codex is logged in (${status.split("\n")[0] || "ok"})`;
+}
+
+/** codex is logged in with ChatGPT and the bridge script is in place. Generates nothing. */
+async function testCodex(): Promise<string> {
+  const bridge = codexBridgePath();
+  await access(bridge, constants.R_OK).catch(() => {
+    throw new Error(`The image bridge isn't at ${bridge}. Set CODEX_IMAGE_BRIDGE or restore .claude/skills/gpt-image-bridge.`);
+  });
+  return `${await codexLogin()}; no image was generated`;
 }
 
 /** Looks the model up instead of generating an image, so the check costs nothing. */

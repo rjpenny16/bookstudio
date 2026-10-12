@@ -244,7 +244,7 @@ function Autopilot() {
                 </p>
                 {status.provider === "offline" && (
                   <p className="field-hint" style={{ margin: 0 }}>
-                    Offline mode uses built-in templates instead of a language model, so nothing is flagged as AI-generated. Set <code>ANTHROPIC_API_KEY</code> or <code>AI_PROVIDER=ollama</code> for real drafting. See <Link href="/settings">Settings</Link>.
+                    Offline mode uses built-in templates instead of a language model, so nothing is flagged as AI-generated. Set <code>ANTHROPIC_API_KEY</code>, <code>AI_PROVIDER=codex</code> (ChatGPT subscription) or <code>AI_PROVIDER=ollama</code> for real drafting. See <Link href="/settings">Settings</Link>.
                   </p>
                 )}
               </>

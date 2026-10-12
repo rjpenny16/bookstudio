@@ -101,6 +101,13 @@ describe("capabilities and connection tests", () => {
     expect((await testConnection("images")).detail).toMatch(/codex login/);
     vi.stubEnv("CODEX_IMAGE_BRIDGE", "/nonexistent/bridge");
     expect((await testConnection("images")).detail).toMatch(/image bridge isn't at/);
+    // Writing on the subscription checks the same login, without the bridge or a model call.
+    vi.stubEnv("FAKE_LOGGED_OUT", "");
+    vi.stubEnv("AI_PROVIDER", "codex");
+    expect(capabilities()).toMatchObject({ text: { provider: "codex" }, vision: { available: true } });
+    expect(await testConnection("text")).toMatchObject({ ok: true, detail: expect.stringContaining("no request was made") });
+    expect(await testConnection("vision")).toMatchObject({ ok: true, detail: expect.stringContaining("Logged in using ChatGPT") });
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("checks Ollama's model list and vision capability", async () => {

@@ -10,7 +10,7 @@ export interface AiCallResult<T extends TaskName> {
 }
 
 export interface AiStatus {
-  provider: "anthropic" | "ollama" | "offline";
+  provider: "anthropic" | "ollama" | "codex" | "offline";
   model: string;
   configured: boolean;
   detail: string;

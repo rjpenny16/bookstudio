@@ -132,6 +132,7 @@ export default function Settings() {
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
             <li><code>ANTHROPIC_API_KEY</code>: Claude via the Anthropic API (default model <code>claude-opus-5-5</code>, override with <code>ANTHROPIC_MODEL</code>).</li>
             <li><code>AI_PROVIDER=ollama</code> with <code>OLLAMA_BASE_URL</code> and <code>OLLAMA_MODEL</code>: self-hosted open-weight models.</li>
+            <li><code>AI_PROVIDER=codex</code>: write briefs, content and listings with your ChatGPT subscription instead of an API key, through the <a href="https://github.com/openai/codex">codex CLI</a> (the same setup as <code>IMAGE_PROVIDER=codex</code>: install codex on the server machine and run <code>codex login</code>). Not billed per call, but slower than an API and counts against your ChatGPT usage limits. <code>CODEX_TEXT_MODEL</code> picks a model; otherwise codex uses its default.</li>
             <li><code>AI_PROVIDER=offline</code>: deterministic templates only, no model calls.</li>
           </ul>
         </div>
