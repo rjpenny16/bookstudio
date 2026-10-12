@@ -24,6 +24,9 @@ export interface NewProjectInput {
   interior?: SectionInput[];
 }
 
+/** The imprint every book is published under unless its author field is changed. */
+export const DEFAULT_AUTHOR = "R.P. Paper Co.";
+
 export function emptyBrief(): Project["brief"] {
   return { topic: "", audience: "", notes: "", angle: "", titleIdeas: [], keywordIdeas: [], interiorPlan: "", coverDirection: "", risks: [] };
 }
@@ -59,7 +62,7 @@ export function createProject(input: NewProjectInput): Project {
     metadata: {
       title: input.name || "",
       subtitle: "",
-      author: input.author ?? "",
+      author: input.author?.trim() || DEFAULT_AUTHOR,
       series: "",
       edition: "",
       description: "",

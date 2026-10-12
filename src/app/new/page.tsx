@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { estimatePageCount, GENERATORS, type GeneratorConfig } from "@/lib/generators/pages";
 import { coverGeometry, findTrim, printCostUsd, spineWidthIn } from "@/lib/kdp/geometry";
 import { isValidPaperInk, TRIM_SIZES } from "@/lib/kdp/rules";
-import { createProject } from "@/lib/schema/factory";
+import { createProject, DEFAULT_AUTHOR } from "@/lib/schema/factory";
 import { BOOK_TYPES, isLowContent, type BookType, type InteriorInk, type Paper, type PrintSpec } from "@/lib/schema/project";
 import { saveProject } from "@/lib/storage/db";
 import { ptToIn, round } from "@/lib/util/ids";
@@ -24,7 +24,7 @@ const STARTERS: Record<BookType, string> = {
 export default function NewBook() {
   const router = useRouter();
   const [name, setName] = useState("");
-  const [author, setAuthor] = useState("");
+  const [author, setAuthor] = useState(DEFAULT_AUTHOR);
   const [bookType, setBookType] = useState<BookType>("notebook");
   const [trimId, setTrimId] = useState("6x9");
   const [paper, setPaper] = useState<Paper>("white");

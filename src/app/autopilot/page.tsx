@@ -7,6 +7,7 @@ import { aiStatus, type AiStatus } from "@/lib/ai/client";
 import { AUTOPILOT_STEPS, runAutopilot, type AgentStep, type AutopilotResult } from "@/lib/agent/autopilot";
 import { imageStatus, type ImageStatus } from "@/lib/cover/artClient";
 import type { Project } from "@/lib/schema/project";
+import { DEFAULT_AUTHOR } from "@/lib/schema/factory";
 import { saveProject } from "@/lib/storage/db";
 import { LiveBuild } from "@/components/autopilot/LiveBuild";
 import { artEnabled, CostEstimate, EXAMPLES, resolveSetup, SetupForm, setupFromParams, type SetupState } from "@/components/autopilot/SetupForm";
@@ -55,7 +56,7 @@ function Autopilot() {
           audience: setup.audience,
           bookType,
           trimId,
-          author: setup.author || "Your Name",
+          author: setup.author.trim() || DEFAULT_AUTHOR,
           notes: setup.notes,
           coverArt: artEnabled(setup, images),
           pageTarget: setup.pageTarget,
