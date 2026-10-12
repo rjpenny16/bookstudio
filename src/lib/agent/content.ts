@@ -1,6 +1,6 @@
 import type { TaskInput } from "@/lib/ai/tasks";
 import type { GeneratorConfig } from "@/lib/generators/pages";
-import { cleanPhrases, cleanPrompts, cleanWordList, repeatedPuzzles, type WordListOptions } from "@/lib/quality/content";
+import { cleanPhrases, cleanPrompts, cleanWordList, openerKey, phraseProblems, promptProblems, repeatedPuzzles, type WordListOptions } from "@/lib/quality/content";
 import type { ContentNeed, PlannedSection } from "./blueprint";
 
 /**
@@ -168,7 +168,183 @@ function newItems(cfg: GeneratorConfig, output: unknown): unknown[] {
 function avoidFor(cfg: GeneratorConfig, seen: Seen): string[] {
   const list =
     cfg.kind === "journal-prompts" ? seen.prompt : cfg.kind === "cryptogram" ? seen.saying : cfg.kind === "gratitude" ? seen.affirmation : seen.puzzles.map((p) => p.title);
-  return list.slice(-150);
+  return list.slice(-AVOID_MAX);
+}
+
+/** Most earlier items sent back as "avoid": enough for a 200-page journal, small enough to keep requests cheap. */
+const AVOID_MAX = 200;
+/** Items asked for per model call. Long lists in one call drift into repeats and run out of output room. */
+export const BATCH_SIZE = 30;
+
+export interface WriteResult {
+  config: GeneratorConfig;
+  /** Model calls made. */
+  batches: number;
+  runId?: string;
+}
+
+/**
+ * Write one section's content in batches of about `BATCH_SIZE`. Each batch is
+ * told everything the section (and `before`, items already in the book) holds
+ * so far, so later batches cover new ground instead of repeating earlier
+ * ones. Stops when the section is full or a batch adds nothing new.
+ */
+export async function writeSection(sec: PlannedSection, ask: ContentAsk, before: string[] = []): Promise<WriteResult> {
+  const need = sec.content;
+  if (!need) return { config: sec.config, batches: 0 };
+  const seen: Seen = { prompt: [], saying: [], affirmation: [], puzzles: [] };
+  let cfg = withItems(sec.config, []);
+  let runId: string | undefined;
+  let batches = 0;
+  const maxBatches = Math.ceil(need.count / BATCH_SIZE) + 2;
+  while (contentCount(cfg) < need.count && batches < maxBatches) {
+    const missing = need.count - contentCount(cfg);
+    // A little extra in the last batch: a few items may be dropped as repeats.
+    const count = missing > BATCH_SIZE ? BATCH_SIZE : Math.min(BATCH_SIZE, missing + Math.ceil(missing / 10));
+    const avoid = [...before, ...avoidFor(cfg, seen)].slice(-AVOID_MAX);
+    batches++;
+    const a = await ask({ need, sectionTitle: sec.label, count, avoid }).catch(() => null);
+    if (!a) break;
+    runId ??= a.runId;
+    const r = keep(cfg, need, newItems(cfg, a.output), missing, seen);
+    if (!r.kept.length) break;
+    cfg = withItems(cfg, [...itemsOf(cfg), ...r.kept]);
+  }
+  if (runId) cfg = { ...cfg, aiRunId: runId } as GeneratorConfig;
+  return { config: cfg, batches, runId };
+}
+
+// ---------------------------------------------------------------------------
+// Review: flag weak items and rewrite them
+
+type TextKind = "prompt" | "affirmation" | "saying";
+
+const textKind = (cfg: GeneratorConfig): TextKind | null => (cfg.kind === "journal-prompts" ? "prompt" : cfg.kind === "gratitude" ? "affirmation" : cfg.kind === "cryptogram" ? "saying" : null);
+
+/** Share of a section that may open with the same two words ("What is…", "I am…"). */
+const OPENER_SHARE: Record<TextKind, number> = { prompt: 0.15, affirmation: 0.25, saying: 0.25 };
+const openerLimit = (kind: TextKind, n: number) => Math.max(2, Math.ceil(n * OPENER_SHARE[kind]));
+
+/** Rule-based weak spots: yes/no or vague prompts, affirmations not in the first person, sayings too short for a cryptogram. */
+function ruleProblem(kind: TextKind, item: string, maxLength: number): string | null {
+  const issues = kind === "prompt" ? promptProblems(item) : phraseProblems(item, kind, maxLength);
+  return issues[0]?.message ?? null;
+}
+
+/**
+ * Items of one section a reader would find weak, by index: rule-based
+ * problems, openings used more often than the section allows (the later
+ * ones are flagged), and anything the model review (`modelWeak`) named.
+ */
+export function weakItems(kind: TextKind, items: string[], maxLength: number, modelWeak: { item: number; problem: string }[] = []): Map<number, string> {
+  const out = new Map<number, string>();
+  items.forEach((it, i) => {
+    const p = ruleProblem(kind, it, maxLength);
+    if (p) out.set(i, p);
+  });
+  const limit = openerLimit(kind, items.length);
+  const counts = new Map<string, number>();
+  items.forEach((it, i) => {
+    const k = openerKey(it);
+    const n = (counts.get(k) ?? 0) + 1;
+    counts.set(k, n);
+    if (n > limit && !out.has(i)) out.set(i, `Starts like ${n - 1} other items ("${k}…")`);
+  });
+  for (const w of modelWeak) {
+    const i = w.item - 1;
+    if (i >= 0 && i < items.length && !out.has(i)) out.set(i, w.problem.trim() || "Weak");
+  }
+  return out;
+}
+
+export type ContentReview = (req: { kind: TextKind; sectionTitle: string; theme: string; items: string[] }) => Promise<{ weak: { item: number; problem: string }[]; runId?: string }>;
+
+export interface ReviewResult {
+  sections: PlannedSection[];
+  /** Items flagged as weak. */
+  flagged: number;
+  /** Flagged items replaced with better ones. */
+  rewritten: number;
+  notes: string[];
+}
+
+/** At most this share of a section is rewritten, so one harsh review can't churn a whole section. */
+const MAX_REWRITE_SHARE = 0.3;
+
+/**
+ * Review every prompt, affirmation and saying section: flag weak items (rule
+ * checks plus an optional model review), then ask for replacements that
+ * avoid the rest of the book and fix the named problems. A replacement takes
+ * the weak item's place only when it passes the same checks; otherwise the
+ * original stays.
+ */
+export async function reviewContent(sections: PlannedSection[], review: ContentReview | null, ask: ContentAsk): Promise<ReviewResult> {
+  const out = sections.map((s) => ({ ...s }));
+  const targets = out.filter((s) => s.content && textKind(s.config) && contentCount(s.config) > 0);
+  const ofKind = (kind: TextKind, not: PlannedSection) => out.filter((o) => o !== not && textKind(o.config) === kind).flatMap((o) => itemsOf(o.config) as string[]);
+
+  // Reviews and replacement requests run in parallel; replacements are then applied in reading order,
+  // each checked against the book as it stands, so two sections can't take the same new item.
+  const plans = await Promise.all(
+    targets.map(async (s) => {
+      const kind = textKind(s.config)!;
+      const items = itemsOf(s.config) as string[];
+      const maxLength = s.content!.task === "phrases" ? s.content!.maxLength : 160;
+      const model = review ? await review({ kind, sectionTitle: s.label, theme: s.content!.theme, items }).catch(() => null) : null;
+      const weak = weakItems(kind, items, maxLength, model?.weak);
+      if (!weak.size) return null;
+      const fix = [...weak.keys()].slice(0, Math.max(1, Math.floor(items.length * MAX_REWRITE_SHARE)));
+      const problems = [...new Set(fix.map((i) => weak.get(i)!))].slice(0, 6).join("; ");
+      const limit = openerLimit(kind, items.length);
+      const crowded = [...new Set(items.map(openerKey))].filter((k) => items.filter((x) => openerKey(x) === k).length >= limit);
+      const feedback = `These replace weak items (${problems}). Make each one strong on its own${crowded.length ? ` and don't start with ${crowded.map((o) => `"${o}"`).join(", ")}` : ""}.`.slice(0, 500);
+      const avoid = [...ofKind(kind, s), ...items].slice(-AVOID_MAX);
+      const a = await ask({ need: s.content!, sectionTitle: s.label, count: fix.length + Math.ceil(fix.length / 3) + 1, avoid, feedback }).catch(() => null);
+      return { s, kind, maxLength, flagged: weak.size, fix, answer: a, reviewRunId: model?.runId };
+    }),
+  );
+
+  let flagged = 0;
+  let rewritten = 0;
+  for (const plan of plans) {
+    if (!plan) continue;
+    const { s, kind, maxLength, fix, answer } = plan;
+    flagged += plan.flagged;
+    if (!answer) continue;
+    const fresh = [...(newItems(s.config, answer.output) as string[])];
+    const next = [...(itemsOf(s.config) as string[])];
+    const book = ofKind(kind, s);
+    const limit = openerLimit(kind, next.length);
+    let changed = 0;
+    for (const i of fix) {
+      const others = next.filter((_, j) => j !== i);
+      let chosen: string | null = null;
+      const at = fresh.findIndex((c) => {
+        const t = keepOne(kind, c, maxLength, [...book, ...others]);
+        if (!t || others.filter((x) => openerKey(x) === openerKey(t)).length >= limit) return false;
+        chosen = t;
+        return true;
+      });
+      if (at < 0 || !chosen) continue;
+      next[i] = chosen;
+      fresh.splice(at, 1);
+      changed++;
+    }
+    if (!changed) continue;
+    rewritten += changed;
+    s.config = withItems(s.config, next);
+    const runId = answer.runId ?? plan.reviewRunId;
+    if (runId && !("aiRunId" in s.config && s.config.aiRunId)) s.config = { ...s.config, aiRunId: runId } as GeneratorConfig;
+  }
+  const notes = flagged ? [`Content review: flagged ${flagged} weak item(s)${rewritten ? ` and rewrote ${rewritten}` : ""}.`] : [];
+  return { sections: out, flagged, rewritten, notes };
+}
+
+/** The tidied item when it is usable, new to `seen` and free of rule problems; otherwise null. */
+function keepOne(kind: TextKind, item: string, maxLength: number, seen: string[]): string | null {
+  const r = kind === "prompt" ? cleanPrompts([item], seen) : cleanPhrases([item], kind, maxLength, seen);
+  const t = r.kept[0];
+  return t && !ruleProblem(kind, t, maxLength) ? t : null;
 }
 
 export interface RefineResult {
@@ -233,9 +409,13 @@ export async function refineContent(sections: PlannedSection[], ask: ContentAsk,
   const notes: string[] = [];
   if (removed) notes.push(`Content check: removed ${removed} repeated or unusable item(s)${added ? ` and wrote ${added} replacement(s)` : ""}.`);
   for (const s of out) {
-    // Gratitude pages cycle through their affirmations, so a short list costs no pages.
-    if (!s.content || s.config.kind === "gratitude") continue;
+    if (!s.content) continue;
     const n = contentCount(s.config);
+    // Gratitude pages cycle through their affirmations, so a short list costs no pages, only repeats.
+    if (s.config.kind === "gratitude") {
+      if (n < s.content.count) notes.push(`${s.label}: ${n} distinct affirmation(s) for ${s.content.count} pages; some pages repeat one.`);
+      continue;
+    }
     if (n < s.content.count) notes.push(`${s.label}: needed ${s.content.count}, kept ${n} distinct; the rest of its page budget became notes pages.`);
   }
   return { sections: out, removed, added, notes };

@@ -213,7 +213,8 @@ export function planSections(bp: BlueprintOutput, input: PlanInput): PlannedSect
     const config = lowContentConfig(s.kind, budgets[i], bp, s.title);
     let content: ContentNeed | null = null;
     if (s.kind === "journal-prompts") content = { task: "journal-prompts", theme, count: budgets[i] };
-    if (s.kind === "gratitude") content = { task: "phrases", theme, count: Math.min(budgets[i], 60), maxLength: 90, style: "affirmation" };
+    // One affirmation per page, so no page repeats another.
+    if (s.kind === "gratitude") content = { task: "phrases", theme, count: budgets[i], maxLength: 90, style: "affirmation" };
     return { label: s.title, subtitle: s.subtitle, kind: s.kind, config, content };
   });
 }

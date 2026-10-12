@@ -57,6 +57,18 @@ export function nearDuplicate(a: string, b: string): boolean {
   return jaccard(wa, wb) >= 0.7;
 }
 
+/** The first two words, lowercased: "What is…", "I am…". Used to keep a section's openings varied. */
+export const openerKey = (s: string) => normalizeText(s).split(" ").slice(0, 2).join(" ");
+
+/** A low-severity issue when more than `share` of `items` open the same way. */
+function monotony(items: string[], what: string, share: number): ContentIssue[] {
+  if (items.length < 12) return [];
+  const openers = new Map<string, number>();
+  for (const p of items) openers.set(openerKey(p), (openers.get(openerKey(p)) ?? 0) + 1);
+  const [top, n] = [...openers.entries()].sort((a, b) => b[1] - a[1])[0] ?? ["", 0];
+  return n / items.length > share ? [{ severity: "low", message: `${n} of ${items.length} ${what} start with "${top}…"; vary the openings` }] : [];
+}
+
 /** Index of the first earlier item `s` duplicates, or -1. */
 function findDuplicate(s: string, earlier: string[]): number {
   return earlier.findIndex((e) => nearDuplicate(s, e));
@@ -125,15 +137,7 @@ export function checkPrompts(prompts: string[]): ContentIssue[] {
     else issues.push(...promptProblems(p));
   });
   // Monotony: too many prompts open the same way ("What is…", "What is…").
-  if (prompts.length >= 12) {
-    const openers = new Map<string, number>();
-    for (const p of prompts) {
-      const k = normalizeText(p).split(" ").slice(0, 2).join(" ");
-      openers.set(k, (openers.get(k) ?? 0) + 1);
-    }
-    const [top, n] = [...openers.entries()].sort((a, b) => b[1] - a[1])[0] ?? ["", 0];
-    if (n / prompts.length > 0.35) issues.push({ severity: "low", message: `${n} of ${prompts.length} prompts start with "${top}…"; vary the openings` });
-  }
+  issues.push(...monotony(prompts, "prompts", 0.35));
   return issues;
 }
 
@@ -279,6 +283,7 @@ export function checkPhrases(phrases: string[], style: "saying" | "affirmation",
     if (dup >= 0) issues.push({ severity: style === "saying" ? "high" : "medium", message: `Repeats ${style === "saying" ? "saying" : "affirmation"} ${dup + 1}`, item: p });
     else issues.push(...phraseProblems(p, style, maxLength));
   });
+  if (style === "affirmation") issues.push(...monotony(phrases, "affirmations", 0.4));
   return issues;
 }
 
@@ -303,8 +308,13 @@ export function checkSectionContent(cfg: GeneratorConfig): ContentIssue[] {
     }
     case "cryptogram":
       return checkPhrases(cfg.phrases, "saying", CRYPTOGRAM_MAX(cfg.perPage));
-    case "gratitude":
-      return checkPhrases(cfg.affirmations ?? [], "affirmation", 90);
+    case "gratitude": {
+      const issues = checkPhrases(cfg.affirmations ?? [], "affirmation", 90);
+      const n = cfg.affirmations?.length ?? 0;
+      // Pages cycle through the list; a reader notices a repeat within a few weeks.
+      if (n && n < cfg.count) issues.push({ severity: "low", message: `${n} affirmations for ${cfg.count} pages; ${cfg.count - n} page(s) repeat one` });
+      return issues;
+    }
     default:
       return [];
   }
