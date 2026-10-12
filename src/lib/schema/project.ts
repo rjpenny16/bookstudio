@@ -204,6 +204,37 @@ export interface Cover {
   paletteId?: string;
   /** Badge text for templates that show one; "" hides it, unset uses the default (optional, no migration needed). */
   badge?: string;
+  /** Palette derived for this cover (e.g. from its art) when it isn't one of the built-in palettes (optional). */
+  palette?: { id: string; name: string; bg: string; fg: string; accent: string; muted: string };
+  /** Pixel analysis of the front as last designed; trusted only while `key` matches the cover (optional). */
+  analysis?: CoverAnalysis;
+  /** Designs autopilot considered, best first, so the publisher can switch with one click (optional). */
+  variants?: CoverVariant[];
+}
+
+export interface CoverAnalysis {
+  at: string;
+  /** Fingerprint of the cover the analysis was made from (see quality/coverScore coverKey). */
+  key: string;
+  /** 0-100 and its parts: contrast (40), hero size at thumbnail (30), clutter (15), balance (15). */
+  score: number;
+  parts: { contrast: number; heroSize: number; clutter: number; balance: number };
+  minContrast: number | null;
+  /** Share of busy background pixels outside the text (optional). */
+  edgeDensity?: number;
+  /** Each front text's contrast against the pixels behind it. */
+  textContrast: { elementId: string; ratio: number }[];
+}
+
+export interface CoverVariant {
+  templateId: string;
+  paletteId: string;
+  /** Inline palette when it isn't a built-in one (e.g. taken from the art). */
+  palette?: Cover["palette"];
+  /** Out of 100: the pixel score (90%) plus genre fit (10%). */
+  score: number;
+  /** Why it was chosen, for the winner. */
+  reason?: string;
 }
 
 export type AiDisclosureLevel = "none" | "some" | "most";
@@ -238,6 +269,8 @@ export interface Brief {
   notes: string;
   angle: string;
   titleIdeas: string[];
+  /** The words of the title shoppers search for, set largest on the cover (optional, no migration needed). */
+  titleHero?: string;
   keywordIdeas: string[];
   interiorPlan: string;
   coverDirection: string;

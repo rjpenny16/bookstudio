@@ -5,6 +5,7 @@ import { callAi, isModelOutput, modelRun } from "@/lib/ai/client";
 import { isArtTemplate, suggestArtTemplate, type ArtTemplateId } from "@/lib/cover/art";
 import { designCover, directArt, generateCandidates, imageStatus, pickCandidate } from "@/lib/cover/artClient";
 import { PALETTES, suggestTemplate } from "@/lib/cover/templates";
+import { coverSettings } from "@/lib/cover/settings";
 import { resolveCategories, suggestCategories } from "@/lib/kdp/categories";
 import { coverGeometry } from "@/lib/kdp/geometry";
 import { cleanKeywords } from "@/lib/metadata/validate";
@@ -14,6 +15,7 @@ import { syncTitlePage } from "./autopilot";
 import { ART_CANDIDATES } from "./constants";
 import { contentCall } from "./content";
 import { regenerateSection } from "./regenerate";
+import { genreOfProject } from "@/lib/cover/genres";
 
 /**
  * The Review screen's "Regenerate with feedback" actions. Each reruns one
@@ -49,20 +51,7 @@ export async function regenerateSectionWithAi(project: Project, sectionId: strin
   return { project: withRuns(r.project, runs.filter((x) => used.has(x.id))), summary: r.summary };
 }
 
-/** Cover settings to keep when rebuilding: template, palette, back blurb, and which back-cover extras are on. */
-export function coverSettings(project: Project) {
-  const els = project.cover.elements;
-  // The back copy is laid out as a hook line plus the blurb; rebuild it as one text.
-  const backText = els.flatMap((e) => (e.type === "text" && (e.name === "Back hook" || e.name === "Back blurb") ? [e.text] : [])).join(" ");
-  return {
-    templateId: project.cover.templateId ?? suggestTemplate(project.bookType),
-    palette: PALETTES.find((p) => p.id === project.cover.paletteId) ?? PALETTES[0],
-    backText,
-    inside: els.some((e) => e.name === "Inside heading"),
-    thumbs: els.some((e) => e.name === "Back page thumbnail"),
-    aiListing: project.modelRuns.some((r) => r.outputs.some((o) => o.startsWith("listing."))),
-  };
-}
+export { coverSettings } from "@/lib/cover/settings";
 
 export async function regenerateListingWithAi(project: Project, feedback: string, signal?: AbortSignal): Promise<Regenerated> {
   const m = project.metadata;
@@ -115,7 +104,7 @@ export async function regenerateCoverWithAi(project: Project, feedback: string, 
     if (run) runs.push(run);
     const layout: ArtTemplateId = isArtTemplate(c.templateId) ? c.templateId : (direction.layout ?? suggestArtTemplate(project.bookType));
     const palette = PALETTES.find((p) => p.id === direction.palette) ?? c.palette;
-    const gen = await generateCandidates(direction.concepts, layout, coverGeometry(project.spec, project.interior.pages.length), signal);
+    const gen = await generateCandidates(direction.concepts, layout, coverGeometry(project.spec, project.interior.pages.length), signal, genreOfProject(project).artStyle);
     runs.push(...gen.runs);
     const pick = await pickCandidate(project, gen.candidates, layout, palette, signal);
     if (pick.run) runs.push(pick.run);

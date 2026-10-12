@@ -1,5 +1,8 @@
-import { puzzleCount } from "@/lib/generators/pages";
+import { numberSearchLists, puzzleCount } from "@/lib/generators/pages";
+import { generateSudoku } from "@/lib/generators/sudoku";
+import { DIGITS, generateWordSearch } from "@/lib/generators/wordsearch";
 import type { Project } from "@/lib/schema/project";
+import type { CoverMotif } from "./motif";
 
 const NOUN: Record<string, [string, string]> = {
   "journal-prompts": ["prompt page", "prompt pages"],
@@ -75,4 +78,31 @@ export function coverBadge(project: Project): string {
   if (puzzles >= 10) return `${puzzles} puzzles`;
   if (/large[\s-]print/i.test(`${project.metadata.title} ${project.metadata.subtitle}`)) return "Large print";
   return "";
+}
+
+/**
+ * The cover motif for a puzzle book: the first puzzle of its first sudoku,
+ * word-search or number-search section, regenerated from the section's seed
+ * so it is exactly the puzzle on that page.
+ */
+export function coverMotif(project: Project): CoverMotif | undefined {
+  for (const s of project.interior.sections) {
+    const c = s.config;
+    if ("part" in c && c.part === "solutions") continue;
+    if (c.kind === "sudoku") return { kind: "digits", blocks: true, cells: generateSudoku(c.seed, c.difficulty).puzzle.map((v) => (v ? String(v) : "")) };
+    const list = c.kind === "word-search" ? c.puzzles[0]?.words : c.kind === "number-search" ? numberSearchLists(c)[0]?.words : undefined;
+    if ((c.kind === "word-search" || c.kind === "number-search") && list) {
+      const ws = generateWordSearch(list, c.size, c.difficulty, c.seed, c.kind === "number-search" ? DIGITS : undefined);
+      // The top-left 9 x 9 of the grid.
+      return { kind: c.kind === "number-search" ? "digits" : "letters", blocks: false, cells: ws.grid.slice(0, 9).flatMap((row) => row.slice(0, 9)) };
+    }
+  }
+  return undefined;
+}
+
+/** A stable number from the project id, so each book's decoration is its own and stays put across rebuilds. */
+export function coverSeed(project: Project): number {
+  let h = 2166136261;
+  for (let i = 0; i < project.id.length; i++) h = Math.imul(h ^ project.id.charCodeAt(i), 16777619);
+  return (h >>> 0) % 100_000;
 }

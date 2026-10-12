@@ -1,11 +1,13 @@
-function hexToRgb(hex: string): [number, number, number] | null {
+/** [r, g, b] 0-255 from a #rgb or #rrggbb color, or null. */
+export function parseHex(hex: string): [number, number, number] | null {
   const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
   if (!m) return null;
   const h = m[1].length === 3 ? [...m[1]].map((c) => c + c).join("") : m[1];
   return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) as [number, number, number];
 }
 
-function luminance([r, g, b]: [number, number, number]): number {
+/** WCAG relative luminance of an sRGB color (0-1). */
+export function luminance([r, g, b]: [number, number, number]): number {
   const lin = (c: number) => {
     const s = c / 255;
     return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
@@ -15,8 +17,8 @@ function luminance([r, g, b]: [number, number, number]): number {
 
 /** WCAG contrast ratio between two hex colors (1-21), or null if either isn't a hex color. */
 export function contrastRatio(a: string, b: string): number | null {
-  const ra = hexToRgb(a);
-  const rb = hexToRgb(b);
+  const ra = parseHex(a);
+  const rb = parseHex(b);
   if (!ra || !rb) return null;
   const [hi, lo] = [luminance(ra), luminance(rb)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
@@ -39,8 +41,8 @@ export function legibleOn(backdrop: string, preferred: string, candidates: strin
 
 /** Blend two hex colors: `t` = 0 gives `a`, 1 gives `b`. */
 export function mixHex(a: string, b: string, t: number): string {
-  const ra = hexToRgb(a);
-  const rb = hexToRgb(b);
+  const ra = parseHex(a);
+  const rb = parseHex(b);
   if (!ra || !rb) return a;
   return `#${ra.map((c, i) => Math.round(c + (rb[i] - c) * t).toString(16).padStart(2, "0")).join("")}`;
 }
@@ -77,7 +79,7 @@ export function regionTone(rgba: ArrayLike<number>): { mean: string; spread: num
 
 /** Share of pixels (0-1) on which `color` falls below `min` contrast: how much of the title would get lost in the art. */
 export function lowContrastShare(rgba: ArrayLike<number>, color: string, min = LARGE_TEXT_CONTRAST): number {
-  const rgb = hexToRgb(color);
+  const rgb = parseHex(color);
   if (!rgb) return 0;
   const lc = luminance(rgb);
   let low = 0;
@@ -93,7 +95,7 @@ export function lowContrastShare(rgba: ArrayLike<number>, color: string, min = L
 
 /** Rotate a hex color's hue by `deg` degrees, keeping saturation and lightness. */
 export function shiftHue(hex: string, deg: number): string {
-  const rgb = hexToRgb(hex);
+  const rgb = parseHex(hex);
   if (!rgb) return hex;
   const [r, g, b] = rgb.map((c) => c / 255);
   const max = Math.max(r, g, b);

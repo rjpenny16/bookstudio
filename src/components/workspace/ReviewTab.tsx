@@ -7,6 +7,8 @@ import { coverSettings, regenerateCoverWithAi, regenerateListingWithAi, regenera
 import { isSavedTemplateId } from "@/lib/cover/library";
 import { PALETTES, templateInfo } from "@/lib/cover/templates";
 import { designCover } from "@/lib/cover/artClient";
+import { variantPalette } from "@/lib/cover/variants";
+import { CoverVariants } from "./CoverVariants";
 import { downloadPackage } from "@/lib/export/client";
 import { coverGeometry, interiorGeometry } from "@/lib/kdp/geometry";
 import { LISTING } from "@/lib/kdp/rules";
@@ -17,7 +19,7 @@ import { aiUsage } from "@/lib/preflight/aiUsage";
 import { applyRevisedListing, qualityReport } from "@/lib/quality";
 import { critiqueListing, reviewVisuals } from "@/lib/quality/review";
 import { scorecard, type RowStatus } from "@/lib/quality/scorecard";
-import type { AiDisclosureLevel, InteriorSection, Project } from "@/lib/schema/project";
+import type { AiDisclosureLevel, CoverVariant, InteriorSection, Project } from "@/lib/schema/project";
 import { useProjectStore } from "@/lib/storage/store";
 import { PageThumb } from "./PageThumb";
 import type { TabId } from "./Workspace";
@@ -98,7 +100,7 @@ export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (ta
   const listingReview = quality.reviews.listing;
   const candidates = project.coverArt?.candidates ?? [];
   const templateName = isSavedTemplateId(project.cover.templateId) ? "saved" : (templateInfo(project.cover.templateId)?.name ?? "custom");
-  const paletteName = PALETTES.find((p) => p.id === project.cover.paletteId)?.name;
+  const paletteName = project.cover.palette?.name ?? PALETTES.find((p) => p.id === project.cover.paletteId)?.name;
 
   /** Run one action at a time; a regenerated project replaces the current one (undo brings the old one back). */
   const act = async (kind: NonNullable<Busy>, fn: (p: Project) => Promise<Regenerated>) => {
@@ -119,6 +121,12 @@ export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (ta
     act("cover", async (p) => {
       const c = p.coverArt!.candidates.find((x) => x.id === id)!;
       return { project: await designCover(p, { ...coverSettings(p), templateId: c.layout, candidateId: id }), summary: `"${c.name}" is on the cover.` };
+    });
+
+  const applyVariant = (v: CoverVariant) =>
+    act("cover", async (p) => {
+      const palette = variantPalette(v);
+      return { project: await designCover(p, { ...coverSettings(p), templateId: v.templateId, palette }), summary: `The ${templateInfo(v.templateId)?.name ?? v.templateId} design with the ${palette.name} palette is on the cover.` };
     });
 
   const runReviews = () =>
@@ -230,6 +238,7 @@ export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (ta
                   {project.coverArt?.pickReason && <p className="field-hint" style={{ margin: 0 }}>Why this one: {project.coverArt.pickReason}</p>}
                 </>
               )}
+              <CoverVariants project={project} disabled={busy !== null} onUse={applyVariant} />
               <RegenerateBox what="cover" placeholder='e.g. "warmer colors", "more playful", "less busy"' busy={busy === "cover"} disabled={busy !== null} onRun={(f) => act("cover", (p) => regenerateCoverWithAi(p, f))} />
             </div>
           </div>

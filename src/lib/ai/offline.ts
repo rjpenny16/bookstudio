@@ -1,5 +1,6 @@
 import { recipeBlueprint } from "@/lib/agent/recipes";
 import { genreOf } from "@/lib/cover/genres";
+import { splitTitle } from "@/lib/cover/lockup";
 import { restyleOffline } from "@/lib/cover/restyle";
 import { nearDuplicate } from "@/lib/quality/content";
 import { AFFIRMATION_BANK, PROMPT_BANK, SAYING_BANK, THEME_BANK } from "./offlineBanks";
@@ -119,6 +120,7 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
         angle: `A practical ${noun.toLowerCase()} about ${topic.toLowerCase()} for ${audience}.`,
         audience,
         titleIdeas: [title, `The ${title}`, `My ${title}`, `${topic}: A ${noun} for ${audienceHead(audience)}`, `Simply ${topic}`],
+        titleHero: splitTitle(title).hero,
         subtitle: offlineSubtitle(type, i.topic, audience),
         keywordIdeas: [`${i.topic} ${noun}`.toLowerCase(), `${i.topic} gift for ${audience}`.toLowerCase(), `${noun} for ${audience}`.toLowerCase(), `${i.topic} book`.toLowerCase(), `${i.topic} workbook`.toLowerCase()],
         interiorPlan: `${generator.replace("-", " ")} pages with a title page.`,
@@ -224,11 +226,14 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
       const start = hash(t) % ideas.length;
       const concepts = Array.from({ length: i.count }, (_, n) => ideas[(start + n) % ideas.length]);
       const layout = i.bookType === "puzzle" || i.bookType === "activity" ? "art-panel" : i.bookType === "journal" || i.bookType === "notebook" ? "art-framed" : "art-full-bleed";
-      const palette = (["midnight", "sage", "blush", "ocean", "sunny", "forest", "charcoal", "cream"] as const)[hash(t) % 8];
+      const genrePalettes = genreOf({ bookType: i.bookType, topic: i.topic, audience: i.audience }).palettes;
+      const palette = genrePalettes[hash(t) % Math.min(3, genrePalettes.length)] as TaskOutput<"cover-art-prompt">["palette"];
       return { layout, palette, concepts } as TaskOutput<T>;
     }
     case "cover-art-pick":
-      return { choice: 1, reason: "Offline mode can't look at images; picked by measured title contrast instead.", problems: [] } as TaskOutput<T>;
+      return { choice: 1, reason: "Offline mode can't look at images; picked by measured title contrast instead.", problems: [], textInArt: [] } as TaskOutput<T>;
+    case "cover-variant-pick":
+      return { choice: 1, reason: "Offline mode can't look at images; picked by the measured cover score instead.", problems: [] } as TaskOutput<T>;
     case "cover-style": {
       const i = input as TaskInput<"cover-style">;
       return restyleOffline(i.feedback, i.currentTemplate, i.currentPalette, genreOf({ bookType: i.bookType, topic: i.topic, audience: i.audience }).palettes) as TaskOutput<T>;

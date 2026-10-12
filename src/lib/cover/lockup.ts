@@ -28,9 +28,16 @@ const FORMAT = ["activity book", "coloring book", "colouring book", "puzzle book
 const PREPOSITION = /\s+(for|with|to help|about|from)\s+/i;
 const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
-export function splitTitle(title: string): TitleParts {
+/**
+ * Split a title into kicker, hero and support. `hero` (from the brief: the
+ * words shoppers search for) is used when it is a whole-word run inside the
+ * title; otherwise the split comes from the title's own shape.
+ */
+export function splitTitle(title: string, hero?: string): TitleParts {
   const whole = title.trim().replace(/\s+/g, " ");
   if (!whole) return { hero: whole };
+  const hinted = hero?.trim() ? splitAround(whole, hero.trim()) : null;
+  if (hinted) return hinted;
   let main = whole;
   let after = "";
   let tail = "";
@@ -64,6 +71,19 @@ export function splitTitle(title: string): TitleParts {
   const rejoined = norm([parts.kicker, parts.hero, parts.support].filter(Boolean).join(" "));
   if (!parts.hero || parts.hero.replace(/[^\p{L}\p{N}]/gu, "").length < 3 || rejoined !== norm(whole)) return { hero: whole };
   return parts;
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The title split around `hero`, when it is a whole-word run within the title and the words before it are few enough to be a kicker. */
+function splitAround(whole: string, hero: string): TitleParts | null {
+  const m = new RegExp(`(^|[\\s:])(${escapeRe(hero.replace(/\s+/g, " "))})(?=$|[\\s:,!?.])`, "i").exec(whole);
+  if (!m) return null;
+  const start = m.index + m[1].length;
+  const kicker = whole.slice(0, start).replace(/[\s:]+$/, "").trim();
+  const support = whole.slice(start + m[2].length).replace(/^[\s:,]+/, "").trim();
+  if (kicker.split(/\s+/).length > 4 || m[2].replace(/[^\p{L}\p{N}]/gu, "").length < 3) return null;
+  return { hero: m[2], ...(kicker ? { kicker } : {}), ...(support ? { support } : {}) };
 }
 
 export interface LockupOptions {
@@ -100,9 +120,9 @@ export interface Lockup {
 const LH = 1.13;
 
 /** Lay out a book's title as kicker, hero and support at tied sizes. */
-export function lockup(input: { title: string; type?: TypeSystem }, o: LockupOptions): Lockup {
+export function lockup(input: { title: string; titleHero?: string; type?: TypeSystem }, o: LockupOptions): Lockup {
   const t = input.type;
-  const parts = splitTitle(input.title);
+  const parts = splitTitle(input.title, input.titleHero);
   // A genre's type system decides the case; without one the template's own look does.
   const heroUpper = t ? t.heroUpper : (o.upper ?? false);
   const supportUpper = t ? t.supportUpper : (o.upper ?? false);
