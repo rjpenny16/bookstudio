@@ -134,6 +134,7 @@ function Autopilot() {
                     <div>
                       <strong>{s.label}</strong>
                       {s.detail && <div className="step-detail">{s.detail}</div>}
+                      {!s.detail && s.id === "art" && s.status === "running" && images?.provider === "codex" && <div className="step-detail">Drawing through your ChatGPT plan; usually 2 to 6 minutes</div>}
                     </div>
                   </li>
                 ))}

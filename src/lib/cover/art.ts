@@ -112,6 +112,12 @@ export function artStoreSize(box: Box, cropW: number, cropH: number): { width: n
 /** Effective print DPI of art cropped to `cropW` px wide and printed `box.width` points wide. */
 export const artDpi = (box: Box, cropW: number) => cropW / ptToIn(box.width);
 
+/** Print DPI of a `w`×`h` px image cropped to fill `layout`'s art box. */
+export function layoutDpi(layout: ArtTemplateId, cg: CoverGeometry, w: number, h: number): number {
+  const box = artBox(layout, cg);
+  return artDpi(box, coverCrop(w, h, box.width / box.height).sw);
+}
+
 /** Where the title sits over the art, as fractions of the art box. Prompts ask to keep this area calm. */
 export const TITLE_ZONE: Record<ArtTemplateId, string> = {
   "art-full-bleed": "Keep the top third calm and uncluttered (soft sky, plain wall, gentle gradient): the title will be printed there.",

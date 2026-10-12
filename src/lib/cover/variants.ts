@@ -6,7 +6,8 @@ import { THUMBNAIL_PX } from "@/lib/quality/design";
 import { ensureFonts, loadImages, rasterize, type ImageCache } from "@/lib/render/canvas";
 import type { Asset, CoverAnalysis, CoverVariant, ModelRun, Project } from "@/lib/schema/project";
 import { analyzeCover } from "./analyze";
-import { ART_TEMPLATES, isArtTemplate } from "./art";
+import { LOW_IMAGE_DPI_ERROR } from "@/lib/kdp/rules";
+import { ART_TEMPLATES, isArtTemplate, layoutDpi } from "./art";
 import { artAsset, coverWords, measureTone } from "./artClient";
 import { genreOfProject, type GenreProfile } from "./genres";
 import { buildCover, PALETTES, type Palette } from "./templates";
@@ -66,6 +67,9 @@ export async function scoreVariants(project: Project, specs: VariantSpec[]): Pro
     let artInput: { assetId: string; tone?: { mean: string; spread: number } } | undefined;
     const assets: Asset[] = [];
     if (isArtTemplate(spec.templateId) && art) {
+      // Art made for one layout can be too small once cropped for another (a wide image on a tall full-bleed cover)
+      // and would fail preflight, so other layouts are only tried when the art still prints at an acceptable DPI.
+      if (spec.templateId !== specs[0]?.templateId && layoutDpi(spec.templateId, cg, art.widthPx, art.heightPx) < LOW_IMAGE_DPI_ERROR) continue;
       let a = artByLayout.get(spec.templateId);
       if (!a) {
         // Scoring doesn't need print resolution, so the art isn't upscaled here.

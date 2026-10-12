@@ -13,6 +13,7 @@ interface Capabilities {
   text: AiStatus;
   vision: { available: boolean | null; detail: string };
   images: ImageStatus;
+  envWarnings?: string[];
 }
 interface TestResult {
   ok: boolean;
@@ -104,6 +105,11 @@ export default function Settings() {
         ) : (
           <span className="muted">Checking…</span>
         )}
+        {caps?.envWarnings?.map((w) => (
+          <div key={w} className="notice notice-warn" role="alert">
+            {w}
+          </div>
+        ))}
         <p className="field-hint" style={{ margin: 0 }}>
           API keys live only in the server&apos;s environment variables; they are never sent to or stored in this browser. Tests make one tiny request (the cover art test only looks up the model and generates nothing).
         </p>
@@ -144,7 +150,7 @@ export default function Settings() {
           )}
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
             <li><code>OPENAI_API_KEY</code>: generate cover art with the OpenAI Images API (default model <code>gpt-image-2</code>, override with <code>OPENAI_IMAGE_MODEL</code>; <code>OPENAI_IMAGE_QUALITY</code> defaults to <code>high</code>).</li>
-            <li><code>IMAGE_PROVIDER=codex</code>: generate cover art with your ChatGPT subscription instead of an API key, through the <a href="https://github.com/openai/codex">codex CLI</a> and the bundled gpt-image-bridge script. Install codex on the server machine and run <code>codex login</code>. No per-image billing, but each image takes about 4 to 6 minutes and counts against your ChatGPT usage limits.</li>
+            <li><code>IMAGE_PROVIDER=codex</code>: generate cover art with your ChatGPT subscription instead of an API key, through the <a href="https://github.com/openai/codex">codex CLI</a> and the bundled gpt-image-bridge script. Install codex on the server machine and run <code>codex login</code>. No per-image billing, but each image takes about 2 to 6 minutes and counts against your ChatGPT usage limits. On Windows it also needs <a href="https://git-scm.com">Git for Windows</a> (for its bash); set <code>CODEX_BASH</code> if it isn&apos;t under Program Files.</li>
             <li>gpt-image-2 is asked for art at 300 DPI for the cover size (up to its 8.3 MP limit). Older models return at most 1536 px, which is upscaled; preflight still reports the real resolution.</li>
             <li>Generated images are marked AI-generated, so the KDP image disclosure is pre-filled.</li>
           </ul>

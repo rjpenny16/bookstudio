@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ART_TEMPLATES, artBox, artDpi, coverCrop, suggestArtTemplate, type ArtTemplateId } from "@/lib/cover/art";
+import { useEffect, useRef, useState } from "react";
+import { ART_TEMPLATES, layoutDpi, suggestArtTemplate, type ArtTemplateId } from "@/lib/cover/art";
 import { directArt, generateCandidates, imageStatus, pickCandidate, type ImageStatus } from "@/lib/cover/artClient";
 import { ART_COVER_TEMPLATES, PALETTES, type Palette } from "@/lib/cover/templates";
 import { coverGeometry } from "@/lib/kdp/geometry";
@@ -22,10 +22,20 @@ export function CoverArtPanel({ onUse, busy, palette }: { onUse: (candidateId: s
   const [layout, setLayout] = useState<ArtTemplateId>(suggestArtTemplate(project.bookType));
   const [working, setWorking] = useState<null | "direct" | "generate" | "pick">(null);
   const [message, setMessage] = useState<{ kind: "info" | "fail"; text: string } | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const abort = useRef<AbortController | null>(null);
 
   useEffect(() => {
     imageStatus().then(setStatus).catch(() => setStatus(null));
   }, []);
+
+  // Image generation can take minutes (codex), so show how long it's been.
+  useEffect(() => {
+    if (working !== "generate") return;
+    const started = Date.now();
+    const t = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [working]);
 
   const candidates = project.coverArt?.candidates ?? [];
   const chosen = project.coverArt?.chosenId;
@@ -61,7 +71,11 @@ export function CoverArtPanel({ onUse, busy, palette }: { onUse: (candidateId: s
   const generate = () =>
     run("generate", async () => {
       const list = concepts.filter((c) => c.prompt.trim());
-      const res = await generateCandidates(list, layout, cg, undefined, genreOfProject(project).artStyle);
+      abort.current = new AbortController();
+      setElapsed(0);
+      const res = await generateCandidates(list, layout, cg, abort.current.signal, genreOfProject(project).artStyle).catch((e) => {
+        throw abort.current?.signal.aborted ? new Error("Image generation cancelled.") : e;
+      });
       update((d) => {
         const prev = d.coverArt?.candidates ?? [];
         d.coverArt = { ...d.coverArt, candidates: [...res.candidates, ...prev].slice(0, KEEP) };
@@ -85,6 +99,7 @@ export function CoverArtPanel({ onUse, busy, palette }: { onUse: (candidateId: s
     });
 
   if (!status) return null;
+  const codex = status.provider === "codex";
   if (!status.configured)
     return (
       <div className="notice notice-info" style={{ fontSize: 12 }}>
@@ -122,25 +137,39 @@ export function CoverArtPanel({ onUse, busy, palette }: { onUse: (candidateId: s
         </div>
       ))}
       {concepts.length > 0 && (
-        <button className="btn btn-sm btn-primary" onClick={generate} disabled={!!working || !concepts.some((c) => c.prompt.trim())}>
-          {working === "generate" && <span className="spinner" />} Generate {concepts.filter((c) => c.prompt.trim()).length} image(s)
-        </button>
+        <div className="row">
+          <button className="btn btn-sm btn-primary" onClick={generate} disabled={!!working || !concepts.some((c) => c.prompt.trim())}>
+            {working === "generate" && <span className="spinner" />} Generate {concepts.filter((c) => c.prompt.trim()).length} image(s)
+          </button>
+          {working === "generate" && (
+            <>
+              <span className="field-hint" role="status">
+                {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
+                {codex ? " of about 2 to 6 minutes" : ""}
+              </span>
+              <button className="btn btn-sm" onClick={() => abort.current?.abort()}>
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
       )}
       <p className="field-hint" style={{ margin: 0 }}>
-        Prompts always add: no text or logos in the art, a calm area for the title, a flat illustrated style that prints cleanly. Each image is a paid request to {status.provider}.
+        Prompts always add: no text or logos in the art, a calm area for the title, a flat illustrated style that prints cleanly.{" "}
+        {codex
+          ? "Images come from your ChatGPT plan through codex: no per-image charge, but they count toward your ChatGPT usage limits and take a few minutes."
+          : `Each image is a paid request to ${status.provider}.`}
       </p>
       {message && <div className={`notice notice-${message.kind}`}>{message.text}</div>}
       {candidates.length > 0 && (
         <>
           <div className="grid grid-2" role="list" aria-label="Cover art candidates" style={{ gap: 8 }}>
             {candidates.map((c) => {
-              const box = artBox(c.layout as ArtTemplateId, cg);
-              const crop = coverCrop(c.widthPx, c.heightPx, box.width / box.height);
               return (
                 <div key={c.id} role="listitem" aria-label={c.name} className="stack" style={{ gap: 4, border: `2px solid ${c.id === chosen ? "var(--accent)" : "var(--line)"}`, borderRadius: 8, padding: 4 }}>
                   <img src={c.dataUrl} alt={`Cover art: ${c.name}`} style={{ width: "100%", aspectRatio: `${c.widthPx} / ${c.heightPx}`, objectFit: "cover", borderRadius: 4 }} />
                   <span style={{ fontSize: 11 }}>
-                    {c.name} · {Math.round(artDpi(box, crop.sw))} DPI
+                    {c.name} · {Math.round(layoutDpi(c.layout as ArtTemplateId, cg, c.widthPx, c.heightPx))} DPI
                   </span>
                   <button className="btn btn-sm" onClick={() => onUse(c.id)} disabled={busy || !!working}>
                     {c.id === chosen ? "On cover" : "Use this"}

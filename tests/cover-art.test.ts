@@ -3,7 +3,7 @@ import { assembleBook, planSections, validateBlueprint, type PlannedSection } fr
 import { recipeBlueprint } from "@/lib/agent/recipes";
 import { offlineTask } from "@/lib/ai/offline";
 import { taskPrompt } from "@/lib/ai/tasks";
-import { ART_RULES, ART_TEMPLATES, artBox, artDpi, artRequestSize, artStoreSize, coverCrop, finalArtPrompt } from "@/lib/cover/art";
+import { ART_RULES, ART_TEMPLATES, artBox, artDpi, artRequestSize, artStoreSize, coverCrop, finalArtPrompt, layoutDpi } from "@/lib/cover/art";
 import { whatsInside } from "@/lib/cover/inside";
 import { ART_COVER_TEMPLATES, buildCover, PALETTES, type ArtTone } from "@/lib/cover/templates";
 import { coverGeometry, type Box } from "@/lib/kdp/geometry";
@@ -83,6 +83,14 @@ describe("art request sizes", () => {
     const box = { x: 0, y: 0, width: inToPt(6), height: inToPt(9) };
     expect(artStoreSize(box, 1800, 2700)).toEqual({ width: 1800, height: 2700, upscaled: false });
     expect(artStoreSize(box, 1024, 1536)).toEqual({ width: 1800, height: 2700, upscaled: true });
+  });
+
+  it("reports how a candidate prints in each layout", () => {
+    const cg = coverGeometry(createProject({ name: "x", bookType: "journal", trimId: "6x9", paper: "white", ink: "black", bleed: false }).spec, 120);
+    // A wide image made for the framed layout (as codex returns it) is fine there, but too small cropped for a tall full-bleed cover.
+    expect(layoutDpi("art-framed", cg, 1504, 1328)).toBeGreaterThan(300);
+    expect(layoutDpi("art-full-bleed", cg, 1504, 1328)).toBeLessThan(150);
+    expect(layoutDpi("art-full-bleed", cg, 1024, 1536)).toBeGreaterThan(150);
   });
 });
 

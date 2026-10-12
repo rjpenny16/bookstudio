@@ -1,6 +1,7 @@
 import "server-only";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -53,7 +54,7 @@ const openAiModel = () => process.env.OPENAI_IMAGE_MODEL || "gpt-image-2";
 const codexSelected = () => process.env.IMAGE_PROVIDER?.trim().toLowerCase() === "codex";
 
 export function imageStatus(): ImageStatus {
-  if (codexSelected()) return { provider: "codex", model: CODEX_MODEL, configured: true, detail: "Cover art through the codex CLI on your ChatGPT subscription (no API key; about 4 to 6 minutes per image)" };
+  if (codexSelected()) return { provider: "codex", model: CODEX_MODEL, configured: true, detail: "Cover art through the codex CLI on your ChatGPT subscription (no API key; about 2 to 6 minutes per image)" };
   if (process.env.OPENAI_API_KEY) return { provider: "openai", model: openAiModel(), configured: true, detail: "Cover art via the OpenAI Images API" };
   return { provider: "none", model: "", configured: false, detail: "No OPENAI_API_KEY or IMAGE_PROVIDER=codex set; covers use the built-in vector templates" };
 }
@@ -106,6 +107,23 @@ const CODEX_TIMEOUT_MS = 10 * 60_000;
 /** The gpt-image-bridge wrapper vendored as a Claude Code skill (see .claude/skills/gpt-image-bridge). */
 export const codexBridgePath = () => process.env.CODEX_IMAGE_BRIDGE || path.join(process.cwd(), ".claude/skills/gpt-image-bridge/bin/gpt-image-2");
 
+/**
+ * The bash that runs the bridge. On Windows that's Git for Windows' bash: it
+ * isn't on PATH for a server started from PowerShell, and System32\bash.exe is
+ * WSL, which can't see a Windows codex. CODEX_BASH overrides it.
+ */
+export function bridgeShell(): string {
+  if (process.env.CODEX_BASH) return process.env.CODEX_BASH;
+  if (process.platform !== "win32") return "bash";
+  const roots = [process.env.ProgramFiles, process.env["ProgramW6432"], process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, "Programs")];
+  return roots.map((r) => r && path.join(r, "Git", "bin", "bash.exe")).find((p): p is string => !!p && existsSync(p)) ?? "bash";
+}
+
+export const noBash = () =>
+  process.platform === "win32"
+    ? "Git for Windows (its bash) is needed to run the image bridge. Install it from https://git-scm.com, or set CODEX_BASH to a bash.exe."
+    : "bash is needed to run the image bridge.";
+
 /** Pixel size from a PNG or JPEG header, or null when it can't be read. */
 export function imageSize(buf: Buffer): { width: number; height: number } | null {
   if (buf.length >= 24 && buf.readUInt32BE(0) === 0x89504e47) return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
@@ -144,7 +162,8 @@ export class CodexImageProvider implements ImageProvider {
     const dir = await mkdtemp(path.join(tmpdir(), "bookstudio-art-"));
     const out = path.join(dir, "art.png");
     try {
-      await this.run([req.prompt, out, "--size", `${hint.width}x${hint.height}`], signal);
+      // The bridge's dirname/basename split only on /, so Windows paths go over as C:/...
+      await this.run([req.prompt, out.replaceAll("\\", "/"), "--size", `${hint.width}x${hint.height}`], dir, signal);
       const buf = await readFile(out).catch(() => {
         throw new ImageError("codex finished but saved no image.");
       });
@@ -164,15 +183,25 @@ export class CodexImageProvider implements ImageProvider {
     }
   }
 
-  private run(args: string[], signal?: AbortSignal): Promise<void> {
+  /** `dir` is this request's own temp dir; the bridge's codex workdir goes inside it, so it's in codex's command line. */
+  private run(args: string[], dir: string, signal?: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) return reject(new ImageError("Image request was cancelled.", 499));
+      const win = process.platform === "win32";
       // Its own process group, so cancelling stops codex too and not just the wrapper.
-      const child = spawn("bash", [this.bridge, ...args], { detached: true, stdio: ["ignore", "ignore", "pipe"] });
+      const child = spawn(bridgeShell(), [this.bridge, ...args], { detached: !win, windowsHide: true, stdio: ["ignore", "ignore", "pipe"], env: { ...process.env, TMPDIR: dir } });
       let stderr = "";
       let why: ImageError | null = null;
       const kill = (err: ImageError) => {
         why = err;
+        if (win) {
+          // Git bash's processes don't form a Windows process tree taskkill /T can follow, so codex is found by
+          // its workdir instead (the temp dir name is unique to this request and contains only safe characters).
+          execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true }, () => {});
+          const ps = `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${path.basename(dir)}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
+          execFile("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], { windowsHide: true }, () => {});
+          return;
+        }
         try {
           process.kill(-child.pid!, "SIGTERM");
         } catch {
@@ -191,7 +220,9 @@ export class CodexImageProvider implements ImageProvider {
         if (err) reject(err);
         else resolve();
       };
-      child.on("error", (e) => done(new ImageError(`Could not run the image bridge at ${this.bridge}: ${e.message}`, 503)));
+      child.on("error", (e) => done(new ImageError((e as NodeJS.ErrnoException).code === "ENOENT" ? noBash() : `Could not run the image bridge at ${this.bridge}: ${e.message}`, 503)));
+      // A stopped request settles as soon as the wrapper exits; a straggler holding stderr open mustn't keep it waiting.
+      child.on("exit", () => why && done(why));
       child.on("close", (code) => {
         if (why) return done(why);
         if (code === 0) return done(null);
