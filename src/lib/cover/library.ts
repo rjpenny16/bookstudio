@@ -58,7 +58,7 @@ const COMPANIONS: Record<Role, string[]> = {
   title: [],
   support: [],
   subtitle: ["Subtitle plate"],
-  author: ["Author plate"],
+  author: ["Author plate", "Author scrim"],
   series: [],
   volume: ["Volume label"],
   badge: ["Badge", "Starburst"],
@@ -179,7 +179,7 @@ export function applyCoverTemplate(t: SavedCoverTemplate, input: Omit<CoverInput
   const to = frameOf(cg);
   // A design saved with a split title gets the new title split the same way; parts the design has no place for stay with the hero.
   const has = (name: string) => t.elements.some((e) => e.type === "text" && e.name === name);
-  const parts = has("Title kicker") || has("Title support") ? splitTitle(input.title) : { hero: input.title };
+  const parts = has("Title kicker") || has("Title support") ? splitTitle(input.title, input.titleHero) : { hero: input.title };
   const kicker = has("Title kicker") ? (parts.kicker ?? "") : "";
   const support = has("Title support") ? (parts.support ?? "") : "";
   const hero = [has("Title kicker") ? "" : parts.kicker, parts.hero, has("Title support") ? "" : parts.support].filter(Boolean).join(" ");

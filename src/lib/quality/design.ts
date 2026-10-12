@@ -3,6 +3,7 @@ import { elementBounds } from "@/lib/schema/elements";
 import type { Element, Project } from "@/lib/schema/project";
 import { contrastRatio, LARGE_TEXT_CONTRAST, TEXT_CONTRAST } from "@/lib/util/color";
 import type { Severity } from "./content";
+import { coverKey } from "./coverScore";
 
 /**
  * Rule-based design checks that need no model: text contrast on the cover,
@@ -41,7 +42,11 @@ export function checkDesign(project: Project): DesignNote[] {
   const notes: DesignNote[] = [];
   const cg = coverGeometry(project.spec, project.interior.pages.length);
   const els = project.cover.elements;
-  const frontText = els.filter((e): e is Extract<Element, { type: "text" }> => e.type === "text" && inside(center(elementBounds(e)), cg.front));
+  // Puzzle motifs on the front are decoration, not copy.
+  const frontText = els.filter((e): e is Extract<Element, { type: "text" }> => e.type === "text" && !e.name?.startsWith("Motif") && inside(center(elementBounds(e)), cg.front));
+  // Contrast measured on the rendered pixels (art included) when the cover hasn't changed since; else the shape behind the text.
+  const a = project.cover.analysis;
+  const measured = a && a.key === coverKey(project.cover) ? new Map(a.textContrast.map((t) => [t.elementId, t.ratio])) : null;
 
   if (!frontText.length) {
     if (els.length) notes.push({ area: "cover", severity: "high", issue: "The front cover has no text.", suggestion: "KDP requires the title on the front cover, and it should match the listing title." });
@@ -52,7 +57,7 @@ export function checkDesign(project: Project): DesignNote[] {
     else if (px < 7) notes.push({ area: "cover", severity: "medium", elementId: title.id, issue: `The title would be about ${px.toFixed(1)} px tall in a ${THUMBNAIL_PX} px search thumbnail.`, suggestion: "A larger or shorter title reads better at thumbnail size." });
 
     for (const t of frontText) {
-      const ratio = contrastRatio(t.color, backdrop(els, t, project.cover.background));
+      const ratio = measured?.get(t.id) ?? contrastRatio(t.color, backdrop(els, t, project.cover.background));
       if (ratio === null) continue;
       const label = t.name ?? `"${t.text.slice(0, 24)}"`;
       const large = t.fontSize >= 18 || (t.bold && t.fontSize >= 14);

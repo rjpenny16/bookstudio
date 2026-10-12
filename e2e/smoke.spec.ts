@@ -204,6 +204,64 @@ test("autopilot generates, picks and places AI cover art", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("autopilot picks a cover design with a vision model, redesigns once after a poor review, and Review offers the other designs", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const sent: { task: string; images?: { label: string }[] }[] = [];
+  let reviews = 0;
+  // A vision-capable provider stands in: the brief is passed off as a model's so the review runs, the design pick and both reviews are scripted.
+  await page.route("/api/ai", async (route) => {
+    if (route.request().method() === "GET") return route.fulfill({ json: { provider: "anthropic", model: "test-model", configured: true, detail: "mocked" } });
+    const body = route.request().postDataJSON();
+    sent.push(body);
+    const meta = { provider: "anthropic", model: "test-model", task: body.task, promptHash: "sha256:test" };
+    if (body.task === "brief") {
+      const res = await route.fetch();
+      const json = await res.json();
+      return route.fulfill({ json: { ...json, meta } });
+    }
+    if (body.task === "cover-variant-pick") return route.fulfill({ json: { output: { choice: 2, reason: "The second design reads best as a thumbnail.", problems: [] }, meta } });
+    if (body.task === "visual-review") {
+      reviews++;
+      const output =
+        reviews === 1
+          ? { score: 3, summary: "The title is lost at thumbnail size.", thumbnailReadable: false, findings: [{ target: body.input.images[1], severity: "high", issue: "Title unreadable as a thumbnail.", suggestion: "Use a bolder layout." }] }
+          : { score: 8, summary: "Clear and on-genre.", thumbnailReadable: true, findings: [] };
+      return route.fulfill({ json: { output, meta } });
+    }
+    return route.continue();
+  });
+  await page.route("/api/image", (route) => route.fulfill({ json: { provider: "none", model: "", configured: false, detail: "mocked" } }));
+
+  await page.goto("/autopilot");
+  await page.getByRole("button", { name: "large print sudoku" }).click();
+  await page.getByRole("button", { name: "Run autopilot" }).click();
+  await expect(page.getByText("Draft ready for your review")).toBeVisible({ timeout: 90_000 });
+
+  // The vision model saw each shortlisted design full size and as a thumbnail, and its pick explains the choice.
+  const pick = sent.filter((s) => s.task === "cover-variant-pick");
+  expect(pick).toHaveLength(1);
+  expect(pick[0].images!.length).toBeGreaterThanOrEqual(4);
+  expect(pick[0].images![1].label).toMatch(/search thumbnail/);
+  await expect(page.getByText(/The second design reads best as a thumbnail/)).toBeVisible();
+  // The poor first review sent the cover back for exactly one redesign.
+  expect(reviews).toBe(2);
+  await expect(page.getByText(/redesigned after review/).first()).toBeVisible();
+
+  await page.getByRole("link", { name: "Review & Publish" }).click();
+  const designs = page.getByRole("list", { name: "Other cover designs" }).getByRole("listitem");
+  await expect(designs.first()).toBeVisible();
+  expect(await designs.count()).toBeGreaterThanOrEqual(3);
+  const onCover = page.getByRole("list", { name: "Other cover designs" }).getByRole("button", { name: "On cover" });
+  await expect(onCover).toHaveCount(1);
+  const other = designs.filter({ has: page.getByRole("button", { name: "Use" }) }).first();
+  const label = await other.getAttribute("aria-label");
+  await other.getByRole("button", { name: "Use" }).click();
+  await expect(page.getByRole("listitem", { name: label! }).getByRole("button", { name: "On cover" })).toBeVisible();
+  await expect(page.getByText(/is on the cover. Undo brings back the previous version/)).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test("one-click start builds a book and the Review & Publish screen exports it", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));

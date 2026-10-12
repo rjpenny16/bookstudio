@@ -7,6 +7,7 @@ import { ART_COVER_TEMPLATES, PALETTES, type Palette } from "@/lib/cover/templat
 import { coverGeometry } from "@/lib/kdp/geometry";
 import { effectiveDpi } from "@/lib/preflight";
 import { useProjectStore } from "@/lib/storage/store";
+import { genreOfProject } from "@/lib/cover/genres";
 
 /** Most candidates kept on a project; older ones are dropped first. */
 const KEEP = 8;
@@ -60,7 +61,7 @@ export function CoverArtPanel({ onUse, busy, palette }: { onUse: (candidateId: s
   const generate = () =>
     run("generate", async () => {
       const list = concepts.filter((c) => c.prompt.trim());
-      const res = await generateCandidates(list, layout, cg);
+      const res = await generateCandidates(list, layout, cg, undefined, genreOfProject(project).artStyle);
       update((d) => {
         const prev = d.coverArt?.candidates ?? [];
         d.coverArt = { ...d.coverArt, candidates: [...res.candidates, ...prev].slice(0, KEEP) };

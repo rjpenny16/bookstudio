@@ -81,15 +81,22 @@ export function artRequestSize(model: string, widthIn: number, heightIn: number)
   return { width, height };
 }
 
-/** Source rectangle that fills a box of `boxAspect` (width / height) from a `w` x `h` image, centered ("cover" fit). */
-export function coverCrop(w: number, h: number, boxAspect: number): { sx: number; sy: number; sw: number; sh: number } {
+/**
+ * Source rectangle that fills a box of `boxAspect` (width / height) from a
+ * `w` x `h` image ("cover" fit): centered across, and `offsetY` of the way
+ * down when the image is taller than the box (0.5 = centered).
+ */
+export function coverCrop(w: number, h: number, boxAspect: number, offsetY = 0.5): { sx: number; sy: number; sw: number; sh: number } {
   if (w / h > boxAspect) {
     const sw = Math.round(h * boxAspect);
     return { sx: Math.round((w - sw) / 2), sy: 0, sw, sh: h };
   }
   const sh = Math.round(w / boxAspect);
-  return { sx: 0, sy: Math.round((h - sh) / 2), sw: w, sh };
+  return { sx: 0, sy: Math.round((h - sh) * Math.max(0, Math.min(1, offsetY))), sw: w, sh };
 }
+
+/** Vertical crop positions tried for full-bleed art, so the calmest part of the image sits under the title. */
+export const CROP_OFFSETS = [0, 0.25, 0.5, 0.75, 1];
 
 /**
  * Pixel size to store art at for a box of `box` points: 300 DPI, never less
@@ -116,12 +123,16 @@ export const TITLE_ZONE: Record<ArtTemplateId, string> = {
 export const ART_RULES = [
   "Absolutely no text, letters, numbers, words, signatures or watermarks anywhere in the image.",
   "No logos, brands, trademarks, real people, celebrities, or characters from films, games, books or cartoons.",
-  "Flat illustration or clean painterly style with smooth color areas and crisp shapes (it is printed large and must upscale cleanly); no photographic noise or fine film grain.",
-  "Family-friendly, print-ready, full color, evenly lit.",
+  "Smooth color areas and crisp shapes (it is printed large and must upscale cleanly); no photographic noise or fine film grain.",
+  "Family-friendly, print-ready, full color.",
 ];
 
-export function finalArtPrompt(concept: string, templateId: ArtTemplateId): string {
-  return `${concept.trim().replace(/\s+/g, " ")}\n\nThis is artwork for a printed book cover, portrait format. ${TITLE_ZONE[templateId]}\n${ART_RULES.map((r) => `- ${r}`).join("\n")}`;
+/** Style when the book's genre doesn't name one. */
+export const DEFAULT_ART_STYLE = "Flat illustration or clean painterly style";
+
+/** The concept plus the cover's layout needs, the genre's style (see cover/genres) and the fixed rules. */
+export function finalArtPrompt(concept: string, templateId: ArtTemplateId, style = DEFAULT_ART_STYLE): string {
+  return `${concept.trim().replace(/\s+/g, " ")}\n\nThis is artwork for a printed book cover, portrait format. ${TITLE_ZONE[templateId]}\nStyle: ${style.trim().replace(/\.$/, "")}.\n${ART_RULES.map((r) => `- ${r}`).join("\n")}`;
 }
 
 /** Art layout that suits a book type when nothing else decides it. */
