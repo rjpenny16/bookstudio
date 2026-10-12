@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ART_TEMPLATES, artBox, artDpi, coverCrop, suggestArtTemplate, type ArtTemplateId } from "@/lib/cover/art";
+import { ART_TEMPLATES, layoutDpi, suggestArtTemplate, type ArtTemplateId } from "@/lib/cover/art";
 import { directArt, generateCandidates, imageStatus, pickCandidate, type ImageStatus } from "@/lib/cover/artClient";
 import { ART_COVER_TEMPLATES, PALETTES, type Palette } from "@/lib/cover/templates";
 import { coverGeometry } from "@/lib/kdp/geometry";
@@ -165,13 +165,11 @@ export function CoverArtPanel({ onUse, busy, palette }: { onUse: (candidateId: s
         <>
           <div className="grid grid-2" role="list" aria-label="Cover art candidates" style={{ gap: 8 }}>
             {candidates.map((c) => {
-              const box = artBox(c.layout as ArtTemplateId, cg);
-              const crop = coverCrop(c.widthPx, c.heightPx, box.width / box.height);
               return (
                 <div key={c.id} role="listitem" aria-label={c.name} className="stack" style={{ gap: 4, border: `2px solid ${c.id === chosen ? "var(--accent)" : "var(--line)"}`, borderRadius: 8, padding: 4 }}>
                   <img src={c.dataUrl} alt={`Cover art: ${c.name}`} style={{ width: "100%", aspectRatio: `${c.widthPx} / ${c.heightPx}`, objectFit: "cover", borderRadius: 4 }} />
                   <span style={{ fontSize: 11 }}>
-                    {c.name} · {Math.round(artDpi(box, crop.sw))} DPI
+                    {c.name} · {Math.round(layoutDpi(c.layout as ArtTemplateId, cg, c.widthPx, c.heightPx))} DPI
                   </span>
                   <button className="btn btn-sm" onClick={() => onUse(c.id)} disabled={busy || !!working}>
                     {c.id === chosen ? "On cover" : "Use this"}
