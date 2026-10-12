@@ -1,18 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { countSolutions, generateSudoku, isValidSolution, SUDOKU_CLUES } from "@/lib/generators/sudoku";
+import { countSolutions, generateSudoku, isValidSolution } from "@/lib/generators/sudoku";
+import { DIFFICULTY_AT, gradeSudoku, LEVELS_FOR, solveByLogic } from "@/lib/generators/sudokuGrade";
 import { generateWordSearch, verifyPlacement } from "@/lib/generators/wordsearch";
 import { generateMaze } from "@/lib/generators/maze";
 
 describe("sudoku", () => {
-  it.each(["easy", "medium", "hard"] as const)("generates unique %s puzzles", (difficulty) => {
-    for (let seed = 1; seed <= 5; seed++) {
+  it.each(["easy", "medium", "hard", "expert"] as const)("generates unique %s puzzles labelled with the grade they really have", (difficulty) => {
+    let onLabel = 0;
+    for (let seed = 1; seed <= 6; seed++) {
       const s = generateSudoku(seed * 101, difficulty);
       expect(isValidSolution(s.solution)).toBe(true);
       expect(countSolutions(s.puzzle, 2)).toBe(1);
       s.puzzle.forEach((v, i) => v && expect(v).toBe(s.solution[i]));
-      expect(s.clues).toBeGreaterThanOrEqual(SUDOKU_CLUES[difficulty]);
-      expect(s.clues).toBeLessThanOrEqual(SUDOKU_CLUES[difficulty] + 6);
+      expect(s.clues).toBe(s.puzzle.filter(Boolean).length);
+      // The label always matches what solving it takes.
+      expect(gradeSudoku(s.puzzle)).toBe(s.level);
+      expect(DIFFICULTY_AT[s.level]).toBe(s.difficulty);
+      if (s.difficulty === difficulty) onLabel++;
     }
+    expect(onLabel).toBeGreaterThanOrEqual(5);
+  });
+
+  it("grades by technique, not clue count", () => {
+    // Solvable with singles alone.
+    const easy = generateSudoku(7, "easy");
+    expect(solveByLogic(easy.puzzle)).toMatchObject({ level: 1 });
+    expect(solveByLogic(easy.puzzle).grid).toEqual(easy.solution);
+    // A medium puzzle needs a pair or intersection somewhere; singles alone stall.
+    const medium = generateSudoku(7, "medium");
+    const uses = solveByLogic(medium.puzzle).uses;
+    expect((uses["naked pair"] ?? 0) + (uses["intersection"] ?? 0)).toBeGreaterThan(0);
+    expect(LEVELS_FOR.hard).toEqual([3, 4]);
   });
 
   it("is deterministic per seed", () => {
@@ -45,8 +63,13 @@ describe("word search", () => {
 describe("maze", () => {
   it("is a perfect maze with a connected solution", () => {
     const m = generateMaze(12, 16, 99);
-    expect(m.solution[0]).toBe(0);
-    expect(m.solution[m.solution.length - 1]).toBe(12 * 16 - 1);
+    // Entrance on the top row (left third), exit on the bottom row (right third).
+    expect(m.start).toBeLessThan(4);
+    expect(m.end).toBeGreaterThanOrEqual(12 * 15 + 8);
+    expect(m.solution[0]).toBe(m.start);
+    expect(m.solution[m.solution.length - 1]).toBe(m.end);
+    expect(m.walls[m.start] & 1).toBe(0);
+    expect(m.walls[m.end] & 4).toBe(0);
     // Count open internal passages: a perfect maze is a spanning tree (cells - 1 edges).
     let open = 0;
     for (let i = 0; i < m.walls.length; i++) {

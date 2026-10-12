@@ -36,14 +36,12 @@ describe("puzzleStats", () => {
   });
   const stats = puzzleStats(project);
 
-  it("measures sudoku clue counts against the label", () => {
+  it("measures how many sudoku puzzles grade at their label", () => {
     expect(stats.sudoku).toHaveLength(1);
     const s = stats.sudoku[0];
-    expect(s).toMatchObject({ difficulty: "easy", count: 3, targetClues: 40 });
+    expect(s).toMatchObject({ difficulty: "easy", count: 3, onGrade: 1, grades: { easy: 3 } });
     expect(s.minClues).toBeLessThanOrEqual(s.avgClues);
     expect(s.avgClues).toBeLessThanOrEqual(s.maxClues);
-    expect(s.onTarget).toBeGreaterThanOrEqual(0);
-    expect(s.onTarget).toBeLessThanOrEqual(1);
   });
 
   it("classifies word-search directions from the same grid the page shows", () => {

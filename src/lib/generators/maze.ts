@@ -1,29 +1,45 @@
-import { createRng, shuffle } from "./rng";
+import { createRng, type Rng } from "./rng";
 
 export interface Maze {
   cols: number;
   rows: number;
   /** Wall flags per cell: bit 1 = top, 2 = right, 4 = bottom, 8 = left. */
   walls: number[];
-  /** Cell indices from entrance (top-left) to exit (bottom-right). */
+  /** Entrance cell, on the top row (open at its top). */
+  start: number;
+  /** Exit cell, on the bottom row (open at its bottom). */
+  end: number;
+  /** Cell indices from the entrance to the exit. */
   solution: number[];
   seed: number;
 }
+
+export type MazeDifficulty = "easy" | "medium" | "hard";
 
 const TOP = 1;
 const RIGHT = 2;
 const BOTTOM = 4;
 const LEFT = 8;
 
-/** Perfect maze (exactly one path between any two cells) via iterative backtracker. */
-export function generateMaze(cols: number, rows: number, seed: number): Maze {
-  const rng = createRng(seed);
+/**
+ * How often the carver extends its newest passage rather than branching
+ * from a random earlier one. Branching often makes many short dead ends
+ * that are easy to rule out at a glance and a short way through (easy);
+ * always extending makes long winding corridors whose dead ends run deep,
+ * which is what makes a maze hard for people (hard).
+ */
+const NEWEST: Record<MazeDifficulty, number> = { easy: 0.25, medium: 0.75, hard: 1 };
+
+/** Perfect maze (exactly one path between any two cells), carved by a growing-tree walk. */
+function carve(cols: number, rows: number, rng: Rng, difficulty: MazeDifficulty): Maze {
   const walls = new Array(cols * rows).fill(TOP | RIGHT | BOTTOM | LEFT);
   const visited = new Array(cols * rows).fill(false);
-  const stack = [0];
-  visited[0] = true;
-  while (stack.length) {
-    const cur = stack[stack.length - 1];
+  const first = Math.floor(rng() * cols * rows);
+  const active = [first];
+  visited[first] = true;
+  while (active.length) {
+    const k = rng() < NEWEST[difficulty] ? active.length - 1 : Math.floor(rng() * active.length);
+    const cur = active[k];
     const r = Math.floor(cur / cols);
     const c = cur % cols;
     const options: [number, number, number][] = [];
@@ -31,31 +47,47 @@ export function generateMaze(cols: number, rows: number, seed: number): Maze {
     if (c < cols - 1) options.push([cur + 1, RIGHT, LEFT]);
     if (r < rows - 1) options.push([cur + cols, BOTTOM, TOP]);
     if (c > 0) options.push([cur - 1, LEFT, RIGHT]);
-    const unvisited = shuffle(rng, options.filter(([n]) => !visited[n]));
+    const unvisited = options.filter(([n]) => !visited[n]);
     if (!unvisited.length) {
-      stack.pop();
+      active.splice(k, 1);
       continue;
     }
-    const [next, wallHere, wallThere] = unvisited[0];
+    const [next, wallHere, wallThere] = unvisited[Math.floor(rng() * unvisited.length)];
     walls[cur] &= ~wallHere;
     walls[next] &= ~wallThere;
     visited[next] = true;
-    stack.push(next);
+    active.push(next);
   }
-  // Openings: entrance on the top of the first cell, exit on the bottom of the last.
-  walls[0] &= ~TOP;
-  walls[cols * rows - 1] &= ~BOTTOM;
-  return { cols, rows, walls, solution: solveMaze(cols, rows, walls), seed };
+  // Entrance somewhere along the left third of the top, exit along the right third of the bottom.
+  const third = Math.max(1, Math.floor(cols / 3));
+  const start = Math.floor(rng() * third);
+  const end = (rows - 1) * cols + cols - 1 - Math.floor(rng() * third);
+  walls[start] &= ~TOP;
+  walls[end] &= ~BOTTOM;
+  return { cols, rows, walls, start, end, solution: solveMaze(cols, rows, walls, start, end), seed: 0 };
 }
 
-export function solveMaze(cols: number, rows: number, walls: number[]): number[] {
-  const target = cols * rows - 1;
+/** Share of cells that are dead ends (three walls). */
+export const deadEndShare = (m: Maze) => m.walls.filter((w, i) => i !== m.start && i !== m.end && [TOP, RIGHT, BOTTOM, LEFT].filter((b) => w & b).length === 3).length / m.walls.length;
+
+/**
+ * A maze for `difficulty`: three are carved and the one whose solution is
+ * shortest (easy), middling (medium) or longest (hard) is kept, so the path
+ * a solver has to trace grows with the difficulty as well as the branching.
+ */
+export function generateMaze(cols: number, rows: number, seed: number, difficulty: MazeDifficulty = "medium"): Maze {
+  const options = [0, 1, 2].map((k) => carve(cols, rows, createRng(seed * 3 + k), difficulty)).sort((a, b) => a.solution.length - b.solution.length);
+  const pick = options[difficulty === "easy" ? 0 : difficulty === "medium" ? 1 : 2];
+  return { ...pick, seed };
+}
+
+export function solveMaze(cols: number, rows: number, walls: number[], start = 0, end = cols * rows - 1): number[] {
   const prev = new Array(cols * rows).fill(-1);
-  prev[0] = 0;
-  const queue = [0];
+  prev[start] = start;
+  const queue = [start];
   while (queue.length) {
     const cur = queue.shift()!;
-    if (cur === target) break;
+    if (cur === end) break;
     const r = Math.floor(cur / cols);
     const c = cur % cols;
     const moves: [boolean, number][] = [
@@ -71,9 +103,9 @@ export function solveMaze(cols: number, rows: number, walls: number[]): number[]
       }
     }
   }
-  if (prev[target] === -1) return [];
-  const pathOut = [target];
-  while (pathOut[pathOut.length - 1] !== 0) pathOut.push(prev[pathOut[pathOut.length - 1]]);
+  if (prev[end] === -1) return [];
+  const pathOut = [end];
+  while (pathOut[pathOut.length - 1] !== start) pathOut.push(prev[pathOut[pathOut.length - 1]]);
   return pathOut.reverse();
 }
 

@@ -178,7 +178,7 @@ const pct = (n: number) => `${Math.round(n * 100)}%`;
 
 function puzzleNotes(p: PuzzleStats): string {
   const notes: string[] = [];
-  for (const s of p.sudoku) notes.push(`sudoku ${s.difficulty}: ${s.avgClues} clues (target ${s.targetClues}, ${pct(s.onTarget)} on target)`);
+  for (const s of p.sudoku) notes.push(`sudoku ${s.difficulty}: ${pct(s.onGrade)} grade ${s.difficulty}, ${s.avgClues} clues`);
   for (const w of p.wordSearch) notes.push(`${w.kind} ${w.difficulty} ${w.size}×${w.size}: ${pct(w.directions.backward)} backward, ${pct(w.directions.diagonal)} diagonal, ${w.duplicateReads} double reads`);
   for (const m of p.maze) notes.push(`maze ${m.difficulty} ${m.cols}×${m.rows}: path ${pct(m.avgSolutionShare)} of cells, ${pct(m.avgDeadEndShare)} dead ends`);
   for (const s of p.scramble) notes.push(`scramble: ${pct(s.avgInPlace)} letters in place, ${s.anagramCollisions} anagram clashes`);
