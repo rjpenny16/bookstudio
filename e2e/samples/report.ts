@@ -6,6 +6,7 @@ import { weakItems } from "@/lib/agent/content";
 import { PROMPT_TOPICS } from "@/lib/ai/offlineTopics";
 import { runPreflight } from "@/lib/preflight";
 import { qualityReport, trimLabel } from "@/lib/quality";
+import { interiorStats, type InteriorStats } from "@/lib/quality/interior";
 import { puzzleStats, type PuzzleStats } from "@/lib/quality/puzzles";
 import { scorecard } from "@/lib/quality/scorecard";
 import { genreOfProject } from "@/lib/cover/genres";
@@ -109,6 +110,7 @@ export interface SampleReport {
     affirmations: { pages: number; unique: number; weak: number };
   };
   puzzles: PuzzleStats;
+  interior: InteriorStats;
 }
 
 function coverFacts(project: Project): SampleReport["cover"] {
@@ -191,7 +193,19 @@ export function sampleReport(id: string, project: Project): SampleReport {
       affirmations: { pages: gratitudePages, unique: new Set(affirmations.map(norm)).size, weak: weakAffirmations },
     },
     puzzles: puzzleStats(project),
+    interior: interiorStats(project),
   };
+}
+
+function interiorNotes(s: InteriorStats): string {
+  const parts = [
+    `${s.faces.heading} / ${s.faces.body}${s.largePrint ? ", large print" : ""}`,
+    `smallest reader text ${s.minReaderPt ?? "–"} pt${s.largePrint ? ` (${s.pagesUnderLargePrint} pages under 14)` : ""}`,
+    `keys ${s.minKeyPt ?? "–"} pt`,
+    `page numbers ${s.pageNumberPt} pt`,
+  ];
+  if (s.dividers) parts.push(`${s.dividersOnRecto}/${s.dividers} dividers on the right`);
+  return parts.join(", ");
 }
 
 const pct = (n: number) => `${Math.round(n * 100)}%`;
@@ -221,15 +235,15 @@ export function summaryMarkdown(reports: SampleReport[]): string {
     const c = r.cover;
     const cover = `${c.genre}: ${c.templateId ?? "–"} / ${c.paletteId ?? "–"}, score ${c.score ?? "–"}, hero ${c.heroCapPx} px, ${c.frontTextItems} front texts, min contrast ${c.minPixelContrast ?? c.minFrontContrast ?? "–"}, back ${c.backCopyChars} chars`;
     const variants = c.variants.length ? c.variants.map((v) => `${v.templateId}/${v.paletteId} ${Math.round(v.score)}`).join(", ") : "–";
-    return `| ${r.id} | ${r.trim} | ${r.pages} | **${r.score}** | ${r.preflight.passed}/${r.preflight.total} | ${q.high}/${q.medium}/${q.low} | ${cover} | ${variants} | ${text || "–"} | ${puzzleNotes(r.puzzles)} |`;
+    return `| ${r.id} | ${r.trim} | ${r.pages} | **${r.score}** | ${r.preflight.passed}/${r.preflight.total} | ${q.high}/${q.medium}/${q.low} | ${cover} | ${variants} | ${interiorNotes(r.interior)} | ${text || "–"} | ${puzzleNotes(r.puzzles)} |`;
   });
   return [
     "# Sample books",
     "",
     "Built offline by `npm run samples`. Quality findings are high/medium/low. The score includes the AI-disclosure row, which stays unconfirmed in these runs.",
     "",
-    "| Book | Trim | Pages | Score | Preflight | Quality | Cover | Variants (best first) | Text | Puzzles |",
-    "|---|---|---|---|---|---|---|---|---|---|",
+    "| Book | Trim | Pages | Score | Preflight | Quality | Cover | Variants (best first) | Interior | Text | Puzzles |",
+    "|---|---|---|---|---|---|---|---|---|---|---|",
     ...rows,
     "",
   ].join("\n");

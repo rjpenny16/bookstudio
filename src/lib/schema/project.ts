@@ -12,6 +12,7 @@
  */
 
 import type { GeneratorConfig } from "@/lib/generators/pages";
+import type { InteriorStyleSpec } from "@/lib/generators/style";
 
 export const SCHEMA_VERSION = "1.1";
 
@@ -192,6 +193,8 @@ export interface Interior {
   pages: Page[];
   sections: InteriorSection[];
   pageNumbers: PageNumberSettings;
+  /** Interior look: genre faces and large-print sizes (optional; books without one keep the classic look). */
+  style?: InteriorStyleSpec;
 }
 
 export interface Cover {

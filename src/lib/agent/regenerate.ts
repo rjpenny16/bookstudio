@@ -1,6 +1,7 @@
 import { produce } from "immer";
 import { estimatePageCount, generatePages, type GeneratorConfig } from "@/lib/generators/pages";
 import { randomSeed } from "@/lib/generators/rng";
+import { styleOf } from "@/lib/generators/style";
 import { CRYPTOGRAM_MAX, sectionTexts, wordSearchMaxLength } from "@/lib/quality/content";
 import type { InteriorSection, Project } from "@/lib/schema/project";
 import type { ContentNeed } from "./blueprint";
@@ -70,7 +71,7 @@ export function replaceSections(project: Project, configs: Map<string, Generator
       if (!s) continue;
       const first = d.interior.pages.findIndex((p) => p.sectionId === id);
       const count = d.interior.pages.filter((p) => p.sectionId === id).length;
-      const pages = generatePages(config, { spec: d.spec, pageCountHint: hint }).map((p) => ({ ...p, sectionId: id }));
+      const pages = generatePages(config, { spec: d.spec, pageCountHint: hint, style: styleOf(d) }).map((p) => ({ ...p, sectionId: id }));
       s.config = config as typeof s.config;
       d.interior.pages.splice(first < 0 ? d.interior.pages.length : first, count, ...pages);
       const delta = pages.length - count;
@@ -80,7 +81,7 @@ export function replaceSections(project: Project, configs: Map<string, Generator
       if (toc?.config.kind !== "table-of-contents") continue;
       toc.config.entries = toc.config.entries.map((e) => (e.page > first + 1 ? { ...e, page: e.page + delta } : e));
       const at = d.interior.pages.findIndex((p) => p.sectionId === toc.id);
-      d.interior.pages.splice(at, 1, ...generatePages(toc.config, { spec: d.spec, pageCountHint: hint }).map((p) => ({ ...p, sectionId: toc.id })));
+      d.interior.pages.splice(at, 1, ...generatePages(toc.config, { spec: d.spec, pageCountHint: hint, style: styleOf(d) }).map((p) => ({ ...p, sectionId: toc.id })));
     }
   });
 }

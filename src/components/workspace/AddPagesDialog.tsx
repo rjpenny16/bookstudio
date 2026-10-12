@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { callAi, isModelOutput, modelRun } from "@/lib/ai/client";
 import { estimatePageCount, generatePages, GENERATORS, type GeneratorConfig } from "@/lib/generators/pages";
 import { randomSeed } from "@/lib/generators/rng";
+import { styleOf } from "@/lib/generators/style";
 import type { Asset, ModelRun, Page, Project } from "@/lib/schema/project";
 import { fileToAsset } from "@/lib/storage/assets";
 
@@ -73,7 +74,7 @@ export function AddPagesDialog({ open, onClose, project, currentIndex, onInsert 
 
   const insert = () => {
     const assets = [...project.assets, ...newAssets];
-    const pages = generatePages(cfg, { spec: project.spec, pageCountHint: project.interior.pages.length + estimatePageCount(cfg), assets });
+    const pages = generatePages(cfg, { spec: project.spec, pageCountHint: project.interior.pages.length + estimatePageCount(cfg), assets, style: styleOf(project) });
     onInsert(pages, position === "end" ? project.interior.pages.length : currentIndex + 1, { assets: newAssets, runs });
     setRuns([]);
     setNewAssets([]);

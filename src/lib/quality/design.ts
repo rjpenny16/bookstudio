@@ -1,3 +1,5 @@
+import { LARGE_PRINT_MIN_PT } from "@/lib/generators/style";
+import { interiorStats } from "./interior";
 import { coverGeometry, type Box } from "@/lib/kdp/geometry";
 import { elementBounds } from "@/lib/schema/elements";
 import type { Element, Project } from "@/lib/schema/project";
@@ -79,5 +81,15 @@ export function checkDesign(project: Project): DesignNote[] {
     }
   });
   if (tiny) notes.push({ area: "interior", severity: "medium", pageIndex: first, issue: `${tiny} page(s) have text smaller than 6 pt.`, suggestion: "Text under 6 pt is hard to read in print; 9-12 pt suits body text, 14 pt+ for large print." });
+
+  // Large print promises 14 pt or more on every page a reader works in.
+  const stats = interiorStats(project);
+  const largePrint = stats.largePrint || /large[- ]print|low vision/i.test(`${project.metadata.title} ${project.metadata.subtitle}`);
+  if (largePrint && stats.pagesUnderLargePrint) {
+    const at = project.interior.pages.findIndex((p) => !p.generator?.kind?.endsWith("-solutions") && p.elements.some((e) => e.type === "text" && e.text.trim() && e.fontSize < LARGE_PRINT_MIN_PT));
+    notes.push({ area: "interior", severity: "medium", pageIndex: at, issue: `${stats.pagesUnderLargePrint} page(s) of a large-print book have text under ${LARGE_PRINT_MIN_PT} pt (smallest ${stats.minReaderPt} pt).`, suggestion: "Large-print readers expect 14 pt or more on every page they read; enlarge labels and word lists." });
+  }
+  if (stats.dividers >= 2 && stats.dividersOnRecto < stats.dividers)
+    notes.push({ area: "interior", severity: "low", issue: `${stats.dividers - stats.dividersOnRecto} of ${stats.dividers} section dividers open on a left-hand page.`, suggestion: "Parts of a printed book usually open on a right-hand page; add a blank page before those dividers." });
   return notes;
 }

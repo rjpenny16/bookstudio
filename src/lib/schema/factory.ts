@@ -3,6 +3,7 @@ import { buildCover, PALETTES } from "@/lib/cover/templates";
 import { coverGeometry, findTrim } from "@/lib/kdp/geometry";
 import { RULES_VERSION } from "@/lib/kdp/rules";
 import { estimatePageCount, generatePages, generatorInfo, type GeneratorConfig } from "@/lib/generators/pages";
+import { interiorStyle, type InteriorStyleSpec } from "@/lib/generators/style";
 import { newId } from "@/lib/util/ids";
 import { SCHEMA_VERSION, type BookType, type InteriorInk, type InteriorSection, type Paper, type Project } from "./project";
 
@@ -17,6 +18,8 @@ export interface NewProjectInput {
   ink: InteriorInk;
   bleed: boolean;
   author?: string;
+  /** Interior look; derived from the book type and name when unset. */
+  style?: InteriorStyleSpec;
   /** Initial interior, one entry per section. Defaults to 120 lined pages. */
   interior?: SectionInput[];
 }
@@ -27,6 +30,9 @@ export function emptyBrief(): Project["brief"] {
 
 export function createProject(input: NewProjectInput): Project {
   const trim = findTrim(input.trimId) ?? findTrim("6x9")!;
+  const genreId = genreOf({ bookType: input.bookType, topic: input.name, audience: "" }).id;
+  const styleSpec: InteriorStyleSpec = input.style ?? { genre: genreId, largePrint: genreId === "large-print" };
+  const style = interiorStyle(styleSpec);
   const now = new Date().toISOString();
   const project: Project = {
     schemaVersion: SCHEMA_VERSION,
@@ -48,7 +54,7 @@ export function createProject(input: NewProjectInput): Project {
       rulesVersion: RULES_VERSION,
     },
     brief: emptyBrief(),
-    interior: { pages: [], sections: [], pageNumbers: { enabled: input.bookType !== "coloring", fontFamily: "Inter", fontSize: 9, startAt: 3 } },
+    interior: { pages: [], sections: [], pageNumbers: { enabled: input.bookType !== "coloring", fontFamily: style.label, fontSize: style.sizes.pageNumber, startAt: 3 }, style: styleSpec },
     cover: { background: "#ffffff", elements: [], barcode: "kdp" },
     metadata: {
       title: input.name || "",
@@ -75,7 +81,7 @@ export function createProject(input: NewProjectInput): Project {
   // The gutter depends on the final page count, so generate against the planned total.
   const hint = sections.reduce((n, s) => n + estimatePageCount(s.config), 0);
   for (const sec of sections) {
-    const pages = generatePages(sec.config, { spec: project.spec, pageCountHint: hint });
+    const pages = generatePages(sec.config, { spec: project.spec, pageCountHint: hint, style });
     project.interior.pages.push(...pages.map((p) => ({ ...p, sectionId: sec.id })));
   }
   project.interior.sections = sections;
