@@ -102,7 +102,7 @@ export function SetupForm({ value, onChange, images, disabled }: { value: SetupS
   const art = artEnabled(value, images);
   return (
     <fieldset className="stack" disabled={disabled} style={{ border: 0, padding: 0, margin: 0 }}>
-      <div className="field-row">
+      <div className="field-row setup-main">
         <label className="field" style={{ flex: 2 }}>
           What is the book about?
           <input value={value.topic} onChange={(e) => set({ topic: e.target.value })} placeholder="e.g. gratitude journal for nurses" />

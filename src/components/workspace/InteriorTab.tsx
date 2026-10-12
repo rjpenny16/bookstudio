@@ -26,7 +26,7 @@ export function InteriorTab({ focus, setFocus }: { focus: Focus; setFocus: (f: F
   const g = useMemo(() => interiorGeometry(project.spec, pages.length), [project.spec, pages.length]);
 
   useEffect(() => {
-    listRef.current?.querySelector(`[data-index="${index}"]`)?.scrollIntoView({ block: "nearest" });
+    listRef.current?.querySelector(`[data-index="${index}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [index]);
 
   const guides = useMemo<Guide[]>(() => {
