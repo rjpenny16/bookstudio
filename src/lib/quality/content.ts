@@ -203,6 +203,41 @@ export function cleanWordList(words: string[], o: WordListOptions): CleanResult 
   return { kept, dropped };
 }
 
+export interface CrosswordEntry {
+  answer: string;
+  clue: string;
+}
+
+/** True when the clue gives the answer away: the answer, its plural, or a word built on it (SUN in "Sunflower seeds"). */
+export function clueGivesAway(clue: string, answer: string): boolean {
+  const a = normalizeWord(answer);
+  return (clue.toUpperCase().match(/[A-Z]+/g) ?? []).some((w) => {
+    const [short, long] = w.length <= a.length ? [w, a] : [a, w];
+    return w === a || isPluralOf(w, a) || isPluralOf(a, w) || (long.startsWith(short) && short.length >= (short === a ? 3 : 4));
+  });
+}
+
+const CLUE_MAX = 90;
+
+/**
+ * Normalize a crossword's entries and drop the ones that would spoil it:
+ * unusable answers, repeats and plural pairs, missing or overlong clues, and
+ * clues that contain their answer.
+ */
+export function cleanCrossword(entries: CrosswordEntry[], maxLength: number): { kept: CrosswordEntry[]; dropped: CleanResult["dropped"] } {
+  const dropped: CleanResult["dropped"] = [];
+  const kept: CrosswordEntry[] = [];
+  for (const e of entries) {
+    const answer = normalizeWord(e.answer ?? "");
+    const clue = (e.clue ?? "").trim().replace(/\s+/g, " ");
+    const problem = wordProblem(e.answer ?? "", answer, { maxLength }) ?? (!clue ? "no clue" : clue.length > CLUE_MAX ? "clue too long" : clueGivesAway(clue, answer) ? "clue gives the answer away" : null);
+    if (problem) dropped.push({ item: e.answer, reason: problem });
+    else if (kept.some((k) => k.answer === answer || isPluralOf(k.answer, answer) || isPluralOf(answer, k.answer))) dropped.push({ item: e.answer, reason: "duplicate" });
+    else kept.push({ answer, clue });
+  }
+  return { kept, dropped };
+}
+
 export function checkWordList(title: string, words: string[], o: WordListOptions & { target?: number }): ContentIssue[] {
   const issues: ContentIssue[] = [];
   const { kept, dropped } = cleanWordList(words, o);
@@ -306,6 +341,17 @@ export function checkSectionContent(cfg: GeneratorConfig): ContentIssue[] {
       for (const r of repeatedPuzzles(cfg.puzzles)) issues.push({ severity: "medium", message: `Puzzle "${cfg.puzzles[r.index].title}" ${r.reason}` });
       return issues;
     }
+    case "crossword": {
+      const issues: ContentIssue[] = [];
+      for (const p of cfg.puzzles) {
+        const { kept, dropped } = cleanCrossword(p.entries, cfg.size);
+        for (const d of dropped) issues.push({ severity: d.reason === "not family-friendly" ? "high" : "medium", message: `"${p.title}": ${d.item} (${d.reason})`, item: d.item });
+        if (kept.length < 6) issues.push({ severity: "high", message: `"${p.title}" has only ${kept.length} usable answer(s)` });
+      }
+      const lists = cfg.puzzles.map((p) => ({ title: p.title, words: p.entries.map((e) => e.answer) }));
+      for (const r of repeatedPuzzles(lists)) issues.push({ severity: "medium", message: `Puzzle "${lists[r.index].title}" ${r.reason}` });
+      return issues;
+    }
     case "cryptogram":
       return checkPhrases(cfg.phrases, "saying", CRYPTOGRAM_MAX(cfg.perPage));
     case "gratitude": {
@@ -325,7 +371,7 @@ export function sectionTexts(cfg: GeneratorConfig): { kind: "prompt" | "saying" 
   if (cfg.kind === "journal-prompts") return { kind: "prompt", items: cfg.prompts };
   if (cfg.kind === "cryptogram") return { kind: "saying", items: cfg.phrases };
   if (cfg.kind === "gratitude") return { kind: "affirmation", items: cfg.affirmations ?? [] };
-  if (cfg.kind === "word-search" || cfg.kind === "word-scramble") return { kind: "puzzle", items: cfg.puzzles.map((p) => p.title) };
+  if (cfg.kind === "word-search" || cfg.kind === "word-scramble" || cfg.kind === "crossword") return { kind: "puzzle", items: cfg.puzzles.map((p) => p.title) };
   return null;
 }
 

@@ -1,3 +1,4 @@
+import { SQUARE_NUMBER } from "@/lib/generators/pages";
 import { LARGE_PRINT_MIN_PT, styleOf } from "@/lib/generators/style";
 import { isRecto } from "@/lib/kdp/geometry";
 import type { Page, Project } from "@/lib/schema/project";
@@ -26,7 +27,7 @@ export interface InteriorStats {
 const isKey = (p: Page) => !!p.generator?.kind?.endsWith("-solutions");
 
 function minText(page: Page): number | null {
-  const sizes = page.elements.filter((e) => e.type === "text" && e.text.trim()).map((e) => (e.type === "text" ? e.fontSize : Infinity));
+  const sizes = page.elements.filter((e) => e.type === "text" && e.text.trim() && e.name !== SQUARE_NUMBER).map((e) => (e.type === "text" ? e.fontSize : Infinity));
   return sizes.length ? Math.min(...sizes) : null;
 }
 

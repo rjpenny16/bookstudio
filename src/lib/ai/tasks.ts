@@ -40,6 +40,7 @@ export const SECTION_KINDS = [
   "maze",
   "word-scramble",
   "cryptogram",
+  "crossword",
 ] as const;
 export type SectionKind = (typeof SECTION_KINDS)[number];
 
@@ -185,6 +186,28 @@ export const WordListsInput = z.object({
 });
 export const WordListsOutput = z.object({
   puzzles: z.array(z.object({ title: z.string(), words: z.array(z.string()) })).describe("Themed word lists; single words only, letters A-Z, no spaces"),
+});
+
+export const CrosswordCluesInput = z.object({
+  topic: z.string(),
+  audience: z.string(),
+  count: z.number().int(),
+  entriesPerPuzzle: z.number().int(),
+  maxLength: z.number().int(),
+  difficulty: z.enum(["easy", "medium", "hard"]).optional(),
+  /** Puzzle titles already used in the book. */
+  avoid: Avoid,
+  feedback: Feedback,
+});
+export const CrosswordCluesOutput = z.object({
+  puzzles: z
+    .array(
+      z.object({
+        title: z.string(),
+        entries: z.array(z.object({ answer: z.string().describe("One word, letters A-Z"), clue: z.string().describe("The clue, without the answer in it") })),
+      }),
+    )
+    .describe("Themed crosswords: answers with their clues"),
 });
 
 export const ContentReviewInput = z.object({
@@ -358,6 +381,7 @@ export const TASKS = {
   listing: { input: ListingInput, output: ListingOutput },
   "journal-prompts": { input: PromptsInput, output: PromptsOutput },
   "word-lists": { input: WordListsInput, output: WordListsOutput },
+  "crossword-clues": { input: CrosswordCluesInput, output: CrosswordCluesOutput },
   "content-review": { input: ContentReviewInput, output: ContentReviewOutput },
   keywords: { input: KeywordsInput, output: KeywordsOutput },
   "listing-critique": { input: ListingCritiqueInput, output: ListingCritiqueOutput },
@@ -381,6 +405,7 @@ export const TASK_EFFORT: Record<TaskName, "low" | "medium" | "high"> = {
   phrases: "medium",
   "journal-prompts": "medium",
   "word-lists": "medium",
+  "crossword-clues": "medium",
   "content-review": "medium",
   keywords: "medium",
   "listing-critique": "high",
@@ -431,7 +456,7 @@ export function taskPrompt<T extends TaskName>(task: T, input: TaskInput<T>): st
 - daily-planner, weekly-spread, monthly-calendar, habit-tracker: planner pages (monthly-calendar and habit-tracker usually 12 pages)
 - log: a table with your logColumns, for record keeping
 - dot-grid, graph: blank grids
-- sudoku, word-search, number-search, maze, word-scramble, cryptogram: puzzles with answer keys at the back
+- sudoku, word-search, number-search, maze, word-scramble, cryptogram, crossword: puzzles with answer keys at the back (crossword: themed criss-cross crosswords with written clues)
 
 Rules:
 - Notebooks, journals, planners and log books use only the non-puzzle kinds. Puzzle and activity books use puzzle kinds.
@@ -504,6 +529,17 @@ List only the items a buyer would find weak: vague or generic, off-theme, clumsy
 - Words are single words, letters A-Z only, 3-${i.maxLength} letters, family-friendly, no proper nouns, brands or trademarks.
 - Within a list: no duplicates, no singular/plural pairs, and no word that contains another word of the same list (SUN and SUNFLOWER).
 - Across lists: reuse as few words as possible.
+- ${WORD_LEVEL}${avoidNote(i.avoid, "puzzle titles")}${feedbackNote(i.feedback)}`;
+    }
+    case "crossword-clues": {
+      const i = input as TaskInput<"crossword-clues">;
+      const level = { easy: "Easy: direct definitions a reader gets at once (\"Large gray animal with a trunk\").", medium: "Medium: mostly definitions, some with a small twist or a fill-in-the-blank.", hard: "Hard: less obvious angles, wordplay and fill-in-the-blanks, still fair and unambiguous." }[i.difficulty ?? "medium"];
+      return `Write ${i.count} themed ${i.count === 1 ? "crossword" : "crosswords"} for this book: answers and their clues.\n\n${data}
+
+- Each crossword gets its own sub-theme of the topic, a different angle every time. Titles are unique and under 24 characters.
+- Each has exactly ${i.entriesPerPuzzle} entries. Answers are single words, letters A-Z only, 3-${i.maxLength} letters, family-friendly, no proper nouns, brands or trademarks; mix lengths so they interlock well.
+- Clues are short (under 70 characters), accurate and unambiguous, never contain the answer or a form of it, and match the reader. ${level}
+- No duplicate answers within a crossword; across crosswords reuse as few answers as possible.
 - ${WORD_LEVEL}${avoidNote(i.avoid, "puzzle titles")}${feedbackNote(i.feedback)}`;
     }
     case "keywords":

@@ -1,3 +1,4 @@
+import { SQUARE_NUMBER } from "@/lib/generators/pages";
 import { LARGE_PRINT_MIN_PT } from "@/lib/generators/style";
 import { interiorStats } from "./interior";
 import { coverGeometry, type Box } from "@/lib/kdp/geometry";
@@ -86,7 +87,7 @@ export function checkDesign(project: Project): DesignNote[] {
   const stats = interiorStats(project);
   const largePrint = stats.largePrint || /large[- ]print|low vision/i.test(`${project.metadata.title} ${project.metadata.subtitle}`);
   if (largePrint && stats.pagesUnderLargePrint) {
-    const at = project.interior.pages.findIndex((p) => !p.generator?.kind?.endsWith("-solutions") && p.elements.some((e) => e.type === "text" && e.text.trim() && e.fontSize < LARGE_PRINT_MIN_PT));
+    const at = project.interior.pages.findIndex((p) => !p.generator?.kind?.endsWith("-solutions") && p.elements.some((e) => e.type === "text" && e.text.trim() && e.name !== SQUARE_NUMBER && e.fontSize < LARGE_PRINT_MIN_PT));
     notes.push({ area: "interior", severity: "medium", pageIndex: at, issue: `${stats.pagesUnderLargePrint} page(s) of a large-print book have text under ${LARGE_PRINT_MIN_PT} pt (smallest ${stats.minReaderPt} pt).`, suggestion: "Large-print readers expect 14 pt or more on every page they read; enlarge labels and word lists." });
   }
   if (stats.dividers >= 2 && stats.dividersOnRecto < stats.dividers)

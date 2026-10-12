@@ -5,11 +5,12 @@ import { measureLines, textWidth } from "@/lib/render/metrics";
 import { approxMeasure, textBlockHeight, wrapText } from "@/lib/render/textLayout";
 import { inToPt, newId } from "@/lib/util/ids";
 import { addDays, addMonths, monthGrid, monthLabel, parseStart, shortDate, startOfWeek, WEEKDAYS, WEEKDAYS_SHORT } from "./calendar";
+import { generateCrossword, normalizeAnswer, type Crossword, type CrosswordDifficulty } from "./crossword";
 import { generateCryptogram, type Cryptogram } from "./cryptogram";
 import { generateMaze, mazeSolutionPath, mazeWallsPath, type Maze } from "./maze";
 import { createRng, randInt, randomSeed } from "./rng";
 import { scrambleWords } from "./scramble";
-import { CLASSIC_STYLE, ornament, type InteriorStyle } from "./style";
+import { CLASSIC_STYLE, LARGE_PRINT_MIN_PT, ornament, type InteriorStyle } from "./style";
 import { generateSudoku, type Sudoku, type SudokuDifficulty } from "./sudoku";
 import { DIGITS, generateWordSearch, type WordSearch, type WordSearchDifficulty } from "./wordsearch";
 
@@ -72,6 +73,14 @@ export type GeneratorConfig =
   | ({ kind: "number-search"; count: number; size: number; difficulty: WordSearchDifficulty } & PuzzleCommon)
   | ({ kind: "maze"; count: number; difficulty: "easy" | "medium" | "hard" } & PuzzleCommon)
   | ({ kind: "word-scramble"; puzzles: { title: string; words: string[] }[]; difficulty?: "easy" | "medium" | "hard"; aiRunId?: string } & PuzzleCommon)
+  | ({
+      kind: "crossword";
+      puzzles: { title: string; entries: { answer: string; clue: string }[] }[];
+      /** Most squares across or down. */
+      size: number;
+      difficulty: CrosswordDifficulty;
+      aiRunId?: string;
+    } & PuzzleCommon)
   | ({ kind: "cryptogram"; phrases: string[]; difficulty: "easy" | "medium" | "hard"; perPage: 1 | 2; aiRunId?: string } & PuzzleCommon)
   | { kind: "coloring"; assetIds: string[]; blankBacks: boolean };
 
@@ -103,6 +112,36 @@ export const GENERATORS: GeneratorInfo[] = [
   { kind: "maze", label: "Mazes", group: "Puzzles", description: "Perfect mazes with solutions", defaults: () => ({ kind: "maze", count: 50, difficulty: "medium", solutions: true, seed: randomSeed() }) },
   { kind: "number-search", label: "Number search", group: "Puzzles", description: "Find number sequences in a digit grid", defaults: () => ({ kind: "number-search", count: 30, size: 14, difficulty: "medium", solutions: true, seed: randomSeed() }) },
   { kind: "word-scramble", label: "Word scramble", group: "Puzzles", description: "Unscramble themed words, with answer key", defaults: () => ({ kind: "word-scramble", puzzles: [{ title: "Fruits", words: ["apple", "banana", "cherry", "grape", "lemon", "mango", "orange", "peach", "plum", "melon", "papaya", "guava"] }], solutions: true, seed: randomSeed() }) },
+  {
+    kind: "crossword",
+    label: "Crossword",
+    group: "Puzzles",
+    description: "Themed criss-cross crosswords with clues and answer key",
+    defaults: () => ({
+      kind: "crossword",
+      puzzles: [
+        {
+          title: "Fruits",
+          entries: [
+            { answer: "apple", clue: "Fruit that keeps the doctor away" },
+            { answer: "banana", clue: "Long yellow fruit you peel" },
+            { answer: "cherry", clue: "Small red fruit with a stone, often on a sundae" },
+            { answer: "grape", clue: "Grows in bunches on a vine" },
+            { answer: "lemon", clue: "Sour yellow citrus fruit" },
+            { answer: "mango", clue: "Tropical fruit with orange flesh and a big flat stone" },
+            { answer: "peach", clue: "Fuzzy-skinned summer fruit" },
+            { answer: "melon", clue: "Large fruit such as a cantaloupe" },
+            { answer: "plum", clue: "Purple fruit that dries into a prune" },
+            { answer: "orange", clue: "Citrus fruit and a color" },
+          ],
+        },
+      ],
+      size: 13,
+      difficulty: "easy",
+      solutions: true,
+      seed: randomSeed(),
+    }),
+  },
   { kind: "cryptogram", label: "Cryptogram", group: "Puzzles", description: "Decode letter-substitution sayings", defaults: () => ({ kind: "cryptogram", phrases: ["Slow and steady wins the race", "A journey of a thousand miles begins with a single step"], difficulty: "medium", perPage: 2, solutions: true, seed: randomSeed() }) },
   { kind: "coloring", label: "Coloring pages", group: "Art", description: "Your line art, one per page, blank backs", defaults: () => ({ kind: "coloring", assetIds: [], blankBacks: true }) },
   { kind: "title-page", label: "Title page", group: "Front matter", description: "Title, subtitle and author", defaults: () => ({ kind: "title-page", title: "Title", subtitle: "", author: "" }) },
@@ -993,6 +1032,106 @@ function cryptogramPages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "crypto
   return pages;
 }
 
+/** Name of the small clue numbers in crossword squares: they can't be large-print size and still fit, so type checks skip them. */
+export const SQUARE_NUMBER = "Square number";
+
+/** Answers listed under easy crosswords, so the reader only has to work out where each one goes. */
+const showWordBank = (d: CrosswordDifficulty) => d === "easy";
+
+function crosswordGrid(ctx: Ctx, cw: Crossword, x: number, y: number, cell: number, solved: boolean): Element[] {
+  const els: Element[] = [];
+  const starts = new Map(cw.words.map((w) => [`${w.row},${w.col}`, w.number]));
+  const numSize = Math.max(5, Math.min(cell * 0.3, 10));
+  cw.grid.forEach((row, r) =>
+    row.forEach((ch, c) => {
+      if (!ch) return;
+      const cx = x + c * cell;
+      const cy = y + r * cell;
+      els.push(rect({ x: cx, y: cy, width: cell, height: cell, fill: "#ffffff", stroke: INK, strokeWidth: Math.max(0.6, cell * 0.035) }));
+      const n = starts.get(`${r},${c}`);
+      if (n && !solved) els.push(text({ x: cx + 1.5, y: cy + 1, width: cell - 2, height: numSize * 1.13, text: String(n), fontSize: numSize, fontFamily: ctx.style.label, color: INK, lineHeight: 1, name: SQUARE_NUMBER }));
+      if (solved) els.push(cellText(cx, cy, cell, ch, cell * 0.58, { bold: true, family: ctx.style.label }));
+    }),
+  );
+  return els;
+}
+
+/** Clue lists laid out at `size`: each clue hangs from its number. Returns the elements and the taller column's height. */
+function clueColumns(ctx: Ctx, cw: Crossword, x: number, y: number, width: number, size: number, prov?: ArtifactProvenance): { els: Element[]; height: number } {
+  const st = ctx.style;
+  const gap = 14;
+  const colW = (width - gap) / 2;
+  const numW = textWidth("00.", st.label, true, size) + 4;
+  const els: Element[] = [];
+  let tallest = 0;
+  (["across", "down"] as const).forEach((dir, k) => {
+    const cx = x + k * (colW + gap);
+    let cy = y;
+    els.push(text({ x: cx, y: cy, width: colW, height: size * 1.13, text: dir === "across" ? "Across" : "Down", fontSize: size, bold: true, fontFamily: st.label, color: INK }));
+    cy += size * 1.13 + 5;
+    for (const w of cw.words.filter((w) => w.dir === dir)) {
+      const h = textBlockHeight(measureLines(w.clue, st.body, false, size, colW - numW).length, size, 1.2);
+      els.push(text({ x: cx, y: cy, width: numW, height: size * 1.13, text: `${w.number}.`, fontSize: size, bold: true, fontFamily: st.label, color: INK }));
+      const clue = text({ x: cx + numW, y: cy, width: colW - numW, height: h, text: w.clue, fontSize: size, fontFamily: st.body, color: INK, lineHeight: 1.2 });
+      els.push(prov ? tag(ctx, clue, prov) : clue);
+      cy += h + size * 0.35;
+    }
+    tallest = Math.max(tallest, cy - y);
+  });
+  return { els, height: tallest };
+}
+
+function crosswordPages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "crossword" }>): Page[] {
+  const b = ctx.box;
+  const st = ctx.style;
+  const first = cfg.startNumber ?? 1;
+  const prov: ArtifactProvenance | undefined = cfg.aiRunId ? { origin: "ai-generated", runId: cfg.aiRunId } : undefined;
+  const puzzles = crosswordsOf(cfg);
+  const pages: Page[] = [];
+  // Squares big enough to write in: about 0.3" (0.36" for large print).
+  const minCell = st.largePrint ? 26 : 20;
+  const minClue = st.largePrint ? LARGE_PRINT_MIN_PT : 8;
+  if (showPuzzles(cfg.part))
+    puzzles.forEach(({ title, cw }, i) => {
+      const head = headingBlock(ctx, `${first + i}. ${title}`, b.y);
+      const top = b.y + head.height + 12;
+      const bank = showWordBank(cfg.difficulty) ? `Word bank: ${cw.words.map((w) => w.answer).sort().join("  ·  ")}` : "";
+      // The largest clue size that still leaves the grid squares big enough to write in.
+      let layout: { size: number; cell: number; bankH: number } | null = null;
+      for (let size = st.sizes.body; size >= minClue; size -= 0.5) {
+        const clues = clueColumns(ctx, cw, b.x, 0, b.width, size, prov);
+        const bankH = bank ? textBlockHeight(measureLines(bank, st.label, false, size, b.width).length, size, 1.3) + 10 : 0;
+        const cell = Math.min(34, b.width / cw.cols, (b.y + b.height - top - 16 - clues.height - bankH) / cw.rows);
+        layout = { size, cell, bankH };
+        if (cell >= minCell) break;
+      }
+      const { size, cell, bankH } = layout!;
+      const gx = b.x + (b.width - cw.cols * cell) / 2;
+      const titleEl = prov ? tag(ctx, head.el, prov) : head.el;
+      const els: Element[] = [titleEl, ...crosswordGrid(ctx, cw, gx, top, cell, false)];
+      const cy = top + cw.rows * cell + 16;
+      els.push(...clueColumns(ctx, cw, b.x, cy, b.width, size, prov).els);
+      if (bank) els.push(text({ x: b.x, y: b.y + b.height - bankH + 10, width: b.width, height: bankH - 10, text: bank, fontSize: size, fontFamily: st.label, color: "#333333", align: "center", lineHeight: 1.3, name: "Word bank" }));
+      pages.push(page(ctx, "crossword", els, { generator: { kind: "crossword", seed: cw.seed, params: { size: cfg.size, difficulty: cfg.difficulty } } }));
+    });
+  if (showSolutions(cfg) && puzzles.length) {
+    pages.push(...solutionsTitle(ctx, cfg, "crossword-solutions"));
+    const ks = st.sizes.key;
+    for (let p = 0; p < puzzles.length; p += 4) {
+      const els: Element[] = [];
+      slots(b, 4, ks * 1.13 + 6).forEach((slot, k) => {
+        const z = puzzles[p + k];
+        if (!z) return;
+        const c = Math.min(slot.size / z.cw.cols, slot.size / z.cw.rows);
+        els.push(text({ x: slot.x, y: slot.y - ks * 1.13 - 6, width: slot.size, height: ks * 1.13, text: `${first + p + k}. ${z.title}`, fontSize: ks, bold: true, fontFamily: st.label }));
+        els.push(...crosswordGrid(ctx, z.cw, slot.x + (slot.size - z.cw.cols * c) / 2, slot.y, c, true));
+      });
+      pages.push(page(ctx, "crossword-solutions", els));
+    }
+  }
+  return pages;
+}
+
 function coloringPages(ctx: Ctx, assetIds: string[], blankBacks: boolean): Page[] {
   const pages: Page[] = [];
   for (const id of assetIds) {
@@ -1100,6 +1239,8 @@ export function generatePages(cfg: GeneratorConfig, opts: GenerateOptions): Page
       return mazePages(ctx, cfg);
     case "word-scramble":
       return scramblePages(ctx, cfg);
+    case "crossword":
+      return crosswordPages(ctx, cfg);
     case "cryptogram":
       return cryptogramPages(ctx, cfg);
     case "coloring":
@@ -1135,6 +1276,10 @@ export function estimatePageCount(cfg: GeneratorConfig): number {
       const n = scrambleSets(cfg).length;
       return puzzlePages(cfg, n, n, Math.ceil(n / SCRAMBLE_KEYS_PER_PAGE));
     }
+    case "crossword": {
+      const n = crosswordCount(cfg);
+      return puzzlePages(cfg, n, n, Math.ceil(n / 4));
+    }
     case "cryptogram": {
       const n = cfg.phrases.filter((t) => t.trim()).length;
       return puzzlePages(cfg, n, Math.ceil(n / cfg.perPage), Math.ceil(n / Math.max(cfg.perPage, 3)));
@@ -1157,9 +1302,24 @@ export function puzzleCount(cfg: GeneratorConfig): number {
       return cfg.puzzles.filter((pz) => pz.words.length).length;
     case "word-scramble":
       return scrambleSets(cfg).length;
+    case "crossword":
+      return crosswordCount(cfg);
     case "cryptogram":
       return cfg.phrases.filter((t) => t.trim()).length;
     default:
       return 0;
   }
+}
+
+/** A crossword prints when at least one of its answers fits the grid (the engine always places the first). */
+const printable = (p: { entries: { answer: string; clue: string }[] }, size: number) =>
+  p.entries.some((e) => e.clue.trim() && normalizeAnswer(e.answer).length >= 3 && normalizeAnswer(e.answer).length <= size);
+
+/** The crosswords a config prints, laid out from its seed (pages, answer keys and stats all use this). */
+export function crosswordsOf(cfg: Extract<GeneratorConfig, { kind: "crossword" }>): { title: string; cw: Crossword }[] {
+  return cfg.puzzles.filter((p) => printable(p, cfg.size)).map((p, i) => ({ title: p.title, cw: generateCrossword(p.entries, cfg.size, cfg.difficulty, cfg.seed + i) }));
+}
+
+function crosswordCount(cfg: Extract<GeneratorConfig, { kind: "crossword" }>): number {
+  return cfg.puzzles.filter((p) => printable(p, cfg.size)).length;
 }

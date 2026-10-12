@@ -1,6 +1,7 @@
 import { generateCryptogram } from "@/lib/generators/cryptogram";
 import { deadEndShare, generateMaze, type Maze } from "@/lib/generators/maze";
-import { CRYPTO_HINTS, numberSearchLists, type GeneratorConfig } from "@/lib/generators/pages";
+import { crossingShare, gridRuns } from "@/lib/generators/crossword";
+import { CRYPTO_HINTS, crosswordsOf, numberSearchLists, type GeneratorConfig } from "@/lib/generators/pages";
 import { scrambleWords } from "@/lib/generators/scramble";
 import { generateSudoku, type SudokuDifficulty } from "@/lib/generators/sudoku";
 import { DIGITS, generateWordSearch, type WordSearch } from "@/lib/generators/wordsearch";
@@ -61,6 +62,22 @@ export interface ScrambleStats {
   anagramCollisions: number;
 }
 
+export interface CrosswordStats {
+  difficulty: string;
+  size: number;
+  count: number;
+  /** Average answers placed per crossword, and answers that couldn't be fitted in all. */
+  avgWords: number;
+  skipped: number;
+  /** Average grid size actually used. */
+  avgRows: number;
+  avgCols: number;
+  /** Share of letter squares shared by two answers. */
+  avgCrossing: number;
+  /** Across or down runs that aren't a listed answer (should be 0). */
+  strayRuns: number;
+}
+
 export interface CryptogramStats {
   difficulty: string;
   count: number;
@@ -74,6 +91,7 @@ export interface PuzzleStats {
   maze: MazeStats[];
   scramble: ScrambleStats[];
   cryptogram: CryptogramStats[];
+  crossword: CrosswordStats[];
 }
 
 const round = (n: number, places = 3) => Math.round(n * 10 ** places) / 10 ** places;
@@ -139,7 +157,7 @@ const mazeShares = (m: Maze) => ({ solution: m.solution.length / (m.cols * m.row
 const isPuzzleHalf = (cfg: GeneratorConfig) => !("part" in cfg) || cfg.part !== "solutions";
 
 export function puzzleStats(project: Project): PuzzleStats {
-  const out: PuzzleStats = { sudoku: [], wordSearch: [], maze: [], scramble: [], cryptogram: [] };
+  const out: PuzzleStats = { sudoku: [], wordSearch: [], maze: [], scramble: [], cryptogram: [], crossword: [] };
   for (const section of project.interior.sections) {
     const cfg = section.config;
     if (!isPuzzleHalf(cfg)) continue;
@@ -196,6 +214,21 @@ export function puzzleStats(project: Project): PuzzleStats {
           return n + list.filter((s) => words.has(s.scrambled)).length;
         }, 0);
         out.scramble.push({ count: lists.length, words: items.length, avgInPlace: round(avg(inPlace)), anagramCollisions });
+        break;
+      }
+      case "crossword": {
+        const cws = crosswordsOf(cfg).map((x) => x.cw);
+        out.crossword.push({
+          difficulty: cfg.difficulty,
+          size: cfg.size,
+          count: cws.length,
+          avgWords: round(avg(cws.map((c) => c.words.length)), 1),
+          skipped: cws.reduce((n, c) => n + c.skipped.length, 0),
+          avgRows: round(avg(cws.map((c) => c.rows)), 1),
+          avgCols: round(avg(cws.map((c) => c.cols)), 1),
+          avgCrossing: round(avg(cws.map(crossingShare))),
+          strayRuns: cws.reduce((n, c) => n + gridRuns(c).filter((r) => !c.words.some((w) => w.answer === r)).length, 0),
+        });
         break;
       }
       case "cryptogram": {
