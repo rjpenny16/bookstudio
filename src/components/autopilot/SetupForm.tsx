@@ -92,7 +92,7 @@ export function CostEstimate({ setup, status, images }: { setup: SetupState; sta
   return (
     <p className="field-hint" style={{ margin: 0 }} aria-label="Cost estimate">
       Estimated: {e.modelCalls[0]}–{e.modelCalls[1]} calls to {status.model} (about {formatTokens(e.tokens[0])}–{formatTokens(e.tokens[1])} tokens, {e.visionCalls} with images)
-      {e.images ? `, plus ${e.images} images from ${images?.model}` : ""}. Check your providers&apos; pricing pages for what that costs.
+      {e.images ? `, plus ${e.images} images from ${images?.model}${images?.provider === "codex" ? " (on your ChatGPT plan, not billed per image)" : ""}` : ""}. Check your providers&apos; pricing pages for what that costs.
     </p>
   );
 }
@@ -210,7 +210,8 @@ export function SetupForm({ value, onChange, images, disabled }: { value: SetupS
       {images?.configured && (
         <label className="check">
           <input type="checkbox" checked={art} disabled={!!value.templateId && !art} onChange={(e) => set({ coverArt: e.target.checked })} />
-          Generate AI cover art ({ART_CANDIDATES} images with {images.model}; the best one is picked for the cover)
+          Generate AI cover art ({ART_CANDIDATES} images with {images.model}
+          {images.provider === "codex" ? " through your ChatGPT plan, which adds a few minutes" : ""}; the best one is picked for the cover)
         </label>
       )}
     </fieldset>

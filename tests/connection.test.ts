@@ -23,7 +23,7 @@ vi.mock("@anthropic-ai/sdk", () => {
 });
 
 const Anthropic = (await import("@anthropic-ai/sdk")).default;
-const { capabilities, testConnection } = await import("@/lib/ai/connection");
+const { capabilities, envWarnings, testConnection } = await import("@/lib/ai/connection");
 const fetchMock = vi.fn();
 
 describe("capabilities and connection tests", () => {
@@ -92,7 +92,7 @@ describe("capabilities and connection tests", () => {
     const bin = mkdtempSync(path.join(tmpdir(), "fake-codex-"));
     writeFileSync(path.join(bin, "codex"), `#!/usr/bin/env bash\n[[ -n "$FAKE_LOGGED_OUT" ]] && { echo "Not logged in" >&2; exit 1; }\necho "Logged in using ChatGPT"\n`);
     chmodSync(path.join(bin, "codex"), 0o755);
-    vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
+    vi.stubEnv("PATH", `${bin}${path.delimiter}${process.env.PATH}`);
     vi.stubEnv("IMAGE_PROVIDER", "codex");
     expect(capabilities().images).toMatchObject({ provider: "codex", configured: true });
     expect(await testConnection("images")).toMatchObject({ ok: true, detail: expect.stringContaining("Logged in using ChatGPT") });
@@ -122,5 +122,12 @@ describe("capabilities and connection tests", () => {
     expect(await testConnection("vision")).toMatchObject({ ok: false });
     expect(create).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("warns about a .env saved as UTF-16, whose settings Next.js silently drops", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "env-"));
+    writeFileSync(path.join(dir, ".env"), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("IMAGE_PROVIDER=codex\r\n", "utf16le")]));
+    writeFileSync(path.join(dir, ".env.local"), "AI_PROVIDER=offline\n");
+    expect(envWarnings(dir)).toEqual([expect.stringMatching(/^\.env is saved as UTF-16/)]);
   });
 });

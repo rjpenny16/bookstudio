@@ -84,7 +84,7 @@ echo '${PNG}' | base64 -d > "$dir/out.png"
   chmodSync(path.join(bin, "codex"), 0o755);
 
   beforeEach(() => {
-    vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
+    vi.stubEnv("PATH", `${bin}${path.delimiter}${process.env.PATH}`);
     vi.stubEnv("IMAGE_PROVIDER", "codex");
     vi.stubEnv("OPENAI_API_KEY", "sk-test");
     vi.stubEnv("FAKE_CODEX_FAIL", "");
@@ -119,13 +119,18 @@ echo '${PNG}' | base64 -d > "$dir/out.png"
 
   it("stops codex when the request is cancelled", async () => {
     const slow = path.join(bin, "slow-bridge");
-    writeFileSync(slow, "sleep 30\n");
+    // Stands in for codex: a native process under the wrapper, with the request's temp dir in its command line.
+    const pidFile = path.join(bin, "codex.pid").replaceAll("\\", "/");
+    writeFileSync(slow, `node -e "require('fs').writeFileSync('${pidFile}', String(process.pid)); setTimeout(() => {}, 30000)" "$2" &\nwait\n`);
     const ac = new AbortController();
     const started = Date.now();
     const p = new CodexImageProvider(slow).generate({ prompt: "p", widthIn: 6, heightIn: 9 }, ac.signal);
-    setTimeout(() => ac.abort(), 100);
+    await vi.waitFor(() => readFileSync(pidFile, "utf8"), { timeout: 5000, interval: 50 });
+    ac.abort();
     await expect(p).rejects.toMatchObject({ status: 499 });
-    expect(Date.now() - started).toBeLessThan(5000);
+    expect(Date.now() - started).toBeLessThan(8000);
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), { timeout: 5000, interval: 100 });
   });
 
   it("reads PNG and JPEG sizes", () => {

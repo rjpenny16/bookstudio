@@ -1,8 +1,10 @@
 import "server-only";
 import { execFile } from "node:child_process";
+import { openSync, readSync, closeSync } from "node:fs";
 import { access, constants } from "node:fs/promises";
+import path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
-import { codexBridgePath, imageStatus, type ImageStatus } from "./images";
+import { bridgeShell, codexBridgePath, noBash, imageStatus, type ImageStatus } from "./images";
 import { providerStatus, type ProviderStatus } from "./providers";
 
 /**
@@ -18,6 +20,8 @@ export interface Capabilities {
   /** true: the text model reads images; null: depends on the local model (test it); false: not available. */
   vision: { available: boolean | null; detail: string };
   images: ImageStatus;
+  /** Problems with the server's .env files that would silently drop settings. */
+  envWarnings: string[];
 }
 
 export interface ConnectionResult {
@@ -34,7 +38,29 @@ export function capabilities(): Capabilities {
       : text.provider === "ollama"
         ? { available: null, detail: `Depends on whether ${text.model} is a vision model; use Test connection to check` }
         : { available: false, detail: "Offline mode can't look at images; rule-based design checks still run" };
-  return { text, vision, images: imageStatus() };
+  return { text, vision, images: imageStatus(), envWarnings: envWarnings() };
+}
+
+const ENV_FILES = [".env", ".env.local", ".env.development", ".env.development.local", ".env.production", ".env.production.local"];
+
+/**
+ * .env files Next.js can't read. PowerShell 5's `echo X > .env` writes UTF-16,
+ * which Next.js reads as garbage, so every setting in the file is ignored.
+ */
+export function envWarnings(dir = process.cwd()): string[] {
+  return ENV_FILES.flatMap((name) => {
+    let head: Buffer;
+    try {
+      const fd = openSync(path.join(dir, name), "r");
+      head = Buffer.alloc(2);
+      readSync(fd, head, 0, 2, 0);
+      closeSync(fd);
+    } catch {
+      return [];
+    }
+    const utf16 = (head[0] === 0xff && head[1] === 0xfe) || (head[0] === 0xfe && head[1] === 0xff);
+    return utf16 ? [`${name} is saved as UTF-16, so none of its settings are loaded. Re-save it as UTF-8 (in Notepad: Save as, Encoding: UTF-8) and restart the server.`] : [];
+  });
 }
 
 /** An 8×8 red PNG: the smallest useful image for a vision check. */
@@ -111,9 +137,12 @@ async function testCodex(): Promise<string> {
     throw new Error(`The image bridge isn't at ${bridge}. Set CODEX_IMAGE_BRIDGE or restore .claude/skills/gpt-image-bridge.`);
   });
   const status = await new Promise<string>((resolve, reject) =>
-    execFile("codex", ["login", "status"], { timeout: 15_000 }, (err, stdout, stderr) => {
+    // Through the bridge's own bash, so this sees the same codex that image generation will.
+    execFile(bridgeShell(), ["-c", "codex login status"], { timeout: 15_000, windowsHide: true }, (err, stdout, stderr) => {
       const text = `${stdout}${stderr}`.trim();
-      if ((err as NodeJS.ErrnoException | null)?.code === "ENOENT") reject(new Error("codex CLI isn't installed on the server. Run: npm install -g @openai/codex, then codex login"));
+      const code = (err as NodeJS.ErrnoException | null)?.code;
+      if (code === "ENOENT") reject(new Error(noBash()));
+      else if ((code as unknown) === 127) reject(new Error("codex CLI isn't installed on the server. Run: npm install -g @openai/codex, then codex login"));
       else if (err) reject(new Error(`codex isn't logged in. Run: codex login${text ? ` (${text.split("\n")[0]})` : ""}`));
       else resolve(text);
     }),
