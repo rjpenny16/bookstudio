@@ -2,11 +2,15 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { z } from "zod";
+import { codexPath, runCodex } from "./codex";
 import { offlineTask } from "./offline";
 import { SYSTEM_PROMPT, TASK_EFFORT, TASKS, taskPrompt, VISION_TASKS, type TaskInput, type TaskName, type TaskOutput } from "./tasks";
 
-export type ProviderName = "anthropic" | "ollama" | "offline";
+export type ProviderName = "anthropic" | "ollama" | "codex" | "offline";
 
 export interface ProviderStatus {
   provider: ProviderName;
@@ -39,6 +43,9 @@ const hasAnthropicCreds = () => Boolean(process.env.ANTHROPIC_API_KEY || process
 
 export function providerStatus(): ProviderStatus {
   const requested = (process.env.AI_PROVIDER ?? "").toLowerCase();
+  if (requested === "codex") {
+    return { provider: "codex", model: codexTextModel(), configured: true, detail: "Writing through the codex CLI on your ChatGPT subscription (no API key)" };
+  }
   if (requested === "ollama") {
     const model = process.env.OLLAMA_MODEL ?? "qwen3:8b";
     return { provider: "ollama", model, configured: true, detail: `Ollama at ${process.env.OLLAMA_BASE_URL ?? "http://localhost:11434"}` };
@@ -120,7 +127,72 @@ async function runOllama<T extends TaskName>(task: T, prompt: string, model: str
   return result.data as TaskOutput<T>;
 }
 
-export async function runTask<T extends TaskName>(task: T, rawInput: unknown, rawImages: unknown = []): Promise<TaskResult<T>> {
+/** codex picks its default model unless CODEX_TEXT_MODEL names one; the label is for provenance. */
+const codexTextModel = () => process.env.CODEX_TEXT_MODEL?.trim() || "chatgpt";
+const CODEX_TEXT_TIMEOUT_MS = 8 * 60_000;
+
+/** The JSON object in a reply, without code fences or a sentence around it. */
+export function extractJson(reply: string): unknown {
+  const start = reply.indexOf("{");
+  const end = reply.lastIndexOf("}");
+  if (start < 0 || end < start) throw new SyntaxError("no JSON object");
+  return JSON.parse(reply.slice(start, end + 1));
+}
+
+/**
+ * Writing through the codex CLI and the user's ChatGPT subscription. codex
+ * exec runs read-only in an empty temp dir; the schema goes in the prompt and
+ * the reply is validated here, with one retry that names what was wrong.
+ */
+async function runCodexText<T extends TaskName>(task: T, prompt: string, images: TaskImage[], signal?: AbortSignal): Promise<TaskOutput<T>> {
+  const schema = TASKS[task].output;
+  const dir = await mkdtemp(path.join(tmpdir(), "bookstudio-text-"));
+  try {
+    const files = await Promise.all(
+      images.map(async (img, i) => {
+        const file = path.join(dir, `image-${i + 1}.${img.mediaType === "image/png" ? "png" : "jpg"}`);
+        await writeFile(file, Buffer.from(img.data, "base64"));
+        return file;
+      }),
+    );
+    const labels = images.length ? `The attached images are, in order:\n${images.map((img, i) => `${i + 1}. ${img.label}`).join("\n")}\n\n` : "";
+    const base = [
+      SYSTEM_PROMPT,
+      "Answer from your own knowledge. Do not run commands, read or write files, or browse; there is nothing in your working directory.",
+      `${labels}${prompt}`,
+      `Reply with only one JSON object that matches this JSON Schema: no prose, no code fences.\n${JSON.stringify(z.toJSONSchema(schema))}`,
+    ].join("\n\n");
+    const out = path.join(dir, "reply.txt");
+    const model = process.env.CODEX_TEXT_MODEL?.trim();
+    let problem = "";
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const args = ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never", "-C", codexPath(dir), "-o", codexPath(out), "-c", `model_reasoning_effort="${TASK_EFFORT[task]}"`];
+      if (model) args.push("-m", model);
+      for (const f of files) args.push("--image", codexPath(f));
+      // The prompt goes on stdin ("-"), after "--" so a variadic --image can't swallow it.
+      const stdin = problem ? `${base}\n\nYour previous reply was rejected (${problem}). Reply again with only the JSON object.` : base;
+      await rm(out, { force: true });
+      await runCodex({ args: ["-c", 'exec codex "$@"', "codex", ...args, "--", "-"], dir, timeoutMs: CODEX_TEXT_TIMEOUT_MS, signal, stdin, what: "writing", fail: (msg, status) => new AiError(msg, status) });
+      const reply = await readFile(out, "utf8").catch(() => "");
+      let parsed: unknown;
+      try {
+        parsed = extractJson(reply);
+      } catch {
+        problem = reply.trim() ? "it was not valid JSON" : "it was empty";
+        continue;
+      }
+      const result = schema.safeParse(parsed);
+      if (result.success) return result.data as TaskOutput<T>;
+      const issue = result.error.issues[0];
+      problem = `${issue?.path.join(".") || "output"}: ${issue?.message}`;
+    }
+    throw new AiError(`codex's reply did not match the schema (${problem}).`);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export async function runTask<T extends TaskName>(task: T, rawInput: unknown, rawImages: unknown = [], signal?: AbortSignal): Promise<TaskResult<T>> {
   const inputParse = TASKS[task].input.safeParse(rawInput);
   if (!inputParse.success) throw new AiError(`Invalid input for ${task}: ${inputParse.error.issues[0]?.message}`, 400);
   const imagesParse = TaskImages.safeParse(rawImages ?? []);
@@ -136,6 +208,7 @@ export async function runTask<T extends TaskName>(task: T, rawInput: unknown, ra
   let output: TaskOutput<T>;
   if (status.provider === "anthropic") output = await runAnthropic(task, prompt, status.model, images);
   else if (status.provider === "ollama") output = await runOllama(task, prompt, status.model, images);
+  else if (status.provider === "codex") output = await runCodexText(task, prompt, images, signal);
   else output = offlineTask(task, input);
   return { output, meta: { provider: status.provider, model: status.model, task, promptHash } };
 }

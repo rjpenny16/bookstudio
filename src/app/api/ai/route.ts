@@ -3,7 +3,8 @@ import { AiError, providerStatus, runTask } from "@/lib/ai/providers";
 import { TASKS, type TaskName } from "@/lib/ai/tasks";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+// codex (ChatGPT subscription) can take several minutes and retries once.
+export const maxDuration = 800;
 
 export async function GET() {
   return NextResponse.json(providerStatus());
@@ -19,7 +20,7 @@ export async function POST(req: Request) {
   const task = body.task as TaskName;
   if (!task || !(task in TASKS)) return NextResponse.json({ error: `Unknown task "${body.task}"` }, { status: 400 });
   try {
-    return NextResponse.json(await runTask(task, body.input, body.images));
+    return NextResponse.json(await runTask(task, body.input, body.images, req.signal));
   } catch (err) {
     if (err instanceof AiError) return NextResponse.json({ error: err.message }, { status: err.status });
     console.error("AI task failed", err);

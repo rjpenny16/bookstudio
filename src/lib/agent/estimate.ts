@@ -24,7 +24,7 @@ export interface RunEstimate {
 
 export interface EstimateInput {
   bookType: BookType;
-  provider: "anthropic" | "ollama" | "offline";
+  provider: "anthropic" | "ollama" | "codex" | "offline";
   coverArt: boolean;
 }
 

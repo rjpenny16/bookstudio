@@ -1,3 +1,6 @@
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The provider module is server-only; vitest runs it in plain Node.
@@ -15,7 +18,7 @@ vi.mock("@anthropic-ai/sdk", () => {
   return { default: Anthropic };
 });
 
-const { runTask } = await import("@/lib/ai/providers");
+const { extractJson, providerStatus, runTask } = await import("@/lib/ai/providers");
 
 const review = { score: 7, summary: "Clean cover.", thumbnailReadable: true, findings: [{ target: "Page 3 (Easy)", severity: "medium", issue: "Grid lines are faint.", suggestion: "Darken them." }] };
 const input = { title: "Big Sudoku", bookType: "puzzle", audience: "seniors", trim: '8.5" x 11"', pageCount: 120, largePrint: true, images: ["Cover: back, spine and front", "Page 3 (Easy)"] };
@@ -55,5 +58,103 @@ describe("vision tasks", () => {
 
   it("rejects malformed images", async () => {
     await expect(runTask("visual-review", input, [{ label: "x", mediaType: "image/gif", data: "A" }])).rejects.toThrow(/Invalid images/);
+  });
+});
+
+describe("codex writing provider (ChatGPT subscription)", () => {
+  // A fake codex on PATH: records its arguments and stdin, then writes $FAKE_REPLY (or the next of $FAKE_REPLIES) as its last message.
+  const bin = mkdtempSync(path.join(tmpdir(), "fake-codex-text-"));
+  writeFileSync(
+    path.join(bin, "codex"),
+    `#!/usr/bin/env bash
+out=""; prev=""; imgs=0
+for a in "$@"; do
+  [[ "$prev" == "-o" ]] && out="$a"
+  [[ "$prev" == "--image" && -s "$a" ]] && imgs=$((imgs+1))
+  prev="$a"
+done
+printf '%s\\n' "$@" > "${bin}/args.txt"
+echo "$imgs" > "${bin}/images.txt"
+cat > "${bin}/stdin.txt"
+n=$(cat "${bin}/calls" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${bin}/calls"
+[[ -n "$FAKE_CODEX_FAIL" ]] && { echo "$FAKE_CODEX_FAIL" >&2; exit 1; }
+if [[ -n "$FAKE_REPLIES" ]]; then IFS='|' read -ra r <<< "$FAKE_REPLIES"; printf '%s' "\${r[$((n-1))]}" > "$out"; else printf '%s' "$FAKE_REPLY" > "$out"; fi
+`,
+  );
+  chmodSync(path.join(bin, "codex"), 0o755);
+  const phrasesInput = { topic: "gardening", audience: "seniors", count: 1, maxLength: 90, style: "saying" };
+  const read = (f: string) => readFileSync(path.join(bin, f), "utf8");
+
+  beforeEach(() => {
+    vi.stubEnv("PATH", `${bin}${path.delimiter}${process.env.PATH}`);
+    vi.stubEnv("AI_PROVIDER", "codex");
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
+    vi.stubEnv("CODEX_TEXT_MODEL", "");
+    vi.stubEnv("FAKE_CODEX_FAIL", "");
+    vi.stubEnv("FAKE_REPLIES", "");
+    writeFileSync(path.join(bin, "calls"), "0");
+    parse.mockReset();
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("is chosen by AI_PROVIDER=codex even with an Anthropic key", () => {
+    expect(providerStatus()).toMatchObject({ provider: "codex", model: "chatgpt", configured: true });
+    vi.stubEnv("CODEX_TEXT_MODEL", "gpt-5.5");
+    expect(providerStatus().model).toBe("gpt-5.5");
+  });
+
+  it("runs codex exec read-only with the schema in the prompt and validates the reply", async () => {
+    vi.stubEnv("FAKE_REPLY", 'Here you go:\n```json\n{"phrases":["Bloom where you are planted."]}\n```');
+    const res = await runTask("phrases", phrasesInput);
+    expect(res.output).toEqual({ phrases: ["Bloom where you are planted."] });
+    expect(res.meta).toMatchObject({ provider: "codex", model: "chatgpt", task: "phrases" });
+    expect(parse).not.toHaveBeenCalled();
+    const args = read("args.txt").trim().split("\n");
+    expect(args.slice(0, 5)).toEqual(["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--color"]);
+    expect(args).toContain('model_reasoning_effort="medium"');
+    expect(args.slice(-2)).toEqual(["--", "-"]);
+    expect(args).not.toContain("-m");
+    const stdin = read("stdin.txt");
+    expect(stdin).toContain("gardening");
+    expect(stdin).toContain('"phrases"');
+    expect(stdin).toMatch(/JSON Schema/);
+  });
+
+  it("attaches vision images and passes CODEX_TEXT_MODEL", async () => {
+    vi.stubEnv("CODEX_TEXT_MODEL", "gpt-5.5");
+    vi.stubEnv("FAKE_REPLY", JSON.stringify(review));
+    const res = await runTask("visual-review", input, images);
+    expect(res.output).toEqual(review);
+    expect(read("images.txt").trim()).toBe("2");
+    const args = read("args.txt").trim().split("\n");
+    expect(args[args.indexOf("-m") + 1]).toBe("gpt-5.5");
+    expect(args).toContain('model_reasoning_effort="high"');
+    expect(read("stdin.txt")).toContain("2. Page 3 (Easy)");
+  });
+
+  it("retries once with the problem named, then gives up", async () => {
+    vi.stubEnv("FAKE_REPLIES", '{"phrases":"nope"}|{"phrases":["Grow slow."]}');
+    expect((await runTask("phrases", phrasesInput)).output).toEqual({ phrases: ["Grow slow."] });
+    expect(read("calls").trim()).toBe("2");
+    expect(read("stdin.txt")).toMatch(/previous reply was rejected \(phrases:/);
+    writeFileSync(path.join(bin, "calls"), "0");
+    vi.stubEnv("FAKE_REPLIES", "");
+    vi.stubEnv("FAKE_REPLY", "I can't help with that.");
+    await expect(runTask("phrases", phrasesInput)).rejects.toThrow(/did not match the schema \(it was not valid JSON\)/);
+    expect(read("calls").trim()).toBe("2");
+  });
+
+  it("explains codex failures", async () => {
+    vi.stubEnv("FAKE_CODEX_FAIL", "Error: not logged in");
+    await expect(runTask("phrases", phrasesInput)).rejects.toMatchObject({ status: 401 });
+    vi.stubEnv("FAKE_CODEX_FAIL", "You've hit your usage limit");
+    await expect(runTask("phrases", phrasesInput)).rejects.toMatchObject({ status: 429 });
+    vi.stubEnv("FAKE_CODEX_FAIL", "boom");
+    await expect(runTask("phrases", phrasesInput)).rejects.toThrow(/codex writing failed: [\s\S]*boom/);
+  });
+
+  it("finds the JSON object in a reply", () => {
+    expect(extractJson('```json\n{"a":{"b":1}}\n```')).toEqual({ a: { b: 1 } });
+    expect(() => extractJson("no json here")).toThrow();
   });
 });
