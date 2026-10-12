@@ -56,7 +56,7 @@ export type GeneratorConfig =
     } & PuzzleCommon)
   | ({ kind: "number-search"; count: number; size: number; difficulty: WordSearchDifficulty } & PuzzleCommon)
   | ({ kind: "maze"; count: number; difficulty: "easy" | "medium" | "hard" } & PuzzleCommon)
-  | ({ kind: "word-scramble"; puzzles: { title: string; words: string[] }[]; aiRunId?: string } & PuzzleCommon)
+  | ({ kind: "word-scramble"; puzzles: { title: string; words: string[] }[]; difficulty?: "easy" | "medium" | "hard"; aiRunId?: string } & PuzzleCommon)
   | ({ kind: "cryptogram"; phrases: string[]; difficulty: "easy" | "medium" | "hard"; perPage: 1 | 2; aiRunId?: string } & PuzzleCommon)
   | { kind: "coloring"; assetIds: string[]; blankBacks: boolean };
 
@@ -506,7 +506,8 @@ function slots(box: Box, perPage: number, labelH: number): { x: number; y: numbe
 function sudokuPages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "sudoku" }>): Page[] {
   const puzzles = Array.from({ length: cfg.count }, (_, i) => generateSudoku(cfg.seed + i, cfg.difficulty));
   const first = cfg.startNumber ?? 1;
-  const label = cfg.difficulty[0].toUpperCase() + cfg.difficulty.slice(1);
+  // Each puzzle is labelled with the difficulty it grades at, which is nearly always the section's.
+  const label = (d: SudokuDifficulty) => d[0].toUpperCase() + d.slice(1);
   const pages: Page[] = [];
   const labelH = 22;
   if (showPuzzles(cfg.part))
@@ -515,7 +516,7 @@ function sudokuPages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "sudoku" }>
       slots(ctx.box, cfg.perPage, labelH).forEach((slot, k) => {
         const s = puzzles[p + k];
         if (!s) return;
-        els.push(text({ x: slot.x, y: slot.y - labelH + 2, width: slot.size, height: 13, text: `Puzzle #${first + p + k} · ${label}`, fontSize: 11, bold: true }));
+        els.push(text({ x: slot.x, y: slot.y - labelH + 2, width: slot.size, height: 13, text: `Puzzle #${first + p + k} · ${label(s.difficulty)}`, fontSize: 11, bold: true }));
         els.push(...sudokuGrid(ctx, s, slot.x, slot.y, slot.size, false));
       });
       pages.push(page(ctx, "sudoku", els, { generator: { kind: "sudoku", seed: cfg.seed, params: { difficulty: cfg.difficulty, from: first + p } } }));
@@ -642,21 +643,24 @@ function mazePages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "maze" }>): P
   const cols = MAZE_SIZE[cfg.difficulty];
   const cell = (b.width - 8) / cols;
   const rows = Math.max(cols, Math.floor((b.height - labelH - 36) / cell));
-  const mazes = Array.from({ length: cfg.count }, (_, i) => generateMaze(cols, rows, cfg.seed + i));
+  const mazes = Array.from({ length: cfg.count }, (_, i) => generateMaze(cols, rows, cfg.seed + i, cfg.difficulty));
   const pages: Page[] = !showPuzzles(cfg.part)
     ? []
     : mazes.map((m, i) => {
         const w = m.cols * cell;
         const x = b.x + (b.width - w) / 2;
         const y = b.y + labelH;
+        // Centered on the opening's column, kept inside the page box.
+        const labelX = (cellIndex: number) => Math.min(b.x + b.width - 60, Math.max(b.x, x + ((cellIndex % m.cols) + 0.5) * cell - 30));
         return page(
           ctx,
           "maze",
           [
             text({ x: b.x, y: b.y, width: b.width, height: 22, text: `Maze #${first + i}`, fontSize: 18, bold: true, fontFamily: SERIF, align: "center" }),
-            text({ x: x - 10, y: y - 14, width: 60, height: 10, text: "START", fontSize: 8, bold: true }),
+            // The labels sit over the entrance and under the exit, wherever along the edge they are.
+            text({ x: labelX(m.start), y: y - 14, width: 60, height: 10, text: "START", fontSize: 8, bold: true, align: "center" }),
             ...mazeElements(m, x, y, cell, false),
-            text({ x: x + w - 50, y: y + m.rows * cell + 4, width: 60, height: 10, text: "FINISH", fontSize: 8, bold: true, align: "right" }),
+            text({ x: labelX(m.end), y: y + m.rows * cell + 4, width: 60, height: 10, text: "FINISH", fontSize: 8, bold: true, align: "center" }),
           ],
           { generator: { kind: "maze", seed: m.seed, params: { cols, rows } } },
         );
@@ -682,7 +686,7 @@ const SCRAMBLE_MAX_WORDS = 15;
 const SCRAMBLE_KEYS_PER_PAGE = 4;
 
 function scrambleSets(cfg: Extract<GeneratorConfig, { kind: "word-scramble" }>) {
-  return cfg.puzzles.map((p, i) => ({ title: p.title, items: scrambleWords(p.words, cfg.seed + i).slice(0, SCRAMBLE_MAX_WORDS) })).filter((s) => s.items.length);
+  return cfg.puzzles.map((p, i) => ({ title: p.title, items: scrambleWords(p.words, cfg.seed + i, cfg.difficulty).slice(0, SCRAMBLE_MAX_WORDS) })).filter((s) => s.items.length);
 }
 
 function scramblePages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "word-scramble" }>): Page[] {

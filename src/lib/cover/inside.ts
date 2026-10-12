@@ -40,7 +40,8 @@ export function whatsInside(project: Project, max = 5): string[] {
     const n = puzzleCount(s.config) || pages.filter((p) => p.sectionId === s.id).length;
     if (!n || !NOUN[kind] || (s.role === "back" && n < 6)) continue;
     const noun = NOUN[kind][n === 1 ? 0 : 1];
-    const level = "difficulty" in s.config && !s.label.toLowerCase().includes(s.config.difficulty) ? ` (${s.config.difficulty})` : "";
+    const d = "difficulty" in s.config ? s.config.difficulty : undefined;
+    const level = d && !s.label.toLowerCase().includes(d) ? ` (${d})` : "";
     items.push(s.role === "back" ? `${n} ${noun} for notes` : `${s.label}: ${n} ${noun}${level}`);
   }
   // Pages added by hand (outside any section) are summarized by page type.

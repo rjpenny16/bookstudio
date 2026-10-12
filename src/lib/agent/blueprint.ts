@@ -84,9 +84,15 @@ interface Sizing {
   wideTrim: boolean;
 }
 
-const WS_SIZE = { easy: 12, medium: 15, hard: 18 } as const;
-const WS_SIZE_LARGE = { easy: 11, medium: 13, hard: 15 } as const;
-const NS_SIZE = { easy: 12, medium: 14, hard: 16 } as const;
+/** Grid sizes by difficulty: each step up is a bigger grid on every trim, so medium and hard never come out the same. */
+const WS_SIZE = {
+  wide: { easy: 12, medium: 15, hard: 18 },
+  narrow: { easy: 11, medium: 13, hard: 15 },
+  wideLarge: { easy: 11, medium: 13, hard: 15 },
+  narrowLarge: { easy: 10, medium: 12, hard: 13 },
+} as const;
+const NS_SIZE = { wide: { easy: 12, medium: 14, hard: 16 }, narrow: { easy: 11, medium: 13, hard: 14 } } as const;
+const wsSize = (z: Sizing, d: "easy" | "medium" | "hard") => WS_SIZE[`${z.wideTrim ? "wide" : "narrow"}${z.largePrint ? "Large" : ""}`][d];
 
 const capDifficulty = (d: BlueprintOutput["sections"][number]["difficulty"]): "easy" | "medium" | "hard" => (d === "expert" ? "hard" : d);
 
@@ -98,15 +104,15 @@ function puzzleConfig(kind: SectionKind, n: number, difficulty: BlueprintOutput[
     case "sudoku":
       return { kind: "sudoku", count: n, difficulty, perPage: z.largePrint ? 1 : 2, solutions: true, seed };
     case "word-search": {
-      const size = Math.min(z.largePrint ? WS_SIZE_LARGE[d] : WS_SIZE[d], z.wideTrim ? 18 : 15);
+      const size = wsSize(z, d);
       return { kind: "word-search", puzzles: Array.from({ length: n }, (_, i) => ({ title: `Puzzle ${i + 1}`, words: ["ABC"] })), size, difficulty: d, solutions: true, seed };
     }
     case "number-search":
-      return { kind: "number-search", count: n, size: Math.min(NS_SIZE[d], z.wideTrim ? 16 : 14), difficulty: d, solutions: true, seed };
+      return { kind: "number-search", count: n, size: NS_SIZE[z.wideTrim ? "wide" : "narrow"][d], difficulty: d, solutions: true, seed };
     case "maze":
       return { kind: "maze", count: n, difficulty: d, solutions: true, seed };
     case "word-scramble":
-      return { kind: "word-scramble", puzzles: Array.from({ length: n }, (_, i) => ({ title: `Scramble ${i + 1}`, words: ["ABC"] })), solutions: true, seed };
+      return { kind: "word-scramble", puzzles: Array.from({ length: n }, (_, i) => ({ title: `Scramble ${i + 1}`, words: ["ABC"] })), difficulty: d, solutions: true, seed };
     default:
       return { kind: "cryptogram", phrases: Array.from({ length: n }, () => "A"), difficulty: d, perPage: z.largePrint || !z.wideTrim ? 1 : 2, solutions: true, seed };
   }
@@ -127,7 +133,8 @@ function fitPuzzles(make: (n: number) => GeneratorConfig, budget: number): numbe
 
 function puzzleContent(cfg: GeneratorConfig, theme: string, difficulty: "easy" | "medium" | "hard"): ContentNeed | null {
   if (cfg.kind === "word-search") return { task: "word-lists", theme, count: cfg.puzzles.length, wordsPerPuzzle: cfg.size <= 12 ? 10 : cfg.size <= 15 ? 15 : 18, maxLength: wordSearchMaxLength(cfg.size), difficulty: cfg.difficulty };
-  if (cfg.kind === "word-scramble") return { task: "word-lists", theme, count: cfg.puzzles.length, wordsPerPuzzle: 15, maxLength: 10, difficulty };
+  // Longer words are harder to unscramble.
+  if (cfg.kind === "word-scramble") return { task: "word-lists", theme, count: cfg.puzzles.length, wordsPerPuzzle: 15, maxLength: { easy: 6, medium: 8, hard: 10 }[cfg.difficulty ?? "medium"], difficulty };
   if (cfg.kind === "cryptogram") return { task: "phrases", theme, count: cfg.phrases.length, maxLength: cfg.perPage === 2 ? 90 : 120, style: "saying" };
   return null;
 }

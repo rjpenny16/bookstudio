@@ -1,12 +1,13 @@
 import { createRng, shuffle, type Rng } from "./rng";
+import { DIFFICULTY_AT, gradeSudoku, LEVELS_FOR, type SudokuLevel } from "./sudokuGrade";
 
 /** 81 cells, row-major; 0 = empty. */
 export type Grid = number[];
 
 export type SudokuDifficulty = "easy" | "medium" | "hard" | "expert";
 
-/** Target number of givens per difficulty. Every puzzle has exactly one solution. */
-export const SUDOKU_CLUES: Record<SudokuDifficulty, number> = { easy: 40, medium: 32, hard: 27, expert: 24 };
+/** Typical number of givens per difficulty (difficulty itself is graded by technique, see sudokuGrade). */
+export const SUDOKU_CLUES: Record<SudokuDifficulty, number> = { easy: 38, medium: 31, hard: 27, expert: 25 };
 
 const ROW = (i: number) => Math.floor(i / 9);
 const COL = (i: number) => i % 9;
@@ -120,33 +121,75 @@ export interface Sudoku {
   puzzle: Grid;
   solution: Grid;
   clues: number;
+  /** The difficulty the puzzle actually grades at (see sudokuGrade), which is what its page says. */
   difficulty: SudokuDifficulty;
+  /** Hardest technique level needed: 1 singles … 4 swordfish / XY-wing, 5 beyond those. */
+  level: SudokuLevel;
   seed: number;
 }
 
+/** Removal stops here first; it continues toward CLUE_FLOOR only while the puzzle grades easier than wanted. */
+const CLUE_START: Record<SudokuDifficulty, number> = { easy: 38, medium: 34, hard: 30, expert: 28 };
+const CLUE_FLOOR: Record<SudokuDifficulty, number> = { easy: 34, medium: 26, hard: 23, expert: 20 };
+const ATTEMPTS = 50;
+
+/** Each symmetric pair of cells (and the center), in removal order. */
+const pairOf = (i: number): number[] => (i === 40 ? [40] : [i, 80 - i]);
+
+/**
+ * A puzzle with exactly one solution that grades at `difficulty` by the
+ * techniques a person needs (sudokuGrade). Clues are removed in symmetric
+ * pairs; when a grid can't be brought to the wanted grade, another is
+ * tried. If none get there, the closest easier one is returned, labelled
+ * with the grade it really has.
+ */
 export function generateSudoku(seed: number, difficulty: SudokuDifficulty): Sudoku {
-  const rng = createRng(seed);
-  const solution = fullGrid(rng);
-  const puzzle = solution.slice();
-  const target = SUDOKU_CLUES[difficulty];
-  let clues = 81;
-  // Remove cells in symmetric pairs while the solution stays unique.
-  for (const i of shuffle(rng, Array.from({ length: 41 }, (_, k) => k))) {
-    if (clues <= target) break;
-    const j = 80 - i;
-    const removed = i === j ? 1 : 2;
-    if (clues - removed < target) continue;
-    const saved = [puzzle[i], puzzle[j]];
-    puzzle[i] = 0;
-    puzzle[j] = 0;
-    if (countSolutions(puzzle, 2) !== 1) {
-      puzzle[i] = saved[0];
-      puzzle[j] = saved[1];
-    } else {
-      clues -= removed;
+  const [lo, hi] = LEVELS_FOR[difficulty];
+  let best: Sudoku | null = null;
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    const rng = createRng(seed + attempt * 7919);
+    const solution = fullGrid(rng);
+    const puzzle = solution.slice();
+    let clues = 81;
+    const order = shuffle(rng, Array.from({ length: 41 }, (_, k) => k));
+    const tryRemove = (cells: number[]) => {
+      const saved = cells.map((c) => puzzle[c]);
+      cells.forEach((c) => (puzzle[c] = 0));
+      if (countSolutions(puzzle, 2) === 1) {
+        clues -= cells.length;
+        return () => {
+          cells.forEach((c, k) => (puzzle[c] = saved[k]));
+          clues += cells.length;
+        };
+      }
+      cells.forEach((c, k) => (puzzle[c] = saved[k]));
+      return null;
+    };
+    // Down to the starting clue count, keeping the solution unique.
+    const rest: number[] = [];
+    for (const i of order) {
+      const cells = pairOf(i);
+      if (clues - cells.length < CLUE_START[difficulty] || !tryRemove(cells)) rest.push(i);
     }
+    // Then further, one pair at a time, while it grades easier than wanted; a removal that overshoots is put back.
+    let level = gradeSudoku(puzzle);
+    for (const i of rest) {
+      if (level >= lo) break;
+      const cells = pairOf(i);
+      if (puzzle[cells[0]] === 0 || clues - cells.length < CLUE_FLOOR[difficulty]) continue;
+      const undo = tryRemove(cells);
+      if (!undo) continue;
+      const next = gradeSudoku(puzzle);
+      if (next > hi) undo();
+      else level = next;
+    }
+    const graded: Sudoku = { puzzle, solution, clues, difficulty: DIFFICULTY_AT[level], level, seed };
+    if (level >= lo && level <= hi) return graded;
+    // Otherwise keep the closest: easier than wanted beats harder, and among easier ones the hardest wins.
+    const rank = (x: Sudoku) => (x.level > hi ? -1000 - x.level : x.level * 100 - x.clues);
+    if (!best || rank(graded) > rank(best)) best = graded;
   }
-  return { puzzle, solution, clues, difficulty, seed };
+  return best!;
 }
 
 export function isValidSolution(grid: Grid): boolean {

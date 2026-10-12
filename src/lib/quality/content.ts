@@ -166,6 +166,9 @@ function wordProblem(raw: string, w: string, o: WordListOptions): string | null 
   return null;
 }
 
+/** True when `word` can be read inside the longer `other`, forwards or backwards. */
+export const hidesIn = (word: string, other: string) => other.length > word.length && (other.includes(word) || other.includes([...word].reverse().join("")));
+
 /**
  * Normalize a word list and drop words that would weaken the puzzle:
  * unusable words, duplicates, singular/plural pairs, and words hidden inside a
@@ -187,10 +190,10 @@ export function cleanWordList(words: string[], o: WordListOptions): CleanResult 
     }
     norm.push({ raw: raw.trim(), w });
   }
-  // Drop the shorter word of any pair where one hides inside the other (word search only).
+  // Drop the shorter word of any pair where one hides inside the other, forwards or backwards (word search only: CAR reads backwards in TRACTOR).
   const kept: string[] = [];
   for (const n of norm) {
-    if (!o.scramble && norm.some((m) => m.w.length > n.w.length && m.w.includes(n.w))) dropped.push({ item: n.raw, reason: "hidden inside a longer word" });
+    if (!o.scramble && norm.some((m) => hidesIn(n.w, m.w))) dropped.push({ item: n.raw, reason: "hidden inside a longer word" });
     else kept.push(n.w);
   }
   return { kept, dropped };

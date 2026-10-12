@@ -1,14 +1,14 @@
 import { generateCryptogram } from "@/lib/generators/cryptogram";
-import { generateMaze, type Maze } from "@/lib/generators/maze";
+import { deadEndShare, generateMaze, type Maze } from "@/lib/generators/maze";
 import { CRYPTO_HINTS, numberSearchLists, type GeneratorConfig } from "@/lib/generators/pages";
 import { scrambleWords } from "@/lib/generators/scramble";
-import { generateSudoku, SUDOKU_CLUES, type SudokuDifficulty } from "@/lib/generators/sudoku";
+import { generateSudoku, type SudokuDifficulty } from "@/lib/generators/sudoku";
 import { DIGITS, generateWordSearch, type WordSearch } from "@/lib/generators/wordsearch";
 import type { Project } from "@/lib/schema/project";
 
 /**
  * Measurements of the puzzles a book actually contains, recomputed from each
- * section's seed: how close sudoku clue counts land to their difficulty label,
+ * section's seed: how many sudoku puzzles grade at their section's difficulty,
  * which directions word-search words run, how long maze solutions are. The
  * sample harness reports them so changes to the generators can be compared
  * book by book. Nothing here judges pass or fail.
@@ -17,12 +17,13 @@ import type { Project } from "@/lib/schema/project";
 export interface SudokuStats {
   difficulty: SudokuDifficulty;
   count: number;
-  targetClues: number;
   minClues: number;
   avgClues: number;
   maxClues: number;
-  /** Share of puzzles at or below the target clue count. */
-  onTarget: number;
+  /** Share of puzzles that grade at the section's difficulty by the techniques they need. */
+  onGrade: number;
+  /** How many puzzles grade at each difficulty. */
+  grades: Partial<Record<SudokuDifficulty, number>>;
 }
 
 export interface WordSearchStats {
@@ -36,6 +37,8 @@ export interface WordSearchStats {
   directions: { forward: number; backward: number; diagonal: number };
   /** Placed words that can also be read a second time somewhere in their grid. */
   duplicateReads: number;
+  /** The words that read twice, with the puzzle they are in. */
+  duplicateWords: string[];
 }
 
 export interface MazeStats {
@@ -105,12 +108,16 @@ export function countReads(ws: WordSearch, word: string): number {
 function wordSearchStats(kind: WordSearchStats["kind"], difficulty: string, size: number, grids: WordSearch[]): WordSearchStats {
   const dirs = { forward: 0, backward: 0, diagonal: 0 };
   let duplicateReads = 0;
+  const duplicateWords: string[] = [];
   for (const ws of grids)
     for (const p of ws.placed) {
       if (p.dr !== 0 && p.dc !== 0) dirs.diagonal++;
       else if (p.dr < 0 || p.dc < 0) dirs.backward++;
       else dirs.forward++;
-      if (countReads(ws, p.word) > 1) duplicateReads++;
+      if (countReads(ws, p.word) > 1) {
+        duplicateReads++;
+        duplicateWords.push(`${p.word} (${ws.placed.map((x) => x.word).filter((w) => w !== p.word && (w.includes(p.word) || w.includes([...p.word].reverse().join("")))).join(", ") || "crossing"})`);
+      }
     }
   const placed = dirs.forward + dirs.backward + dirs.diagonal || 1;
   return {
@@ -122,15 +129,11 @@ function wordSearchStats(kind: WordSearchStats["kind"], difficulty: string, size
     skipped: grids.reduce((n, g) => n + g.skipped.length, 0),
     directions: { forward: round(dirs.forward / placed), backward: round(dirs.backward / placed), diagonal: round(dirs.diagonal / placed) },
     duplicateReads,
+    duplicateWords,
   };
 }
 
-function mazeShares(m: Maze): { solution: number; deadEnds: number } {
-  const cells = m.cols * m.rows;
-  let deadEnds = 0;
-  for (const w of m.walls) if ([1, 2, 4, 8].filter((b) => w & b).length === 3) deadEnds++;
-  return { solution: m.solution.length / cells, deadEnds: deadEnds / cells };
-}
+const mazeShares = (m: Maze) => ({ solution: m.solution.length / (m.cols * m.rows), deadEnds: deadEndShare(m) });
 
 /** Answer-key sections repeat the puzzles of a body section, so only the puzzle half is measured. */
 const isPuzzleHalf = (cfg: GeneratorConfig) => !("part" in cfg) || cfg.part !== "solutions";
@@ -142,16 +145,18 @@ export function puzzleStats(project: Project): PuzzleStats {
     if (!isPuzzleHalf(cfg)) continue;
     switch (cfg.kind) {
       case "sudoku": {
-        const clues = Array.from({ length: cfg.count }, (_, i) => generateSudoku(cfg.seed + i, cfg.difficulty).clues);
-        const target = SUDOKU_CLUES[cfg.difficulty];
+        const puzzles = Array.from({ length: cfg.count }, (_, i) => generateSudoku(cfg.seed + i, cfg.difficulty));
+        const clues = puzzles.map((p) => p.clues);
+        const grades: Partial<Record<SudokuDifficulty, number>> = {};
+        for (const p of puzzles) grades[p.difficulty] = (grades[p.difficulty] ?? 0) + 1;
         out.sudoku.push({
           difficulty: cfg.difficulty,
           count: cfg.count,
-          targetClues: target,
           minClues: Math.min(...clues),
           avgClues: round(avg(clues), 1),
           maxClues: Math.max(...clues),
-          onTarget: round(clues.filter((c) => c <= target).length / (clues.length || 1)),
+          onGrade: round((grades[cfg.difficulty] ?? 0) / (puzzles.length || 1)),
+          grades,
         });
         break;
       }
@@ -171,7 +176,7 @@ export function puzzleStats(project: Project): PuzzleStats {
         const params = page?.generator?.params as { cols?: number; rows?: number } | undefined;
         if (!params?.cols || !params.rows) break;
         const { cols, rows } = params;
-        const shares = Array.from({ length: cfg.count }, (_, i) => mazeShares(generateMaze(cols, rows, cfg.seed + i)));
+        const shares = Array.from({ length: cfg.count }, (_, i) => mazeShares(generateMaze(cols, rows, cfg.seed + i, cfg.difficulty)));
         out.maze.push({
           difficulty: cfg.difficulty,
           cols,
@@ -183,7 +188,7 @@ export function puzzleStats(project: Project): PuzzleStats {
         break;
       }
       case "word-scramble": {
-        const lists = cfg.puzzles.map((p, i) => scrambleWords(p.words, cfg.seed + i));
+        const lists = cfg.puzzles.map((p, i) => scrambleWords(p.words, cfg.seed + i, cfg.difficulty));
         const items = lists.flat();
         const inPlace = items.map((s) => [...s.word].filter((ch, k) => s.scrambled[k] === ch).length / s.word.length);
         const anagramCollisions = lists.reduce((n, list) => {

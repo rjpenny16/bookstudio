@@ -50,7 +50,7 @@ export function shiftDifficulty(cfg: GeneratorConfig, feedback: string): Generat
   const dir = HARDER.test(feedback) ? 1 : EASIER.test(feedback) ? -1 : 0;
   if (!dir || !("difficulty" in cfg)) return cfg;
   const levels = cfg.kind === "sudoku" ? ["easy", "medium", "hard", "expert"] : ["easy", "medium", "hard"];
-  const i = Math.max(0, Math.min(levels.length - 1, levels.indexOf(cfg.difficulty) + dir));
+  const i = Math.max(0, Math.min(levels.length - 1, levels.indexOf(cfg.difficulty ?? "medium") + dir));
   return { ...cfg, difficulty: levels[i] } as GeneratorConfig;
 }
 
