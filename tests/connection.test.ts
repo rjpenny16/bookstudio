@@ -1,3 +1,6 @@
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The connection module is server-only; vitest runs it in plain Node.
@@ -83,6 +86,21 @@ describe("capabilities and connection tests", () => {
     expect((await testConnection("images")).detail).toMatch(/isn't available to this key/);
     fetchMock.mockResolvedValue(new Response("{}", { status: 401 }));
     expect((await testConnection("images")).detail).toMatch(/rejected/);
+  });
+
+  it("checks codex login for the ChatGPT-subscription image provider", async () => {
+    const bin = mkdtempSync(path.join(tmpdir(), "fake-codex-"));
+    writeFileSync(path.join(bin, "codex"), `#!/usr/bin/env bash\n[[ -n "$FAKE_LOGGED_OUT" ]] && { echo "Not logged in" >&2; exit 1; }\necho "Logged in using ChatGPT"\n`);
+    chmodSync(path.join(bin, "codex"), 0o755);
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
+    vi.stubEnv("IMAGE_PROVIDER", "codex");
+    expect(capabilities().images).toMatchObject({ provider: "codex", configured: true });
+    expect(await testConnection("images")).toMatchObject({ ok: true, detail: expect.stringContaining("Logged in using ChatGPT") });
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.stubEnv("FAKE_LOGGED_OUT", "1");
+    expect((await testConnection("images")).detail).toMatch(/codex login/);
+    vi.stubEnv("CODEX_IMAGE_BRIDGE", "/nonexistent/bridge");
+    expect((await testConnection("images")).detail).toMatch(/image bridge isn't at/);
   });
 
   it("checks Ollama's model list and vision capability", async () => {

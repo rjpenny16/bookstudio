@@ -3,7 +3,8 @@ import { z } from "zod";
 import { ImageError, imageProvider, imageStatus } from "@/lib/ai/images";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+// The codex provider (ChatGPT subscription) routinely takes 4 to 6 minutes per image.
+export const maxDuration = 800;
 
 const Body = z.object({
   prompt: z.string().min(10).max(8000),

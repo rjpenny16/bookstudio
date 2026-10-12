@@ -1,9 +1,12 @@
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The image provider is server-only; vitest runs it in plain Node.
 vi.mock("server-only", () => ({}));
 
-const { imageProvider, imageStatus, OpenAIImageProvider } = await import("@/lib/ai/images");
+const { CodexImageProvider, imageProvider, imageSize, imageStatus, OpenAIImageProvider } = await import("@/lib/ai/images");
 
 const fetchMock = vi.fn();
 
@@ -60,5 +63,75 @@ describe("OpenAI image provider", () => {
     await expect(imageProvider().generate({ prompt: "p", widthIn: 6, heightIn: 9 })).rejects.toMatchObject({ status: 429 });
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), { status: 200 }));
     await expect(imageProvider().generate({ prompt: "p", widthIn: 6, heightIn: 9 })).rejects.toThrow(/no image/);
+  });
+});
+
+describe("codex image provider (ChatGPT subscription)", () => {
+  // An 8x8 PNG, as codex's image tool would save it.
+  const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR4nGO4YGCAFTEMLQkA2ntMAeuWKpoAAAAASUVORK5CYII=";
+  // A fake codex on PATH: runs the real bridge script end to end without a ChatGPT account.
+  const bin = mkdtempSync(path.join(tmpdir(), "fake-codex-"));
+  writeFileSync(
+    path.join(bin, "codex"),
+    `#!/usr/bin/env bash
+dir=""; prev=""
+for a in "$@"; do [[ "$prev" == "-C" ]] && dir="$a"; prev="$a"; done
+printf '%s' "\${@: -1}" > "${bin}/prompt.txt"
+if [[ -n "$FAKE_CODEX_FAIL" ]]; then echo "$FAKE_CODEX_FAIL"; exit 1; fi
+echo '${PNG}' | base64 -d > "$dir/out.png"
+`,
+  );
+  chmodSync(path.join(bin, "codex"), 0o755);
+
+  beforeEach(() => {
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
+    vi.stubEnv("IMAGE_PROVIDER", "codex");
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    vi.stubEnv("FAKE_CODEX_FAIL", "");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("takes precedence over an API key when IMAGE_PROVIDER=codex", () => {
+    expect(imageStatus()).toMatchObject({ provider: "codex", configured: true });
+    expect(imageProvider()).toBeInstanceOf(CodexImageProvider);
+    vi.stubEnv("OPENAI_API_KEY", "");
+    expect(imageStatus().configured).toBe(true);
+  });
+
+  it("generates through the bundled bridge and reads the real pixel size", async () => {
+    const img = await imageProvider().generate({ prompt: "A lighthouse at dusk, no text", widthIn: 6.25, heightIn: 9.25 });
+    expect(img).toMatchObject({ data: PNG, mediaType: "image/png", widthPx: 8, heightPx: 8, provider: "codex" });
+    expect(img.promptHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    const sent = readFileSync(path.join(bin, "prompt.txt"), "utf8");
+    expect(sent).toContain("A lighthouse at dusk, no text");
+    expect(sent).toMatch(/SIZE: \d+x\d+/);
+  });
+
+  it("explains codex failures", async () => {
+    vi.stubEnv("FAKE_CODEX_FAIL", "Error: not logged in");
+    await expect(imageProvider().generate({ prompt: "p", widthIn: 6, heightIn: 9 })).rejects.toMatchObject({ status: 401 });
+    vi.stubEnv("FAKE_CODEX_FAIL", "You've hit your usage limit");
+    await expect(imageProvider().generate({ prompt: "p", widthIn: 6, heightIn: 9 })).rejects.toMatchObject({ status: 429 });
+    await expect(new CodexImageProvider("/nonexistent/bridge").generate({ prompt: "p", widthIn: 6, heightIn: 9 })).rejects.toMatchObject({ status: 503, message: expect.stringContaining("/nonexistent/bridge") });
+    vi.stubEnv("FAKE_CODEX_FAIL", "boom");
+    await expect(imageProvider().generate({ prompt: "p", widthIn: 6, heightIn: 9 })).rejects.toThrow(/codex image generation failed: [\s\S]*boom/);
+  });
+
+  it("stops codex when the request is cancelled", async () => {
+    const slow = path.join(bin, "slow-bridge");
+    writeFileSync(slow, "sleep 30\n");
+    const ac = new AbortController();
+    const started = Date.now();
+    const p = new CodexImageProvider(slow).generate({ prompt: "p", widthIn: 6, heightIn: 9 }, ac.signal);
+    setTimeout(() => ac.abort(), 100);
+    await expect(p).rejects.toMatchObject({ status: 499 });
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it("reads PNG and JPEG sizes", () => {
+    expect(imageSize(Buffer.from(PNG, "base64"))).toEqual({ width: 8, height: 8 });
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 4, 0, 0, 0xff, 0xc0, 0, 11, 8, 0x06, 0x00, 0x04, 0x00, 3, 1, 0x11, 0]);
+    expect(imageSize(jpeg)).toEqual({ width: 1024, height: 1536 });
+    expect(imageSize(Buffer.from("nope"))).toBeNull();
   });
 });

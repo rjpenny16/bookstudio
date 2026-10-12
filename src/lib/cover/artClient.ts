@@ -24,7 +24,7 @@ import { paletteFromPixels } from "./artPalette";
  */
 
 export interface ImageStatus {
-  provider: "openai" | "none";
+  provider: "openai" | "codex" | "none";
   model: string;
   configured: boolean;
   detail: string;
