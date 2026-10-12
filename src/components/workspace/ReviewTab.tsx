@@ -18,6 +18,7 @@ import { applyFix } from "@/lib/preflight/fixes";
 import { aiUsage } from "@/lib/preflight/aiUsage";
 import { applyRevisedListing, qualityReport } from "@/lib/quality";
 import { critiqueListing, reviewVisuals } from "@/lib/quality/review";
+import { exportChecklist, type ChecklistTarget } from "@/lib/quality/exportChecklist";
 import { scorecard, type RowStatus } from "@/lib/quality/scorecard";
 import type { AiDisclosureLevel, CoverVariant, InteriorSection, Project } from "@/lib/schema/project";
 import { useProjectStore } from "@/lib/storage/store";
@@ -170,6 +171,16 @@ export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (ta
     }
   };
 
+  const checklist = exportChecklist({ report, listingErrors: v.errors.length, disclosureConfirmed: m.aiDisclosure.confirmed, approved, fixes: card.fixes.length });
+  /** Bring a checklist item's controls into view (and focus the box to tick, if it has one). */
+  const goTo = (target: ChecklistTarget) => {
+    if (target === "preflight") return onGo("preflight");
+    const id = { listing: "review-listing", disclosure: "confirm-disclosure", publish: "approve-export" }[target];
+    const el = document.getElementById(id);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (el instanceof HTMLInputElement) el.focus({ preventScroll: true });
+  };
+
   const setMeta = (fn: (d: Project["metadata"]) => void) => update((d) => void fn(d.metadata));
   const keywords = [...m.keywords, ...Array(Math.max(0, LISTING.maxKeywords - m.keywords.length)).fill("")].slice(0, LISTING.maxKeywords);
   const disclosure = (key: "text" | "images" | "translation", label: string, detected: boolean) => (
@@ -201,6 +212,41 @@ export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (ta
             {note.text}
           </div>
         )}
+
+        <section className="card stack" aria-labelledby="review-next">
+          <div className="row-between">
+            <h2 id="review-next" style={{ margin: 0 }}>
+              Before you export
+            </h2>
+            {checklist.next ? (
+              <button className="btn btn-sm btn-primary" onClick={() => goTo(checklist.next!.target)}>
+                Next: {checklist.next.action}
+              </button>
+            ) : (
+              <button className="btn btn-sm btn-primary" onClick={() => goTo("publish")}>
+                Ready: export the package
+              </button>
+            )}
+          </div>
+          <ol className="checklist" aria-label="Export checklist">
+            {checklist.items.map((it) => (
+              <li key={it.id} className={it.done ? "done" : undefined}>
+                <span className={`check-icon ${it.done ? "pass" : "warn"}`} aria-label={it.done ? "done" : "to do"}>
+                  {it.done ? "✓" : "!"}
+                </span>
+                <div>
+                  <button className="link-btn" onClick={() => goTo(it.target)}>
+                    {it.label}
+                  </button>
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    {it.detail}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ol>
+          {checklist.fixes > 0 && <p className="field-hint" style={{ margin: 0 }}>Optional: {checklist.fixes} one-click fix{checklist.fixes > 1 ? "es" : ""} for preflight warnings in the scorecard.</p>}
+        </section>
 
         <section className="card stack" aria-labelledby="review-cover">
           <div className="row-between">
@@ -436,7 +482,7 @@ export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (ta
             {disclosure("translation", "Translations", false)}
           </div>
           <label className="check">
-            <input type="checkbox" checked={m.aiDisclosure.confirmed} onChange={(e) => setMeta((d) => void (d.aiDisclosure.confirmed = e.target.checked))} />
+            <input id="confirm-disclosure" type="checkbox" checked={m.aiDisclosure.confirmed} onChange={(e) => setMeta((d) => void (d.aiDisclosure.confirmed = e.target.checked))} />
             <span>These answers are correct; I&apos;ll give them to KDP.</span>
           </label>
         </section>
@@ -453,7 +499,7 @@ export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (ta
             <div className="notice notice-pass">Preflight passed ({report.passed}/{report.total}).</div>
           )}
           <label className="check">
-            <input type="checkbox" checked={approved} onChange={(e) => setApproved(e.target.checked)} />
+            <input id="approve-export" type="checkbox" checked={approved} onChange={(e) => setApproved(e.target.checked)} />
             <span>I reviewed the cover, pages and listing, and I hold the rights to everything in this book.</span>
           </label>
           <button className="btn btn-primary" disabled={!approved || busy !== null} onClick={exportPackage}>
