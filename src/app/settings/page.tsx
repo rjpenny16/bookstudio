@@ -144,6 +144,7 @@ export default function Settings() {
           )}
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
             <li><code>OPENAI_API_KEY</code>: generate cover art with the OpenAI Images API (default model <code>gpt-image-2</code>, override with <code>OPENAI_IMAGE_MODEL</code>; <code>OPENAI_IMAGE_QUALITY</code> defaults to <code>high</code>).</li>
+            <li><code>IMAGE_PROVIDER=codex</code>: generate cover art with your ChatGPT subscription instead of an API key, through the <a href="https://github.com/openai/codex">codex CLI</a> and the bundled gpt-image-bridge script. Install codex on the server machine and run <code>codex login</code>. No per-image billing, but each image takes about 4 to 6 minutes and counts against your ChatGPT usage limits.</li>
             <li>gpt-image-2 is asked for art at 300 DPI for the cover size (up to its 8.3 MP limit). Older models return at most 1536 px, which is upscaled; preflight still reports the real resolution.</li>
             <li>Generated images are marked AI-generated, so the KDP image disclosure is pre-filled.</li>
           </ul>

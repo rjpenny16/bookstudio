@@ -88,7 +88,7 @@ export function CoverArtPanel({ onUse, busy, palette }: { onUse: (candidateId: s
   if (!status.configured)
     return (
       <div className="notice notice-info" style={{ fontSize: 12 }}>
-        <strong>AI cover art</strong>: set <code>OPENAI_API_KEY</code> on the server to generate artwork for the art templates. See Settings.
+        <strong>AI cover art</strong>: set <code>OPENAI_API_KEY</code>, or <code>IMAGE_PROVIDER=codex</code> to use your ChatGPT subscription, on the server to generate artwork for the art templates. See Settings.
       </div>
     );
 

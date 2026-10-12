@@ -1,6 +1,8 @@
 import "server-only";
+import { execFile } from "node:child_process";
+import { access, constants } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
-import { imageStatus, type ImageStatus } from "./images";
+import { codexBridgePath, imageStatus, type ImageStatus } from "./images";
 import { providerStatus, type ProviderStatus } from "./providers";
 
 /**
@@ -102,10 +104,29 @@ async function testVision(): Promise<string> {
   throw new Error("Offline mode can't look at images.");
 }
 
+/** codex is installed, logged in with ChatGPT, and the bridge script is in place. Generates nothing. */
+async function testCodex(): Promise<string> {
+  const bridge = codexBridgePath();
+  await access(bridge, constants.R_OK).catch(() => {
+    throw new Error(`The image bridge isn't at ${bridge}. Set CODEX_IMAGE_BRIDGE or restore .claude/skills/gpt-image-bridge.`);
+  });
+  const status = await new Promise<string>((resolve, reject) =>
+    execFile("codex", ["login", "status"], { timeout: 15_000 }, (err, stdout, stderr) => {
+      const text = `${stdout}${stderr}`.trim();
+      if ((err as NodeJS.ErrnoException | null)?.code === "ENOENT") reject(new Error("codex CLI isn't installed on the server. Run: npm install -g @openai/codex, then codex login"));
+      else if (err) reject(new Error(`codex isn't logged in. Run: codex login${text ? ` (${text.split("\n")[0]})` : ""}`));
+      else resolve(text);
+    }),
+  );
+  if (/api key/i.test(status) && !/chatgpt/i.test(status)) throw new Error(`codex is logged in with an API key, not ChatGPT, so images would be billed per call. Run: codex login`);
+  return `codex is logged in (${status.split("\n")[0] || "ok"}); no image was generated`;
+}
+
 /** Looks the model up instead of generating an image, so the check costs nothing. */
 async function testImages(): Promise<string> {
   const s = imageStatus();
-  if (!s.configured) throw new Error("No OPENAI_API_KEY set on the server.");
+  if (!s.configured) throw new Error("No image provider set on the server (OPENAI_API_KEY or IMAGE_PROVIDER=codex).");
+  if (s.provider === "codex") return testCodex();
   const base = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
   const res = await fetch(`${base}/models/${encodeURIComponent(s.model)}`, { headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}` }, signal: AbortSignal.timeout(10_000) }).catch((e: unknown) => {
     throw new Error(`Could not reach the OpenAI API: ${e instanceof Error ? e.message : e}`);
