@@ -127,7 +127,7 @@ for (const book of SAMPLE_BOOKS) {
       bookType: book.bookType,
       trimId: book.trimId,
       pageTarget: String(book.pageTarget),
-      author: "Sample Author",
+      author: "R.P. Paper Co.",
       coverArt: MOCK_ART ? "1" : "0",
       go: "1",
     });

@@ -60,10 +60,11 @@ const colorBlocks: Design = (input, cg) => {
   const gy = y + 14 + (bottom - (y + 14) - size) / 2;
   const cell = size / 3;
   const rng = createRng((input.seed ?? input.title.length) * 131 + 7);
-  const hues = [0, 40, 80, 130, 180, 220, 260, 300, 340].sort(() => rng() - 0.5);
-  hues.forEach((h, i) => {
-    const c = shiftHue(p.accent, h);
-    els.push(rect({ x: gx + (i % 3) * cell, y: gy + Math.floor(i / 3) * cell, width: cell, height: cell, fill: mixHex(c, "#ffffff", i % 2 ? 0.35 : 0.12), name: "Color block" }));
+  // Tints of the accent and its two neighbours on the color wheel, light enough for the puzzle's digits, in a seeded order.
+  const family = [p.accent, shiftHue(p.accent, 35), shiftHue(p.accent, -35)];
+  const tints = family.flatMap((c) => [mixHex(c, "#ffffff", 0.3), mixHex(c, "#ffffff", 0.5), mixHex(c, "#ffffff", 0.68)]).sort(() => rng() - 0.5);
+  tints.forEach((fill, i) => {
+    els.push(rect({ x: gx + (i % 3) * cell, y: gy + Math.floor(i / 3) * cell, width: cell, height: cell, fill, name: "Color block" }));
   });
   els.push(pattern({ x: gx, y: gy, width: size, height: size, pattern: { kind: "grid", spacing: size / 9, majorEvery: 3 }, stroke: "#ffffff", strokeWidth: 1.4, opacity: 0.85, name: "Puzzle grid" }));
   // The book's own first puzzle, set in the mosaic.
@@ -228,15 +229,23 @@ const series: Design = (input, cg) => {
   const title = lockup(input, { box: tbox, family: "Montserrat", max: 68, maxH: headerH - f.y - 20, color: titleColor, align: "left", maxLines: 4, upper: true });
   title.y = f.y + (headerH - f.y - title.height) / 2;
   els.push(...title.elements);
-  let y = headerH + 22;
-  if (input.series) {
-    const s = para(input.series.toUpperCase(), { ...f, y }, "Montserrat", 12, legibleOn(p.bg, p.accent, [p.muted, p.fg], 4.5), { bold: true, name: "Series" });
-    els.push(s);
-    y = s.y + s.height + 10;
-  }
-  if (input.subtitle) els.push(para(input.subtitle, { ...inset(f, 10), y }, face(input, "body", "Lora"), 16, legibleOn(p.bg, p.fg, [p.muted], 4.5), { name: "Subtitle", lh: 1.25 }));
   // Sunset stripes along the bottom.
   const stripesTop = cg.front.y + cg.trimH * 0.74;
+  // The series name and subtitle sit together in the middle of the space between the header and the author.
+  const mid: TextElement[] = [];
+  if (input.series) mid.push(para(input.series.toUpperCase(), { ...f, y: 0 }, "Montserrat", 12, legibleOn(p.bg, p.accent, [p.muted, p.fg], 4.5), { bold: true, name: "Series" }));
+  if (input.subtitle) mid.push(para(input.subtitle, { ...inset(f, 10), y: 0 }, face(input, "body", "Lora"), 17, legibleOn(p.bg, p.fg, [p.muted], 4.5), { name: "Subtitle", lh: 1.25 }));
+  if (mid.length) {
+    const gap = 10;
+    const h = mid.reduce((n, e) => n + e.height, 0) + gap * (mid.length - 1) + 28;
+    let y = headerH + Math.max(20, (stripesTop - 40 - headerH - h) / 2);
+    for (const e of mid) {
+      e.y = y;
+      y += e.height + gap;
+    }
+    els.push(rect({ x: f.x + f.width / 2 - 20, y: y + 8, width: 40, height: 3, fill: p.accent, name: "Accent" }));
+    els.push(...mid);
+  }
   const bands = 5;
   const bh = (cg.height - stripesTop) / bands;
   for (let i = 0; i < bands; i++) els.push(rect({ x: box.x, y: stripesTop + i * bh, width: box.width, height: bh + 0.5, fill: mixHex(p.bg, i % 2 ? shiftHue(p.accent, -25) : p.accent, 0.35 + (i * 0.65) / (bands - 1)), name: "Stripe" }));
@@ -304,7 +313,8 @@ const rainbow: Design = (input, cg) => {
   const R = cg.trimW * 0.44;
   const band = R * 0.12;
   const cx = cg.front.x + cg.trimW / 2;
-  const colors = [p.accent, shiftHue(p.accent, 25), mixHex(p.accent, p.fg, 0.4), mixHex(p.accent, p.bg, 0.45)];
+  // One family of the accent, from full strength to a soft tint of the background, so the arcs never clash.
+  const colors = [p.accent, mixHex(p.accent, p.fg, 0.25), mixHex(p.accent, p.bg, 0.35), mixHex(p.accent, p.bg, 0.6)];
   colors.forEach((c, i) => {
     const r = R - i * band;
     // The outer arc's stroke just touches the box, so the box (plus half a stroke) stays off the spine.

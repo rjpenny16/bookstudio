@@ -9,6 +9,7 @@ import type { ImageStatus } from "@/lib/cover/artClient";
 import { ART_COVER_TEMPLATES, COVER_TEMPLATES, PALETTES } from "@/lib/cover/templates";
 import { TRIM_SIZES } from "@/lib/kdp/rules";
 import { BOOK_TYPES, type BookType } from "@/lib/schema/project";
+import { DEFAULT_AUTHOR } from "@/lib/schema/factory";
 
 /**
  * What autopilot needs to start: a niche and an audience. Book type and trim
@@ -38,7 +39,7 @@ export const EXAMPLES: { topic: string; audience: string }[] = [
   { topic: "fishing log book", audience: "anglers" },
 ];
 
-export const emptySetup = (): SetupState => ({ topic: "", audience: "", author: "", notes: "", coverArt: true });
+export const emptySetup = (): SetupState => ({ topic: "", audience: "", author: DEFAULT_AUTHOR, notes: "", coverArt: true });
 
 export function resolveSetup(s: SetupState) {
   const inferred = inferSetup(s.topic, s.audience);
@@ -69,7 +70,7 @@ export function setupFromParams(p: URLSearchParams): SetupState {
     pageTarget: pages >= MIN_PAGES && pages <= MAX_PAGES ? pages : undefined,
     templateId: p.get("templateId") ?? undefined,
     paletteId: p.get("paletteId") ?? undefined,
-    author: p.get("author") ?? "",
+    author: p.get("author") || DEFAULT_AUTHOR,
     notes: p.get("notes") ?? "",
     coverArt: p.get("coverArt") !== "0",
   };
