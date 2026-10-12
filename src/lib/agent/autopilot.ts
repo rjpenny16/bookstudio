@@ -8,6 +8,7 @@ import { chooseVariant, redesignTarget, storedVariants, type VariantChoice } fro
 import { coverSettings } from "@/lib/cover/settings";
 import { resolveCategories, suggestCategories } from "@/lib/kdp/categories";
 import { generatePages } from "@/lib/generators/pages";
+import { styleOf } from "@/lib/generators/style";
 import { coverGeometry, findTrim } from "@/lib/kdp/geometry";
 import { cleanKeywords, findProhibited } from "@/lib/metadata/validate";
 import { runPreflight, type FixId, type PreflightReport } from "@/lib/preflight";
@@ -19,7 +20,7 @@ import type { BookType, ModelRun, Project } from "@/lib/schema/project";
 import { assembleBook, clampPageTarget, describeBook, planSections, validateBlueprint, type PlannedSection } from "./blueprint";
 import { ART_CANDIDATES } from "./constants";
 import { contentCall, refineContent, reviewContent, writeSection, type ContentRequest, type ContentReview } from "./content";
-import { genreOfProject } from "@/lib/cover/genres";
+import { genreOf, genreOfProject } from "@/lib/cover/genres";
 
 /**
  * The publishing agent. It is a deterministic workflow with model calls inside
@@ -97,7 +98,7 @@ export function syncTitlePage(project: Project): Project {
   const { title, subtitle } = project.metadata;
   if (sec.config.title === title && sec.config.subtitle === subtitle) return project;
   const config = { ...sec.config, title, subtitle };
-  const pages = generatePages(config, { spec: project.spec, pageCountHint: project.interior.pages.length }).map((p) => ({ ...p, sectionId: sec.id }));
+  const pages = generatePages(config, { spec: project.spec, pageCountHint: project.interior.pages.length, style: styleOf(project) }).map((p) => ({ ...p, sectionId: sec.id }));
   return produce(project, (d) => {
     const s = d.interior.sections.find((x) => x.id === sec.id)!;
     s.config = config;
@@ -209,7 +210,10 @@ export async function runAutopilot(
   // 4. Layout
   let project = await step("layout", async () => {
     const sections = assembleBook(blueprint, filled, { ...ctx, audience, trimId: trim.id, pageTarget, title, subtitle: brief.subtitle, author: input.author, blueprintRunId });
-    const p = createProject({ name: title, bookType: input.bookType, trimId: trim.id, paper: "white", ink: "black", bleed: false, author: input.author, interior: sections });
+    // The inside is styled like the cover's genre; large print comes from the plan as well as the words.
+    const genre = genreOf({ bookType: input.bookType, topic: input.topic, audience }).id;
+    const style = { genre, largePrint: blueprint.largePrint || genre === "large-print" };
+    const p = createProject({ name: title, bookType: input.bookType, trimId: trim.id, paper: "white", ink: "black", bleed: false, author: input.author, interior: sections, style });
     return [p, `${p.interior.pages.length} pages in ${p.interior.sections.length} parts`];
   });
   onPreview?.(project, "layout");

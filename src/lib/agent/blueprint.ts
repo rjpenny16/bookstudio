@@ -102,7 +102,8 @@ function puzzleConfig(kind: SectionKind, n: number, difficulty: BlueprintOutput[
   const seed = randomSeed();
   switch (kind) {
     case "sudoku":
-      return { kind: "sudoku", count: n, difficulty, perPage: z.largePrint ? 1 : 2, solutions: true, seed };
+      // Large print: one puzzle a page, and four solved grids a page in the key so its digits stay readable.
+      return { kind: "sudoku", count: n, difficulty, perPage: z.largePrint ? 1 : 2, ...(z.largePrint ? { keysPerPage: 4 as const } : {}), solutions: true, seed };
     case "word-search": {
       const size = wsSize(z, d);
       return { kind: "word-search", puzzles: Array.from({ length: n }, (_, i) => ({ title: `Puzzle ${i + 1}`, words: ["ABC"] })), size, difficulty: d, solutions: true, seed };
@@ -140,9 +141,11 @@ function puzzleContent(cfg: GeneratorConfig, theme: string, difficulty: "easy" |
 }
 
 function lowContentConfig(kind: SectionKind, pages: number, bp: BlueprintOutput, label: string): GeneratorConfig {
+  // Wider ruling for large-print writers.
+  const ruling = bp.largePrint ? 0.375 : 0.3125;
   switch (kind) {
     case "journal-prompts":
-      return { kind: "journal-prompts", prompts: [], spacingIn: 0.3125 };
+      return { kind: "journal-prompts", prompts: [], spacingIn: ruling };
     case "gratitude":
       return { kind: "gratitude", count: pages };
     case "daily-planner":
@@ -160,19 +163,72 @@ function lowContentConfig(kind: SectionKind, pages: number, bp: BlueprintOutput,
     case "graph":
       return { kind: "graph", count: pages, spacingIn: 0.25, majorEvery: 4 };
     default:
-      return { kind: "lined", count: pages, spacingIn: 0.3125, header: kind === "free-write" };
+      return { kind: "lined", count: pages, spacingIn: ruling, header: kind === "free-write" };
   }
 }
 
-/** Fixed pages outside the body sections. */
+/**
+ * Fixed pages outside the body sections. `dividers` counts the dividers plus
+ * one spare page for a blank that may be needed to start one on a right-hand
+ * page (sections are sized to odd lengths so this is rare; unused room
+ * becomes notes pages at the back). Answer keys get the same spare.
+ */
 export function frontBackCounts(bp: BlueprintOutput, bookType: BookType): { front: number; back: number; dividers: number; toc: boolean } {
   const n = bp.sections.length;
-  const dividers = wantsDividers(bookType, n) ? n : 0;
+  const dividers = wantsDividers(bookType, n) ? n + 1 : 0;
   const toc = wantsToc(bookType, n);
   const hasPuzzles = bp.sections.some((s) => PUZZLE_KINDS.includes(s.kind));
   const front = 1 + (isLowContent(bookType) ? 1 : 0) + (bp.howToUse.body.trim() ? 1 : 0) + (toc ? 1 : 0);
-  const back = (hasPuzzles ? 1 : 0) + (bp.closing.body.trim() ? 1 : 0);
+  const back = (hasPuzzles ? 2 : 0) + (bp.closing.body.trim() ? 1 : 0);
   return { front, back, dividers, toc };
+}
+
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** Puzzle name for divider details ("Sudoku 1–23 · Easy"). */
+const PUZZLE_NAME: Partial<Record<GeneratorConfig["kind"], [string, string]>> = {
+  sudoku: ["Sudoku", "Sudoku"],
+  "word-search": ["Word search", "Word searches"],
+  "number-search": ["Number search", "Number searches"],
+  maze: ["Maze", "Mazes"],
+  "word-scramble": ["Word scramble", "Word scrambles"],
+  cryptogram: ["Cryptogram", "Cryptograms"],
+};
+
+/** What a section holds, in one line, for its divider. */
+export function sectionDetail(cfg: GeneratorConfig): string {
+  const n = puzzleCount(cfg);
+  const names = PUZZLE_NAME[cfg.kind];
+  if (n && names) {
+    const start = "startNumber" in cfg ? (cfg.startNumber ?? 1) : 1;
+    const range = n === 1 ? `${names[0]} ${start}` : `${names[1]} ${start}–${start + n - 1}`;
+    return "difficulty" in cfg && cfg.difficulty ? `${range}  ·  ${capital(cfg.difficulty)}` : range;
+  }
+  if (cfg.kind === "journal-prompts") return `${cfg.prompts.filter((p) => p.trim()).length} guided pages`;
+  const pages = estimatePageCount(cfg);
+  return pages > 1 ? `${pages} pages` : "";
+}
+
+/** The rules of a puzzle kind, for the "How to play" box on its first divider. */
+export function howToPlay(cfg: GeneratorConfig): string {
+  switch (cfg.kind) {
+    case "sudoku":
+      return "Fill every empty square with a number from 1 to 9 so that each row, each column and each 3×3 box holds every number exactly once. Every puzzle has one solution.";
+    case "word-search":
+    case "number-search": {
+      const what = cfg.kind === "word-search" ? "word" : "number";
+      const dirs = { easy: "across and down", medium: "across, down and diagonally, and some read backwards", hard: "in any direction, including backwards and diagonally" }[cfg.difficulty];
+      return `Find each ${what} from the list in the grid and circle it. They run ${dirs}. Cross each one off the list as you find it.`;
+    }
+    case "maze":
+      return "Start at START and draw the one path through to FINISH without crossing a wall. Dead ends mean it's time to back up and try another way.";
+    case "word-scramble":
+      return "The letters of each word are mixed up. Rearrange them to spell a word from the theme, and write it on the line.";
+    case "cryptogram":
+      return "Each saying is written in a code where every letter stands for a different one, the same way throughout the puzzle. Write in the letters you work out; short words and repeated letters are good places to start.";
+    default:
+      return "";
+  }
 }
 
 const wantsDividers = (bookType: BookType, sections: number) => sections >= 2 && (bookType === "puzzle" || bookType === "activity" || bookType === "journal");
@@ -203,10 +259,17 @@ export function planSections(bp: BlueprintOutput, input: PlanInput): PlannedSect
     open.forEach((i, k) => (budgets[i] += Math.floor(excess / open.length) + (k < excess % open.length ? 1 : 0)));
   }
 
+  // With dividers, an odd-length section keeps the next divider on a right-hand page without a blank page (divider + section = even).
+  const odd = fixed.dividers > 0;
+  if (odd) bp.sections.forEach((s, i) => {
+    if (!PUZZLE_KINDS.includes(s.kind) && budgets[i] % 2 === 0 && budgets[i] > 1) budgets[i]--;
+  });
+
   return bp.sections.map((s, i) => {
     const theme = s.theme.trim() || input.topic;
     if (PUZZLE_KINDS.includes(s.kind)) {
-      const n = fitPuzzles((k) => puzzleConfig(s.kind, k, s.difficulty, sizing), budgets[i]);
+      let n = fitPuzzles((k) => puzzleConfig(s.kind, k, s.difficulty, sizing), budgets[i]);
+      while (odd && n > 1 && estimatePageCount(withPart(puzzleConfig(s.kind, n, s.difficulty, sizing), "puzzles")) % 2 === 0) n--;
       const config = puzzleConfig(s.kind, n, s.difficulty, sizing);
       return { label: s.title, subtitle: s.subtitle, kind: s.kind, config, content: puzzleContent(config, theme, capDifficulty(s.difficulty)) };
     }
@@ -245,6 +308,7 @@ export function assembleBook(bp: BlueprintOutput, sections: PlannedSection[], in
   const nextNumber = new Map<string, number>();
   const body: { entry: string; items: SectionInput[] }[] = [];
   const keys: SectionInput[] = [];
+  const explained = new Set<string>();
   for (const s of sections) {
     let config = s.config;
     const n = puzzleCount(config);
@@ -257,17 +321,32 @@ export function assembleBook(bp: BlueprintOutput, sections: PlannedSection[], in
     }
     if (estimatePageCount(config) === 0) continue;
     const items: SectionInput[] = [];
-    if (fixed.dividers) items.push({ label: `${s.label}: divider`, role: "body", config: { kind: "section-divider", title: s.label, subtitle: s.subtitle, aiRunId: runId } });
+    if (fixed.dividers) {
+      // Rules go on the first divider of each puzzle kind only.
+      const howTo = explained.has(config.kind) ? "" : howToPlay(config);
+      if (howTo) explained.add(config.kind);
+      const detail = sectionDetail(config);
+      items.push({
+        label: `${s.label}: divider`,
+        role: "body",
+        config: { kind: "section-divider", title: s.label, subtitle: s.subtitle, aiRunId: runId, kicker: `Part ${body.length + 1}`, ...(detail ? { detail } : {}), ...(howTo ? { howTo } : {}) },
+      });
+    }
     items.push({ label: s.label, role: "body", config });
     body.push({ entry: s.label, items });
   }
 
   const back: SectionInput[] = [];
-  if (keys.length) back.push({ label: "Answer key", role: "back", config: { kind: "section-divider", title: "Answer Key", subtitle: "" } }, ...keys);
+  if (keys.length) back.push({ label: "Answer key", role: "back", config: { kind: "section-divider", title: "Answer Key", subtitle: "", detail: "Solutions to every puzzle, in order" } }, ...keys);
   const closing: SectionInput[] = bp.closing.body.trim() ? [{ label: bp.closing.title || "Closing", role: "back", config: { kind: "text-page", title: bp.closing.title, body: bp.closing.body, aiRunId: runId } }] : [];
 
-  const all = [...front, ...body.flatMap((b) => b.items), ...back];
   const count = (list: SectionInput[]) => list.reduce((t, s) => t + estimatePageCount("config" in s ? s.config : s), 0);
+  // Dividers open on a right-hand (odd) page, the way printed books start a part; one that wouldn't gets a blank left-hand page first.
+  const all: SectionInput[] = [];
+  for (const s of [...front, ...body.flatMap((b) => b.items), ...back]) {
+    if ("config" in s && s.config.kind === "section-divider" && count(all) % 2 === 1) s.config = { ...s.config, blankBefore: true };
+    all.push(s);
+  }
   let total = count(all) + count(closing);
   let pad = Math.max(0, Math.max(target, MIN_PAGES) - total);
   if ((total + pad) % 2) pad++;
@@ -285,7 +364,7 @@ export function assembleBook(bp: BlueprintOutput, sections: PlannedSection[], in
       const cfg = "config" in s ? s.config : s;
       const label = "config" in s ? s.label : "";
       const isEntry = body.some((b) => b.items[0] === s) || (cfg.kind === "section-divider" && label === "Answer key");
-      if (isEntry) entries.push({ title: label === "Answer key" ? "Answer Key" : body.find((b) => b.items[0] === s)!.entry, page: pageNo });
+      if (isEntry) entries.push({ title: label === "Answer key" ? "Answer Key" : body.find((b) => b.items[0] === s)!.entry, page: pageNo + (cfg.kind === "section-divider" && cfg.blankBefore ? 1 : 0) });
       pageNo += estimatePageCount(cfg);
     }
     all[tocIndex] = { label: "Contents", role: "front", config: { kind: "table-of-contents", entries } };

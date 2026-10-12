@@ -1,6 +1,7 @@
 import { interiorGeometry, symmetricContentBox, type Box } from "@/lib/kdp/geometry";
 import { line, path, pattern, rect, text } from "@/lib/schema/elements";
 import type { ArtifactProvenance, Asset, Element, Page, PrintSpec } from "@/lib/schema/project";
+import { measureLines, textWidth } from "@/lib/render/metrics";
 import { approxMeasure, textBlockHeight, wrapText } from "@/lib/render/textLayout";
 import { inToPt, newId } from "@/lib/util/ids";
 import { addDays, addMonths, monthGrid, monthLabel, parseStart, shortDate, startOfWeek, WEEKDAYS, WEEKDAYS_SHORT } from "./calendar";
@@ -8,6 +9,7 @@ import { generateCryptogram, type Cryptogram } from "./cryptogram";
 import { generateMaze, mazeSolutionPath, mazeWallsPath, type Maze } from "./maze";
 import { createRng, randInt, randomSeed } from "./rng";
 import { scrambleWords } from "./scramble";
+import { CLASSIC_STYLE, ornament, type InteriorStyle } from "./style";
 import { generateSudoku, type Sudoku, type SudokuDifficulty } from "./sudoku";
 import { DIGITS, generateWordSearch, type WordSearch, type WordSearchDifficulty } from "./wordsearch";
 
@@ -42,11 +44,24 @@ export type GeneratorConfig =
   | { kind: "title-page"; title: string; subtitle: string; author: string }
   | { kind: "belongs-to" }
   | { kind: "text-page"; title: string; body: string; aiRunId?: string }
-  | { kind: "section-divider"; title: string; subtitle: string; aiRunId?: string }
+  | {
+      kind: "section-divider";
+      title: string;
+      subtitle: string;
+      aiRunId?: string;
+      /** Small capitals above the title ("PART 2"), optional. */
+      kicker?: string;
+      /** What the section holds ("Puzzles 1-23 · Easy"), optional. */
+      detail?: string;
+      /** How to play, printed in a box under the title, optional. */
+      howTo?: string;
+      /** An unnumbered blank page first, so the divider opens on a right-hand page. */
+      blankBefore?: boolean;
+    }
   | { kind: "table-of-contents"; entries: { title: string; page: number }[] }
   | { kind: "monthly-calendar"; count: number; startDate: string }
   | { kind: "weekly-spread"; count: number; startDate: string }
-  | ({ kind: "sudoku"; count: number; difficulty: SudokuDifficulty; perPage: 1 | 2 | 4 } & PuzzleCommon)
+  | ({ kind: "sudoku"; count: number; difficulty: SudokuDifficulty; perPage: 1 | 2 | 4; /** Solved grids per answer-key page (default 6; large print uses 4). */ keysPerPage?: 4 | 6 } & PuzzleCommon)
   | ({
       kind: "word-search";
       puzzles: { title: string; words: string[] }[];
@@ -106,10 +121,10 @@ const INK = "#111111";
 const RULE = "#8c8c8c";
 const LIGHT = "#bdbdbd";
 const SANS = "Inter";
-const SERIF = "Lora";
 
 interface Ctx {
   box: Box;
+  style: InteriorStyle;
   trimW: number;
   trimH: number;
   prov: ArtifactProvenance;
@@ -124,15 +139,42 @@ function page(ctx: Ctx, kind: string, elements: Element[], extra: Partial<Page> 
   return { id: newId("pg"), elements: elements.map((e) => (e.provenance ? e : tag(ctx, e))), generator: { kind }, ...extra };
 }
 
-function heading(ctx: Ctx, s: string, y: number, size = 16, family = SANS): Element {
-  return text({ x: ctx.box.x, y, width: ctx.box.width, text: s, fontSize: size, bold: true, fontFamily: family, align: "center", color: INK, height: size * 1.13 });
+/** Largest size up to `max` at which `s` fits `width` in at most `lines` lines (never below `min`). */
+function fitSize(s: string, family: string, bold: boolean, max: number, min: number, width: number, lines: number): number {
+  for (let size = max; size > min; size -= 1) if (measureLines(s, family, bold, size, width).length <= lines) return size;
+  return min;
 }
 
-function labelLine(ctx: Ctx, label: string, x: number, y: number, width: number, size = 10): Element[] {
+/** A centered page heading in the style's heading face; returns the element and the height it takes. */
+function headingBlock(ctx: Ctx, s: string, y: number, size = ctx.style.sizes.pageTitle): { el: Element; height: number } {
+  const { family, bold } = ctx.style.heading;
+  const fs = fitSize(s, family, bold, size, Math.min(size, 12), ctx.box.width, 2);
+  const n = measureLines(s, family, bold, fs, ctx.box.width).length;
+  const height = textBlockHeight(n, fs, 1.1);
+  return { el: text({ x: ctx.box.x, y, width: ctx.box.width, text: s, fontSize: fs, bold, fontFamily: family, align: "center", color: INK, height, lineHeight: 1.1 }), height };
+}
+
+function heading(ctx: Ctx, s: string, y: number, size = ctx.style.sizes.pageTitle): Element {
+  return headingBlock(ctx, s, y, size).el;
+}
+
+function labelLine(ctx: Ctx, label: string, x: number, y: number, width: number, size = ctx.style.sizes.small): Element[] {
+  const family = ctx.style.label;
+  const w = textWidth(label, family, false, size) + 6;
   return [
-    text({ x, y: y - size * 1.1, width: width, text: label, fontSize: size, color: INK, height: size * 1.13 }),
-    line({ x: x + label.length * size * 0.55 + 4, y, width: width - label.length * size * 0.55 - 4, height: 0, stroke: RULE, strokeWidth: 0.6 }),
+    text({ x, y: y - size * 1.1, width: Math.max(w, Math.min(width, w + 20)), text: label, fontSize: size, fontFamily: family, color: INK, height: size * 1.13 }),
+    line({ x: x + w, y, width: width - w, height: 0, stroke: RULE, strokeWidth: 0.6 }),
   ];
+}
+
+/** The style's ornament, `width` wide and centered on `cx`, top at `y`. Returns the elements and their height. */
+function ornamentElements(ctx: Ctx, cx: number, y: number, width: number, color = INK): { els: Element[]; height: number } {
+  const parts = ornament(ctx.style.ornament);
+  const sc = width / parts[0].w;
+  const els = parts.map((o) =>
+    path({ x: cx - width / 2, y, width: o.w * sc, height: o.h * sc, viewBoxW: o.w, viewBoxH: o.h, d: o.d, fill: o.fill ? color : null, stroke: o.fill ? null : color, strokeWidth: o.strokeWidth * sc, name: "Ornament" }),
+  );
+  return { els, height: parts[0].h * sc };
 }
 
 function cellText(x: number, y: number, size: number, s: string, fontSize: number, opts: { bold?: boolean; color?: string; family?: string } = {}): Element {
@@ -158,8 +200,9 @@ function ruledPages(ctx: Ctx, count: number, spacing: number, header: boolean): 
     const els: Element[] = [];
     let top = ctx.box.y;
     if (header) {
-      els.push(...labelLine(ctx, "Date:", ctx.box.x, top + 14, ctx.box.width * 0.45));
-      top += 28;
+      const size = ctx.style.sizes.small;
+      els.push(...labelLine(ctx, "Date:", ctx.box.x, top + size * 1.4, ctx.box.width * 0.45));
+      top += size * 2.8;
     }
     els.push(pattern({ x: ctx.box.x, y: top, width: ctx.box.width, height: ctx.box.y + ctx.box.height - top, pattern: { kind: "lines", spacing }, stroke: RULE, strokeWidth: 0.5 }));
     return page(ctx, "lined", els);
@@ -168,10 +211,13 @@ function ruledPages(ctx: Ctx, count: number, spacing: number, header: boolean): 
 
 function journalPromptPages(ctx: Ctx, prompts: string[], spacing: number, aiRunId?: string): Page[] {
   const promptProv: ArtifactProvenance | undefined = aiRunId ? { origin: "ai-generated", runId: aiRunId } : undefined;
+  const { body } = ctx.style;
+  const size = ctx.style.sizes.body + 2;
   return prompts.map((prompt) => {
-    const promptEl = text({ x: ctx.box.x, y: ctx.box.y, width: ctx.box.width, height: 50, text: prompt, fontSize: 14, fontFamily: SERIF, bold: true, color: INK, align: "left", lineHeight: 1.2 });
-    const lines = Math.max(1, Math.ceil((prompt.length * 14 * 0.5) / ctx.box.width));
-    const top = ctx.box.y + lines * 14 * 1.13 * 1.2 + 18;
+    // Measured, so the ruled lines start a steady gap under the prompt however many lines it takes.
+    const h = textBlockHeight(measureLines(prompt, body, true, size, ctx.box.width).length, size, 1.25);
+    const promptEl = text({ x: ctx.box.x, y: ctx.box.y, width: ctx.box.width, height: h, text: prompt, fontSize: size, fontFamily: body, bold: true, color: INK, align: "left", lineHeight: 1.25, name: "Prompt" });
+    const top = ctx.box.y + h + Math.max(14, spacing * 0.8);
     return page(ctx, "journal-prompts", [
       promptProv ? tag(ctx, promptEl, promptProv) : promptEl,
       pattern({ x: ctx.box.x, y: top, width: ctx.box.width, height: ctx.box.y + ctx.box.height - top, pattern: { kind: "lines", spacing }, stroke: RULE, strokeWidth: 0.5 }),
@@ -183,38 +229,46 @@ function lineBlock(ctx: Ctx, top: number, count: number, spacing: number, x = ct
   return pattern({ x, y: top, width, height: count * spacing, pattern: { kind: "lines", spacing }, stroke: RULE, strokeWidth: 0.5 });
 }
 
+/** A bold field label in the style's label face ("Today's highlight:"). */
+function fieldLabel(ctx: Ctx, s: string, x: number, y: number, width: number, size = ctx.style.sizes.small + 1): Element {
+  return text({ x, y, width, text: s, fontSize: size, bold: true, fontFamily: ctx.style.label, color: INK, height: size * 1.13 });
+}
+
 function gratitudePages(ctx: Ctx, count: number, affirmations: string[] = [], aiRunId?: string): Page[] {
-  const sp = inToPt(0.3125);
+  const st = ctx.style;
+  const sp = inToPt(st.largePrint ? 0.4 : 0.3125);
+  const labelSize = st.sizes.small + 1;
   const lines = affirmations.map((a) => a.trim()).filter(Boolean);
   const affProv: ArtifactProvenance | undefined = aiRunId ? { origin: "ai-generated", runId: aiRunId } : undefined;
   return Array.from({ length: count }, (_, i) => {
     const b = ctx.box;
-    const els: Element[] = [heading(ctx, "Today I Am Grateful", b.y, 18, SERIF)];
-    let y = b.y + 40;
+    const head = headingBlock(ctx, "Today I Am Grateful", b.y);
+    const els: Element[] = [head.el];
+    let y = b.y + head.height + labelSize * 2.2;
     els.push(...labelLine(ctx, "Date:", b.x, y, b.width * 0.5));
-    y += 24;
+    y += labelSize * 1.4;
     const affirmation = lines.length ? lines[i % lines.length] : null;
     if (affirmation) {
-      const size = 11;
-      const h = textBlockHeight(wrapText(`“${affirmation}”`, b.width, approxMeasure(size)).length, size, 1.25);
-      const el = text({ x: b.x, y, width: b.width, height: h, text: `“${affirmation}”`, fontSize: size, fontFamily: SERIF, color: "#333333", align: "center", lineHeight: 1.25, name: "Affirmation" });
+      const size = st.sizes.body;
+      const quoted = `“${affirmation}”`;
+      const h = textBlockHeight(measureLines(quoted, st.body, false, size, b.width * 0.9).length, size, 1.3);
+      const el = text({ x: b.x + b.width * 0.05, y, width: b.width * 0.9, height: h, text: quoted, fontSize: size, fontFamily: st.body, color: "#333333", align: "center", lineHeight: 1.3, name: "Affirmation" });
       els.push(affProv ? tag(ctx, el, affProv) : el);
       y += h + 14;
     }
-    const section = (title: string, lines: number, numbered = false) => {
-      els.push(text({ x: b.x, y, width: b.width, text: title, fontSize: 11, bold: true, color: INK, height: 12.5 }));
-      y += 16;
-      for (let i = 0; i < lines; i++) {
-        if (numbered) els.push(text({ x: b.x, y: y + i * sp + sp - 12, width: 14, text: `${i + 1}.`, fontSize: 10, color: INK, height: 11.3 }));
-      }
-      els.push(lineBlock(ctx, y, lines, sp, numbered ? b.x + 16 : b.x, numbered ? b.width - 16 : b.width));
-      y += lines * sp + 16;
+    const section = (title: string, n: number, numbered = false) => {
+      els.push(fieldLabel(ctx, title, b.x, y, b.width, labelSize));
+      y += labelSize * 1.45;
+      const numW = numbered ? textWidth("3.", st.label, false, labelSize) + 6 : 0;
+      for (let k = 0; numbered && k < n; k++) els.push(text({ x: b.x, y: y + k * sp + sp - labelSize * 1.1, width: numW, text: `${k + 1}.`, fontSize: labelSize - 1, fontFamily: st.label, color: INK, height: labelSize * 1.13 }));
+      els.push(lineBlock(ctx, y, n, sp, b.x + numW, b.width - numW));
+      y += n * sp + 14;
     };
     section("Three things I'm grateful for:", 3, true);
-    section("Today's highlight:", 3);
+    section("Today's highlight:", st.largePrint ? 2 : 3);
     if (!affirmation) section("Today's affirmation:", 2);
     section("How could today have been better?", 2);
-    const remaining = Math.floor((b.y + b.height - y - 16) / sp);
+    const remaining = Math.floor((b.y + b.height - y - labelSize * 1.45) / sp);
     if (remaining > 0) section("Notes:", remaining);
     return page(ctx, "gratitude", els);
   });
@@ -225,45 +279,48 @@ function checkbox(x: number, y: number, s = 9): Element {
 }
 
 function plannerPages(ctx: Ctx, count: number): Page[] {
+  const st = ctx.style;
+  const labelSize = st.sizes.small + 1;
   return Array.from({ length: count }, () => {
     const b = ctx.box;
-    const els: Element[] = [heading(ctx, "Daily Planner", b.y, 18, SERIF)];
-    let y = b.y + 40;
+    const head = headingBlock(ctx, "Daily Planner", b.y);
+    const els: Element[] = [head.el];
+    let y = b.y + head.height + labelSize * 2;
     els.push(...labelLine(ctx, "Date:", b.x, y, b.width * 0.5));
-    y += 22;
+    y += labelSize * 1.2;
     const colGap = 14;
     const leftW = (b.width - colGap) * 0.55;
     const rightX = b.x + leftW + colGap;
     const rightW = b.width - leftW - colGap;
     const bottom = b.y + b.height;
     // Schedule column
-    els.push(text({ x: b.x, y, width: leftW, text: "Schedule", fontSize: 11, bold: true, height: 12.5 }));
+    els.push(fieldLabel(ctx, "Schedule", b.x, y, leftW, labelSize));
     const hours = ["6 AM", "7", "8", "9", "10", "11", "12 PM", "1", "2", "3", "4", "5", "6", "7", "8", "9 PM"];
-    const rowH = (bottom - (y + 18)) / hours.length;
+    const hourSize = Math.max(8, st.sizes.small - 2);
+    const hourW = textWidth("12 PM", st.label, false, hourSize) + 6;
+    const rowH = (bottom - (y + labelSize * 1.5)) / hours.length;
     hours.forEach((h, i) => {
-      const ry = y + 18 + i * rowH;
-      els.push(text({ x: b.x, y: ry + rowH - 12, width: 34, text: h, fontSize: 8, color: "#444444", height: 9 }));
-      els.push(line({ x: b.x + 36, y: ry + rowH, width: leftW - 36, height: 0, stroke: RULE, strokeWidth: 0.5 }));
+      const ry = y + labelSize * 1.5 + i * rowH;
+      els.push(text({ x: b.x, y: ry + rowH - hourSize * 1.35, width: hourW, text: h, fontSize: hourSize, fontFamily: st.label, color: "#444444", height: hourSize * 1.13 }));
+      els.push(line({ x: b.x + hourW, y: ry + rowH, width: leftW - hourW, height: 0, stroke: RULE, strokeWidth: 0.5 }));
     });
     // Right column
     let ry = y;
-    const sp = inToPt(0.3);
-    els.push(text({ x: rightX, y: ry, width: rightW, text: "Top Priorities", fontSize: 11, bold: true, height: 12.5 }));
-    ry += 18;
-    for (let i = 0; i < 3; i++) {
-      els.push(checkbox(rightX, ry + sp - 11), line({ x: rightX + 14, y: ry + sp, width: rightW - 14, height: 0, stroke: RULE, strokeWidth: 0.5 }));
-      ry += sp;
-    }
-    ry += 16;
-    els.push(text({ x: rightX, y: ry, width: rightW, text: "To Do", fontSize: 11, bold: true, height: 12.5 }));
-    ry += 18;
-    for (let i = 0; i < 8; i++) {
-      els.push(checkbox(rightX, ry + sp - 11), line({ x: rightX + 14, y: ry + sp, width: rightW - 14, height: 0, stroke: RULE, strokeWidth: 0.5 }));
-      ry += sp;
-    }
-    ry += 16;
-    els.push(text({ x: rightX, y: ry, width: rightW, text: "Notes", fontSize: 11, bold: true, height: 12.5 }));
-    ry += 16;
+    const sp = inToPt(st.largePrint ? 0.36 : 0.3);
+    const box = Math.min(11, sp * 0.4);
+    const checklist = (title: string, n: number) => {
+      els.push(fieldLabel(ctx, title, rightX, ry, rightW, labelSize));
+      ry += labelSize * 1.5;
+      for (let i = 0; i < n; i++) {
+        els.push(checkbox(rightX, ry + sp - box - 2, box), line({ x: rightX + box + 5, y: ry + sp, width: rightW - box - 5, height: 0, stroke: RULE, strokeWidth: 0.5 }));
+        ry += sp;
+      }
+      ry += 14;
+    };
+    checklist("Top Priorities", 3);
+    checklist("To Do", st.largePrint ? 6 : 8);
+    els.push(fieldLabel(ctx, "Notes", rightX, ry, rightW, labelSize));
+    ry += labelSize * 1.4;
     const noteLines = Math.floor((bottom - ry) / sp);
     if (noteLines > 0) els.push(lineBlock(ctx, ry, noteLines, sp, rightX, rightW));
     return page(ctx, "daily-planner", els);
@@ -271,38 +328,44 @@ function plannerPages(ctx: Ctx, count: number): Page[] {
 }
 
 function habitPages(ctx: Ctx, count: number, habits: number): Page[] {
+  const st = ctx.style;
   return Array.from({ length: count }, () => {
     const b = ctx.box;
-    const els: Element[] = [heading(ctx, "Habit Tracker", b.y, 18, SERIF)];
-    let y = b.y + 36;
+    const head = headingBlock(ctx, "Habit Tracker", b.y);
+    const els: Element[] = [head.el];
+    let y = b.y + head.height + st.sizes.small * 2;
     els.push(...labelLine(ctx, "Month:", b.x, y, b.width * 0.5));
-    y += 18;
+    y += st.sizes.small * 1.2;
     const nameW = Math.min(b.width * 0.28, 120);
     const cell = (b.width - nameW) / 31;
     const rowH = Math.min(cell * 1.6, (b.y + b.height - y - cell) / habits);
     const gridH = cell + rowH * habits;
-    for (let d = 0; d < 31; d++) els.push(cellText(b.x + nameW + d * cell, y, cell, String(d + 1), Math.min(7, cell * 0.6)));
+    for (let d = 0; d < 31; d++) els.push(cellText(b.x + nameW + d * cell, y, cell, String(d + 1), Math.min(8, cell * 0.68), { family: st.label }));
     els.push(rect({ x: b.x, y, width: b.width, height: gridH, fill: null, stroke: INK, strokeWidth: 0.8 }));
     els.push(line({ x: b.x, y: y + cell, width: b.width, height: 0, stroke: INK, strokeWidth: 0.8 }));
     for (let h = 1; h < habits; h++) els.push(line({ x: b.x, y: y + cell + h * rowH, width: b.width, height: 0, stroke: LIGHT, strokeWidth: 0.5 }));
     els.push(line({ x: b.x + nameW, y, width: 0, height: gridH, stroke: INK, strokeWidth: 0.8 }));
     for (let d = 1; d < 31; d++) els.push(line({ x: b.x + nameW + d * cell, y, width: 0, height: gridH, stroke: LIGHT, strokeWidth: 0.4 }));
-    els.push(text({ x: b.x + 4, y: y + (cell - 9) / 2, width: nameW - 8, text: "Habit", fontSize: 8, bold: true, height: 9 }));
+    els.push(text({ x: b.x + 4, y: y + (cell - 9) / 2, width: nameW - 8, text: "Habit", fontSize: 8, bold: true, fontFamily: st.label, height: 9 }));
     return page(ctx, "habit-tracker", els);
   });
 }
 
 function logPages(ctx: Ctx, count: number, title: string, columns: string[], rows: number): Page[] {
   const cols = columns.length ? columns : ["Entry"];
+  const st = ctx.style;
   return Array.from({ length: count }, () => {
     const b = ctx.box;
-    const els: Element[] = [heading(ctx, title, b.y, 16, SERIF)];
-    const top = b.y + 30;
-    const headerH = 18;
-    const rowH = (b.y + b.height - top - headerH) / rows;
+    const head = headingBlock(ctx, title, b.y);
+    const els: Element[] = [head.el];
+    const top = b.y + head.height + 10;
     const colW = b.width / cols.length;
+    // Column names at the largest size (up to the small text size) where the longest fits its column.
+    const size = Math.min(...cols.map((c) => fitSize(c, st.label, true, st.sizes.small, 7, colW - 6, 1)));
+    const headerH = size * 1.13 + 8;
+    const rowH = (b.y + b.height - top - headerH) / rows;
     els.push(rect({ x: b.x, y: top, width: b.width, height: headerH, fill: "#e6e6e6", stroke: INK, strokeWidth: 0.8 }));
-    cols.forEach((c, i) => els.push(text({ x: b.x + i * colW + 3, y: top + 4, width: colW - 6, text: c, fontSize: 8.5, bold: true, align: "center", height: 9.6 })));
+    cols.forEach((c, i) => els.push(text({ x: b.x + i * colW + 3, y: top + 4, width: colW - 6, text: c, fontSize: size, bold: true, fontFamily: st.label, align: "center", height: size * 1.13 })));
     els.push(rect({ x: b.x, y: top, width: b.width, height: headerH + rowH * rows, fill: null, stroke: INK, strokeWidth: 0.8 }));
     for (let r = 1; r <= rows - 1; r++) els.push(line({ x: b.x, y: top + headerH + r * rowH, width: b.width, height: 0, stroke: RULE, strokeWidth: 0.5 }));
     for (let i = 1; i < cols.length; i++) els.push(line({ x: b.x + i * colW, y: top, width: 0, height: headerH + rowH * rows, stroke: RULE, strokeWidth: 0.5 }));
@@ -314,32 +377,54 @@ function logPages(ctx: Ctx, count: number, title: string, columns: string[], row
 
 function titlePage(ctx: Ctx, title: string, subtitle: string, author: string): Page {
   const b = ctx.box;
-  const els: Element[] = [
-    text({ x: b.x, y: b.y + b.height * 0.3, width: b.width, height: 80, text: title, fontSize: 28, bold: true, fontFamily: SERIF, align: "center", lineHeight: 1.1 }),
-  ];
-  if (subtitle) els.push(text({ x: b.x, y: b.y + b.height * 0.3 + 90, width: b.width, height: 40, text: subtitle, fontSize: 14, fontFamily: SERIF, align: "center", color: "#333333" }));
-  if (author) els.push(text({ x: b.x, y: b.y + b.height * 0.75, width: b.width, height: 20, text: author, fontSize: 14, align: "center" }));
+  const st = ctx.style;
+  const { family, bold } = st.heading;
+  // The title is set as large as fits in three lines, with the ornament above and the subtitle under a short rule.
+  const size = fitSize(title, family, bold, st.sizes.title, 16, b.width * 0.92, 3);
+  const titleH = textBlockHeight(measureLines(title, family, bold, size, b.width * 0.92).length, size, 1.12);
+  const subSize = Math.max(st.sizes.small, Math.round(st.sizes.body * 1.1));
+  const subH = subtitle ? textBlockHeight(measureLines(subtitle, st.body, false, subSize, b.width * 0.8).length, subSize, 1.3) : 0;
+  const orn = Math.min(150, b.width * 0.45);
+  const ornH = (orn * 24) / 120;
+  const blockH = ornH + 24 + titleH + (subtitle ? 22 + subH : 0);
+  let y = b.y + Math.max(0, b.height * 0.4 - blockH / 2);
+  const o = ornamentElements(ctx, b.x + b.width / 2, y, orn);
+  const els: Element[] = [...o.els];
+  y += o.height + 24;
+  els.push(text({ x: b.x + b.width * 0.04, y, width: b.width * 0.92, height: titleH, text: title, fontSize: size, bold, fontFamily: family, align: "center", lineHeight: 1.12, name: "Title" }));
+  y += titleH;
+  if (subtitle) {
+    els.push(line({ x: b.x + b.width / 2 - 24, y: y + 11, width: 48, height: 0, stroke: INK, strokeWidth: 0.8 }));
+    y += 22;
+    els.push(text({ x: b.x + b.width * 0.1, y, width: b.width * 0.8, height: subH, text: subtitle, fontSize: subSize, fontFamily: st.body, align: "center", color: "#333333", lineHeight: 1.3, name: "Subtitle" }));
+  }
+  if (author) {
+    const aSize = Math.max(st.sizes.small, 12);
+    els.push(text({ x: b.x, y: b.y + b.height * 0.82, width: b.width, height: aSize * 1.13, text: author, fontSize: aSize, fontFamily: st.label, align: "center", letterSpacing: 0.08, name: "Author" }));
+  }
   return page(ctx, "title-page", els, { hideNumber: true, label: "Title page" });
 }
 
 function belongsToPage(ctx: Ctx): Page {
   const b = ctx.box;
-  const y = b.y + b.height * 0.4;
+  const y = b.y + b.height * 0.36;
+  const o = ornamentElements(ctx, b.x + b.width / 2, y, Math.min(120, b.width * 0.4));
+  const head = headingBlock(ctx, "This Book Belongs To", y + o.height + 18, Math.round(ctx.style.sizes.pageTitle * 1.2));
+  const lineY = y + o.height + 18 + head.height + 64;
   return page(
     ctx,
     "belongs-to",
-    [
-      text({ x: b.x, y, width: b.width, height: 30, text: "This Book Belongs To", fontSize: 22, fontFamily: SERIF, bold: true, align: "center" }),
-      line({ x: b.x + b.width * 0.15, y: y + 80, width: b.width * 0.7, height: 0, stroke: INK, strokeWidth: 0.8 }),
-    ],
+    [...o.els, head.el, line({ x: b.x + b.width * 0.15, y: lineY, width: b.width * 0.7, height: 0, stroke: INK, strokeWidth: 0.8 })],
     { hideNumber: true, label: "Belongs to" },
   );
 }
 
 /** Largest font size (max..min) at which `body` fits in `height`; returns the size and wrapped height. */
-function fitBody(body: string, width: number, height: number, max: number, min: number, lineHeight: number): { size: number; height: number } {
+function fitBody(body: string, family: string, width: number, height: number, max: number, min: number, lineHeight: number): { size: number; height: number } {
+  // Paragraph breaks are kept by measuring each paragraph separately.
+  const measure = (size: number) => body.split("\n").reduce((n, para) => n + Math.max(1, para.trim() ? measureLines(para, family, false, size, width).length : 1), 0);
   for (let size = max; size >= min; size -= 0.5) {
-    const h = textBlockHeight(wrapText(body, width, approxMeasure(size)).length, size, lineHeight);
+    const h = textBlockHeight(measure(size), size, lineHeight);
     if (h <= height) return { size, height: h };
   }
   return { size: min, height: Math.min(height, textBlockHeight(wrapText(body, width, approxMeasure(min)).length, min, lineHeight)) };
@@ -347,48 +432,109 @@ function fitBody(body: string, width: number, height: number, max: number, min: 
 
 function textPage(ctx: Ctx, title: string, body: string, aiRunId?: string): Page {
   const b = ctx.box;
+  const st = ctx.style;
   const els: Element[] = [];
   let top = b.y;
   if (title.trim()) {
-    els.push(heading(ctx, title, top, 20, SERIF));
-    els.push(line({ x: b.x + b.width / 2 - 30, y: top + 32, width: 60, height: 0, stroke: INK, strokeWidth: 1 }));
-    top += 52;
+    const head = headingBlock(ctx, title, top, Math.round(st.sizes.pageTitle * 1.1));
+    els.push(head.el);
+    const o = ornamentElements(ctx, b.x + b.width / 2, top + head.height + 10, 70);
+    els.push(...o.els);
+    top += head.height + 10 + o.height + 20;
   }
   const clean = body.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim();
   if (clean) {
     const lh = 1.45;
-    const fit = fitBody(clean, b.width, b.y + b.height - top, 12, 9, lh);
-    const el = text({ x: b.x, y: top, width: b.width, height: fit.height, text: clean, fontSize: fit.size, fontFamily: SERIF, color: INK, align: "left", lineHeight: lh, name: "Body" });
+    const fit = fitBody(clean, st.body, b.width, b.y + b.height - top, st.sizes.body, st.largePrint ? 13 : 9, lh);
+    const el = text({ x: b.x, y: top, width: b.width, height: fit.height, text: clean, fontSize: fit.size, fontFamily: st.body, color: INK, align: "left", lineHeight: lh, name: "Body" });
     els.push(aiRunId ? tag(ctx, el, { origin: "ai-generated", runId: aiRunId }) : el);
   }
   return page(ctx, "text-page", els, { label: title.slice(0, 40) || "Text page" });
 }
 
-function sectionDivider(ctx: Ctx, title: string, subtitle: string, aiRunId?: string): Page {
+interface DividerParts {
+  title: string;
+  subtitle: string;
+  kicker?: string;
+  detail?: string;
+  howTo?: string;
+  aiRunId?: string;
+}
+
+function sectionDivider(ctx: Ctx, d: DividerParts): Page {
   const b = ctx.box;
-  const y = b.y + b.height * 0.36;
-  const ai = (el: Element) => (aiRunId ? tag(ctx, el, { origin: "ai-generated", runId: aiRunId }) : el);
-  const els: Element[] = [
-    line({ x: b.x + b.width / 2 - 40, y: y - 24, width: 80, height: 0, stroke: INK, strokeWidth: 1.2 }),
-    ai(text({ x: b.x, y, width: b.width, height: 64, text: title, fontSize: 26, bold: true, fontFamily: SERIF, align: "center", lineHeight: 1.1, name: "Section title" })),
-  ];
-  if (subtitle.trim()) els.push(ai(text({ x: b.x + 20, y: y + 74, width: b.width - 40, height: 40, text: subtitle, fontSize: 12, fontFamily: SERIF, color: "#444444", align: "center", lineHeight: 1.3, name: "Section subtitle" })));
-  return page(ctx, "section-divider", els, { hideNumber: true, label: title.slice(0, 40) });
+  const st = ctx.style;
+  const { family, bold } = st.heading;
+  const ai = (el: Element) => (d.aiRunId ? tag(ctx, el, { origin: "ai-generated", runId: d.aiRunId }) : el);
+  const cx = b.x + b.width / 2;
+  const w = b.width * 0.88;
+  const x = b.x + (b.width - w) / 2;
+
+  // Measure every part first so the whole block sits a little above the middle of the page.
+  const kSize = Math.max(st.sizes.small, 11);
+  const tSize = fitSize(d.title, family, bold, st.sizes.divider, 18, w, 2);
+  const tH = textBlockHeight(measureLines(d.title, family, bold, tSize, w).length, tSize, 1.08);
+  const sSize = st.sizes.body + 1;
+  const subtitle = d.subtitle.trim();
+  const sH = subtitle ? textBlockHeight(measureLines(subtitle, st.body, false, sSize, w * 0.9).length, sSize, 1.3) : 0;
+  const dSize = st.sizes.small;
+  const howSize = st.sizes.small;
+  const howW = w * 0.92;
+  const howH = d.howTo ? textBlockHeight(measureLines(d.howTo, st.body, false, howSize, howW - 28).length, howSize, 1.35) + 24 + howSize * 1.6 : 0;
+  const orn = Math.min(150, b.width * 0.42);
+  const ornH = (orn * 24) / 120;
+  const total = (d.kicker ? kSize * 1.13 + 14 : 0) + ornH + 22 + tH + (subtitle ? 16 + sH : 0) + (d.detail ? 18 + dSize * 1.13 : 0) + (d.howTo ? 30 + howH : 0);
+  let y = b.y + Math.max(0, (b.height - total) * 0.42);
+
+  const els: Element[] = [];
+  if (d.kicker) {
+    els.push(text({ x, y, width: w, height: kSize * 1.13, text: d.kicker.toUpperCase(), fontSize: kSize, fontFamily: st.label, bold: true, color: "#555555", align: "center", letterSpacing: 0.2, name: "Section number" }));
+    y += kSize * 1.13 + 14;
+  }
+  const o = ornamentElements(ctx, cx, y, orn);
+  els.push(...o.els);
+  y += o.height + 22;
+  els.push(ai(text({ x, y, width: w, height: tH, text: d.title, fontSize: tSize, bold, fontFamily: family, align: "center", lineHeight: 1.08, name: "Section title" })));
+  y += tH;
+  if (subtitle) {
+    y += 16;
+    els.push(ai(text({ x: x + w * 0.05, y, width: w * 0.9, height: sH, text: subtitle, fontSize: sSize, fontFamily: st.body, color: "#444444", align: "center", lineHeight: 1.3, name: "Section subtitle" })));
+    y += sH;
+  }
+  if (d.detail) {
+    y += 18;
+    els.push(text({ x, y, width: w, height: dSize * 1.13, text: d.detail, fontSize: dSize, fontFamily: st.label, color: "#333333", align: "center", name: "Section detail" }));
+    y += dSize * 1.13;
+  }
+  if (d.howTo) {
+    y += 30;
+    const hx = b.x + (b.width - howW) / 2;
+    els.push(rect({ x: hx, y, width: howW, height: howH, fill: "#f2f2f2", stroke: null, strokeWidth: 0, cornerRadius: 8, name: "How to play box" }));
+    els.push(text({ x: hx + 14, y: y + 12, width: howW - 28, height: howSize * 1.13, text: "How to play", fontSize: howSize, bold: true, fontFamily: st.label, color: INK }));
+    els.push(text({ x: hx + 14, y: y + 12 + howSize * 1.6, width: howW - 28, height: howH - 24 - howSize * 1.6, text: d.howTo, fontSize: howSize, fontFamily: st.body, color: INK, lineHeight: 1.35, name: "How to play" }));
+  }
+  return page(ctx, "section-divider", els, { hideNumber: true, label: d.title.slice(0, 40) });
 }
 
 function tocPage(ctx: Ctx, entries: { title: string; page: number }[]): Page {
   const b = ctx.box;
-  const els: Element[] = [heading(ctx, "Contents", b.y, 20, SERIF)];
+  const st = ctx.style;
+  const head = headingBlock(ctx, "Contents", b.y, Math.round(st.sizes.pageTitle * 1.15));
+  const o = ornamentElements(ctx, b.x + b.width / 2, b.y + head.height + 10, 70);
+  const els: Element[] = [head.el, ...o.els];
+  const top = b.y + head.height + 10 + o.height + 28;
   const rows = entries.slice(0, 28);
-  const rowH = Math.min(24, (b.height - 56) / Math.max(1, rows.length));
-  const size = Math.min(12, rowH * 0.55);
+  const size = Math.min(st.sizes.body + 1, Math.max(8, ((b.y + b.height - top) / Math.max(1, rows.length)) / 2.2));
+  const rowH = size * 2.2;
+  const numW = textWidth("000", st.label, false, size) + 4;
   rows.forEach((e, i) => {
-    const y = b.y + 56 + i * rowH;
-    const num = String(e.page);
-    const numW = 36;
-    els.push(text({ x: b.x, y, width: b.width - numW - 8, height: size * 1.13, text: e.title, fontSize: size, fontFamily: SERIF, color: INK }));
-    els.push(line({ x: b.x, y: y + size * 1.13 + 2, width: b.width, height: 0, stroke: LIGHT, strokeWidth: 0.4, dash: [1, 2] }));
-    els.push(text({ x: b.x + b.width - numW, y, width: numW, height: size * 1.13, text: num, fontSize: size, fontFamily: SERIF, color: INK, align: "right" }));
+    const y = top + i * rowH;
+    const titleW = Math.min(b.width - numW - 24, textWidth(e.title, st.body, false, size) + 2);
+    els.push(text({ x: b.x, y, width: b.width - numW - 16, height: size * 1.13, text: e.title, fontSize: size, fontFamily: st.body, color: INK }));
+    // Dotted leader from the end of the title to the page number.
+    const ly = y + size * 0.95;
+    if (b.width - numW - 8 - (titleW + 6) > 12) els.push(line({ x: b.x + titleW + 6, y: ly, width: b.width - numW - 8 - (titleW + 6), height: 0, stroke: RULE, strokeWidth: 0.9, dash: [0.1, 3.5], cap: "round" }));
+    els.push(text({ x: b.x + b.width - numW, y, width: numW, height: size * 1.13, text: String(e.page), fontSize: size, fontFamily: st.label, color: INK, align: "right" }));
   });
   return page(ctx, "table-of-contents", els, { label: "Contents" });
 }
@@ -399,16 +545,18 @@ function monthlyCalendarPages(ctx: Ctx, count: number, startDate: string): Page[
     const b = ctx.box;
     const month = start ? addMonths(start, i) : null;
     const els: Element[] = [];
-    if (month) els.push(heading(ctx, monthLabel(month), b.y, 20, SERIF));
-    else els.push(...labelLine(ctx, "Month:", b.x + b.width * 0.2, b.y + 18, b.width * 0.6, 13));
-    const top = b.y + 40;
-    const headH = 16;
+    const st = ctx.style;
+    if (month) els.push(heading(ctx, monthLabel(month), b.y, Math.round(st.sizes.pageTitle * 1.1)));
+    else els.push(...labelLine(ctx, "Month:", b.x + b.width * 0.2, b.y + st.sizes.pageTitle, b.width * 0.6, st.sizes.label));
+    const top = b.y + st.sizes.pageTitle * 1.1 * 1.13 + 16;
+    const daySize = Math.max(8.5, st.sizes.small - 2);
+    const headH = daySize * 1.13 + 6;
     const cells = month ? monthGrid(month) : Array<number | null>(35).fill(null);
     const weeks = cells.length / 7;
     const notesH = Math.min(70, b.height * 0.14);
     const cw = b.width / 7;
     const ch = (b.height - (top - b.y) - headH - notesH - 12) / weeks;
-    WEEKDAYS_SHORT.forEach((d, k) => els.push(text({ x: b.x + k * cw, y: top + (headH - 9.6) / 2 - 2, width: cw, height: 9.6, text: d, fontSize: 8.5, bold: true, align: "center", lineHeight: 1 })));
+    WEEKDAYS_SHORT.forEach((d, k) => els.push(text({ x: b.x + k * cw, y: top + (headH - daySize * 1.13) / 2, width: cw, height: daySize * 1.13, text: d, fontSize: daySize, bold: true, fontFamily: st.label, align: "center", lineHeight: 1 })));
     const gy = top + headH;
     els.push(rect({ x: b.x, y: gy, width: b.width, height: ch * weeks, fill: null, stroke: INK, strokeWidth: 0.8 }));
     for (let w = 1; w < weeks; w++) els.push(line({ x: b.x, y: gy + w * ch, width: b.width, height: 0, stroke: RULE, strokeWidth: 0.5 }));
@@ -417,13 +565,14 @@ function monthlyCalendarPages(ctx: Ctx, count: number, startDate: string): Page[
       if (day === null) return;
       const cx = b.x + (idx % 7) * cw;
       const cy = gy + Math.floor(idx / 7) * ch;
-      els.push(text({ x: cx + 3, y: cy + 3, width: cw - 6, height: 9, text: String(day), fontSize: 8, color: "#444444" }));
+      els.push(text({ x: cx + 3, y: cy + 3, width: cw - 6, height: daySize * 1.13, text: String(day), fontSize: daySize, fontFamily: st.label, color: "#444444" }));
     });
     const ny = gy + ch * weeks + 12;
-    els.push(text({ x: b.x, y: ny, width: b.width, height: 12.5, text: "Notes", fontSize: 11, bold: true }));
-    const sp = inToPt(0.28);
-    const n = Math.floor((b.y + b.height - ny - 16) / sp);
-    if (n > 0) els.push(lineBlock(ctx, ny + 16, n, sp));
+    const ls = st.sizes.small + 1;
+    els.push(fieldLabel(ctx, "Notes", b.x, ny, b.width, ls));
+    const sp = inToPt(st.largePrint ? 0.34 : 0.28);
+    const n = Math.floor((b.y + b.height - ny - ls * 1.45) / sp);
+    if (n > 0) els.push(lineBlock(ctx, ny + ls * 1.45, n, sp));
     return page(ctx, "monthly-calendar", els, { label: month ? monthLabel(month) : undefined });
   });
 }
@@ -434,9 +583,11 @@ function weeklyPages(ctx: Ctx, count: number, startDate: string): Page[] {
     const b = ctx.box;
     const monday = start ? addDays(startOfWeek(start), i * 7) : null;
     const els: Element[] = [];
-    if (monday) els.push(heading(ctx, `Week of ${shortDate(monday)}, ${monday.getUTCFullYear()}`, b.y, 16, SERIF));
-    else els.push(...labelLine(ctx, "Week of:", b.x + b.width * 0.2, b.y + 16, b.width * 0.6, 12));
-    const top = b.y + 34;
+    const st = ctx.style;
+    if (monday) els.push(heading(ctx, `Week of ${shortDate(monday)}, ${monday.getUTCFullYear()}`, b.y));
+    else els.push(...labelLine(ctx, "Week of:", b.x + b.width * 0.2, b.y + st.sizes.pageTitle * 0.9, b.width * 0.6, st.sizes.label));
+    const top = b.y + st.sizes.pageTitle * 1.13 + 12;
+    const ls = st.sizes.small;
     // Seven day boxes in two columns (Mon–Thu left, Fri–Sun + notes right).
     const gap = 10;
     const colW = (b.width - gap) / 2;
@@ -449,10 +600,10 @@ function weeklyPages(ctx: Ctx, count: number, startDate: string): Page[] {
       const y = top + row * (boxH + gap);
       const day = monday && k < 7 ? ` · ${shortDate(addDays(monday, k))}` : "";
       els.push(rect({ x, y, width: colW, height: boxH, fill: null, stroke: INK, strokeWidth: 0.7, cornerRadius: 3 }));
-      els.push(text({ x: x + 6, y: y + 5, width: colW - 12, height: 11.3, text: `${label}${day}`, fontSize: 10, bold: true }));
-      const sp = inToPt(0.25);
-      const n = Math.floor((boxH - 24) / sp);
-      if (n > 0) els.push(lineBlock(ctx, y + 20, n, sp, x + 6, colW - 12));
+      els.push(text({ x: x + 6, y: y + 5, width: colW - 12, height: ls * 1.13, text: `${label}${day}`, fontSize: ls, bold: true, fontFamily: st.label }));
+      const sp = inToPt(st.largePrint ? 0.32 : 0.25);
+      const n = Math.floor((boxH - ls * 1.13 - 14) / sp);
+      if (n > 0) els.push(lineBlock(ctx, y + ls * 1.13 + 10, n, sp, x + 6, colW - 12));
     });
     return page(ctx, "weekly-spread", els);
   });
@@ -464,7 +615,7 @@ const showPuzzles = (part?: PuzzlePart) => part !== "solutions";
 const showSolutions = (cfg: { solutions: boolean; part?: PuzzlePart }) => cfg.solutions && cfg.part !== "puzzles";
 /** Only self-contained ("all") sections get their own "Solutions" title page; grouped keys sit under one divider. */
 const solutionsTitle = (ctx: Ctx, cfg: { part?: PuzzlePart }, kind: string): Page[] =>
-  cfg.part === "solutions" ? [] : [page(ctx, kind, [heading(ctx, "Solutions", ctx.box.y + ctx.box.height * 0.4, 28, SERIF)], { label: "Solutions" })];
+  cfg.part === "solutions" ? [] : [sectionDivider(ctx, { title: "Solutions", subtitle: "" })].map((p) => ({ ...p, generator: { kind }, hideNumber: false, label: "Solutions" }));
 
 function sudokuGrid(ctx: Ctx, s: Sudoku, x: number, y: number, size: number, solution: boolean): Element[] {
   const cell = size / 9;
@@ -474,8 +625,8 @@ function sudokuGrid(ctx: Ctx, s: Sudoku, x: number, y: number, size: number, sol
     const r = Math.floor(i / 9);
     const c = i % 9;
     const given = s.puzzle[i] !== 0;
-    if (given) els.push(cellText(x + c * cell, y + r * cell, cell, String(s.puzzle[i]), fs, { bold: true }));
-    else if (solution) els.push(cellText(x + c * cell, y + r * cell, cell, String(s.solution[i]), fs, { color: "#7a7a7a" }));
+    if (given) els.push(cellText(x + c * cell, y + r * cell, cell, String(s.puzzle[i]), fs, { bold: true, family: ctx.style.label }));
+    else if (solution) els.push(cellText(x + c * cell, y + r * cell, cell, String(s.solution[i]), fs, { color: "#7a7a7a", family: ctx.style.label }));
   }
   for (let k = 0; k <= 9; k++) {
     const thick = k % 3 === 0;
@@ -509,36 +660,44 @@ function sudokuPages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "sudoku" }>
   // Each puzzle is labelled with the difficulty it grades at, which is nearly always the section's.
   const label = (d: SudokuDifficulty) => d[0].toUpperCase() + d.slice(1);
   const pages: Page[] = [];
-  const labelH = 22;
+  const st = ctx.style;
+  // Two puzzles to a page need a smaller label than one; four smaller still.
+  const ls = cfg.perPage === 1 ? st.sizes.label + 2 : cfg.perPage === 2 ? st.sizes.label : Math.max(st.sizes.small, st.sizes.label - 2);
+  const labelH = ls * 1.13 + 10;
   if (showPuzzles(cfg.part))
     for (let p = 0; p < puzzles.length; p += cfg.perPage) {
       const els: Element[] = [];
       slots(ctx.box, cfg.perPage, labelH).forEach((slot, k) => {
         const s = puzzles[p + k];
         if (!s) return;
-        els.push(text({ x: slot.x, y: slot.y - labelH + 2, width: slot.size, height: 13, text: `Puzzle #${first + p + k} · ${label(s.difficulty)}`, fontSize: 11, bold: true }));
+        // Number on the left, difficulty on the right, over the grid's edges.
+        const ty = slot.y - labelH + 2;
+        els.push(text({ x: slot.x, y: ty, width: slot.size * 0.6, height: ls * 1.13, text: `Puzzle ${first + p + k}`, fontSize: ls, bold: true, fontFamily: st.heading.family, name: "Puzzle number" }));
+        els.push(text({ x: slot.x + slot.size * 0.4, y: ty + ls * 0.12, width: slot.size * 0.6, height: ls * 0.9 * 1.13, text: label(s.difficulty).toUpperCase(), fontSize: Math.max(st.sizes.small, ls * 0.8), fontFamily: st.label, letterSpacing: 0.12, color: "#444444", align: "right", name: "Difficulty" }));
         els.push(...sudokuGrid(ctx, s, slot.x, slot.y, slot.size, false));
       });
       pages.push(page(ctx, "sudoku", els, { generator: { kind: "sudoku", seed: cfg.seed, params: { difficulty: cfg.difficulty, from: first + p } } }));
     }
   if (showSolutions(cfg) && puzzles.length) {
-    const per = 6;
+    const per = cfg.keysPerPage ?? 6;
+    const ks = st.sizes.key;
     pages.push(...solutionsTitle(ctx, cfg, "sudoku-solutions"));
     for (let p = 0; p < puzzles.length; p += per) {
       const els: Element[] = [];
       const box = ctx.box;
       const cols = 2;
-      const rows = 3;
+      const rows = per / cols;
       const gap = 16;
+      const kh = ks * 1.13 + 6;
       const cw = (box.width - gap) / cols;
       const ch = (box.height - gap * (rows - 1)) / rows;
-      const size = Math.min(cw, ch - 18);
+      const size = Math.min(cw, ch - kh);
       for (let k = 0; k < per; k++) {
         const s = puzzles[p + k];
         if (!s) break;
         const cx = box.x + (k % cols) * (cw + gap) + (cw - size) / 2;
-        const cy = box.y + Math.floor(k / cols) * (ch + gap) + 18;
-        els.push(text({ x: cx, y: cy - 16, width: size, height: 11, text: `Puzzle #${first + p + k}`, fontSize: 9, bold: true }));
+        const cy = box.y + Math.floor(k / cols) * (ch + gap) + kh;
+        els.push(text({ x: cx, y: cy - kh, width: size, height: ks * 1.13, text: `Puzzle ${first + p + k}`, fontSize: ks, bold: true, fontFamily: st.label }));
         els.push(...sudokuGrid(ctx, s, cx, cy, size, true));
       }
       pages.push(page(ctx, "sudoku-solutions", els));
@@ -547,7 +706,7 @@ function sudokuPages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "sudoku" }>
   return pages;
 }
 
-function wordSearchBlock(ws: WordSearch, x: number, y: number, size: number, solution: boolean): Element[] {
+function wordSearchBlock(ws: WordSearch, x: number, y: number, size: number, solution: boolean, family = SANS): Element[] {
   const cell = size / ws.size;
   const els: Element[] = [];
   if (solution) {
@@ -560,7 +719,7 @@ function wordSearchBlock(ws: WordSearch, x: number, y: number, size: number, sol
     }
   }
   const fs = cell * 0.58;
-  ws.grid.forEach((row, r) => row.forEach((ch, c) => els.push(cellText(x + c * cell, y + r * cell, cell, ch, fs, { bold: !solution, family: SANS }))));
+  ws.grid.forEach((row, r) => row.forEach((ch, c) => els.push(cellText(x + c * cell, y + r * cell, cell, ch, fs, { bold: !solution, family }))));
   els.push(rect({ x: x - 4, y: y - 4, width: size + 8, height: size + 8, fill: null, stroke: INK, strokeWidth: 1, cornerRadius: 6 }));
   return els;
 }
@@ -578,17 +737,29 @@ function wordSearchPages(
     ? []
     : results.map(({ title, ws }, i) => {
         const b = ctx.box;
-        const titleEl = text({ x: b.x, y: b.y, width: b.width, height: 22, text: `${first + i}. ${title}`, fontSize: 18, bold: true, fontFamily: SERIF, align: "center" });
-        const listRows = Math.ceil(ws.placed.length / 3);
-        const listH = listRows * 15 + 10;
-        const size = Math.min(b.width - 8, b.height - 40 - listH - 8);
-        const gx = b.x + (b.width - size) / 2;
-        const gy = b.y + 36;
-        const els: Element[] = [prov ? tag(ctx, titleEl, prov) : titleEl, ...wordSearchBlock(ws, gx, gy, size, false)];
+        const st = ctx.style;
+        const head = headingBlock(ctx, `${first + i}. ${title}`, b.y);
+        const titleEl = head.el;
+        // Word list: three columns (two when a word wouldn't fit), at the small size, shrunk only if needed.
         const words = ws.placed.map((p) => p.word).sort();
-        const colW = b.width / 3;
+        let wsz = st.sizes.small;
+        let cols = 3;
+        const fits = (n: number, sz: number) => words.every((w) => textWidth(w, st.label, false, sz) <= b.width / n - 8);
+        while (!fits(cols, wsz) && wsz > 8) {
+          if (cols === 3 && fits(2, wsz)) cols = 2;
+          else wsz -= 0.5;
+        }
+        const rowStep = wsz * 1.5;
+        const listH = Math.ceil(words.length / cols) * rowStep + 10;
+        const room = b.y + b.height - (b.y + head.height + 14);
+        const size = Math.min(b.width - 8, room - listH - 18);
+        // Grid and list sit together in the middle of the space under the heading.
+        const gy = b.y + head.height + 14 + Math.max(0, (room - size - 18 - listH) / 2);
+        const gx = b.x + (b.width - size) / 2;
+        const els: Element[] = [prov ? tag(ctx, titleEl, prov) : titleEl, ...wordSearchBlock(ws, gx, gy, size, false, st.label)];
+        const colW = b.width / cols;
         words.forEach((w, k) => {
-          const wordEl = text({ x: b.x + (k % 3) * colW, y: gy + size + 16 + Math.floor(k / 3) * 15, width: colW - 4, height: 11.3, text: w, fontSize: 10, align: "center" });
+          const wordEl = text({ x: b.x + (k % cols) * colW, y: gy + size + 18 + Math.floor(k / cols) * rowStep, width: colW - 4, height: wsz * 1.13, text: w, fontSize: wsz, fontFamily: st.label, align: "center" });
           els.push(prov ? tag(ctx, wordEl, prov) : wordEl);
         });
         return page(ctx, kind, els, { generator: { kind, seed: ws.seed, params: { size: cfg.size, difficulty: cfg.difficulty } } });
@@ -597,11 +768,12 @@ function wordSearchPages(
     pages.push(...solutionsTitle(ctx, cfg, `${kind}-solutions`));
     for (let p = 0; p < results.length; p += 4) {
       const els: Element[] = [];
-      slots(ctx.box, 4, 18).forEach((slot, k) => {
+      const ks = ctx.style.sizes.key;
+      slots(ctx.box, 4, ks * 1.13 + 8).forEach((slot, k) => {
         const r = results[p + k];
         if (!r) return;
-        els.push(text({ x: slot.x, y: slot.y - 18, width: slot.size, height: 11, text: `${first + p + k}. ${r.title}`, fontSize: 9, bold: true }));
-        els.push(...wordSearchBlock(r.ws, slot.x + 4, slot.y + 4, slot.size - 8, true));
+        els.push(text({ x: slot.x, y: slot.y - ks * 1.13 - 8, width: slot.size, height: ks * 1.13, text: `${first + p + k}. ${r.title}`, fontSize: ks, bold: true, fontFamily: ctx.style.label }));
+        els.push(...wordSearchBlock(r.ws, slot.x + 4, slot.y + 4, slot.size - 8, true, ctx.style.label));
       });
       pages.push(page(ctx, `${kind}-solutions`, els));
     }
@@ -638,11 +810,14 @@ function mazeElements(m: Maze, x: number, y: number, cell: number, solution: boo
 
 function mazePages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "maze" }>): Page[] {
   const b = ctx.box;
-  const labelH = 40;
+  const st = ctx.style;
+  const ends = st.sizes.small;
+  const title = headingBlock(ctx, "Maze 00", b.y);
+  const labelH = title.height + 12 + ends * 1.13 + 6;
   const first = cfg.startNumber ?? 1;
   const cols = MAZE_SIZE[cfg.difficulty];
   const cell = (b.width - 8) / cols;
-  const rows = Math.max(cols, Math.floor((b.height - labelH - 36) / cell));
+  const rows = Math.max(cols, Math.floor((b.height - labelH - ends * 1.13 - 10) / cell));
   const mazes = Array.from({ length: cfg.count }, (_, i) => generateMaze(cols, rows, cfg.seed + i, cfg.difficulty));
   const pages: Page[] = !showPuzzles(cfg.part)
     ? []
@@ -651,16 +826,17 @@ function mazePages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "maze" }>): P
         const x = b.x + (b.width - w) / 2;
         const y = b.y + labelH;
         // Centered on the opening's column, kept inside the page box.
-        const labelX = (cellIndex: number) => Math.min(b.x + b.width - 60, Math.max(b.x, x + ((cellIndex % m.cols) + 0.5) * cell - 30));
+        const lw = textWidth("FINISH", st.label, true, ends) + 8;
+        const labelX = (cellIndex: number) => Math.min(b.x + b.width - lw, Math.max(b.x, x + ((cellIndex % m.cols) + 0.5) * cell - lw / 2));
         return page(
           ctx,
           "maze",
           [
-            text({ x: b.x, y: b.y, width: b.width, height: 22, text: `Maze #${first + i}`, fontSize: 18, bold: true, fontFamily: SERIF, align: "center" }),
+            heading(ctx, `Maze ${first + i}`, b.y),
             // The labels sit over the entrance and under the exit, wherever along the edge they are.
-            text({ x: labelX(m.start), y: y - 14, width: 60, height: 10, text: "START", fontSize: 8, bold: true, align: "center" }),
+            text({ x: labelX(m.start), y: y - ends * 1.13 - 4, width: lw, height: ends * 1.13, text: "START", fontSize: ends, bold: true, fontFamily: st.label, align: "center" }),
             ...mazeElements(m, x, y, cell, false),
-            text({ x: labelX(m.end), y: y + m.rows * cell + 4, width: 60, height: 10, text: "FINISH", fontSize: 8, bold: true, align: "center" }),
+            text({ x: labelX(m.end), y: y + m.rows * cell + 4, width: lw, height: ends * 1.13, text: "FINISH", fontSize: ends, bold: true, fontFamily: st.label, align: "center" }),
           ],
           { generator: { kind: "maze", seed: m.seed, params: { cols, rows } } },
         );
@@ -669,11 +845,12 @@ function mazePages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "maze" }>): P
     pages.push(...solutionsTitle(ctx, cfg, "maze-solutions"));
     for (let p = 0; p < mazes.length; p += 4) {
       const els: Element[] = [];
-      slots(b, 4, 16).forEach((slot, k) => {
+      const ks = st.sizes.key;
+      slots(b, 4, ks * 1.13 + 6).forEach((slot, k) => {
         const m = mazes[p + k];
         if (!m) return;
         const c = Math.min(slot.size / m.cols, slot.size / m.rows);
-        els.push(text({ x: slot.x, y: slot.y - 16, width: slot.size, height: 11, text: `Maze #${first + p + k}`, fontSize: 9, bold: true }));
+        els.push(text({ x: slot.x, y: slot.y - ks * 1.13 - 6, width: slot.size, height: ks * 1.13, text: `Maze ${first + p + k}`, fontSize: ks, bold: true, fontFamily: st.label }));
         els.push(...mazeElements(m, slot.x + (slot.size - m.cols * c) / 2, slot.y, c, true));
       });
       pages.push(page(ctx, "maze-solutions", els));
@@ -697,12 +874,17 @@ function scramblePages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "word-scr
   const pages: Page[] = [];
   if (showPuzzles(cfg.part))
     sets.forEach(({ title, items }, i) => {
-      const titleEl = text({ x: b.x, y: b.y, width: b.width, height: 22, text: `${first + i}. ${title}`, fontSize: 18, bold: true, fontFamily: SERIF, align: "center" });
+      const st = ctx.style;
+      const head = headingBlock(ctx, `${first + i}. ${title}`, b.y);
+      const titleEl = head.el;
       const els: Element[] = [prov ? tag(ctx, titleEl, prov) : titleEl];
-      els.push(text({ x: b.x, y: b.y + 28, width: b.width, height: 12, text: "Unscramble the letters to spell a word from the theme.", fontSize: 10, color: "#444444", align: "center" }));
-      const top = b.y + 52;
-      const rowH = Math.min(34, (b.height - 52) / items.length);
-      const size = Math.min(15, rowH * 0.5);
+      const hint = "Unscramble the letters to spell a word from the theme.";
+      const hs = st.sizes.small;
+      const hintH = textBlockHeight(measureLines(hint, st.body, false, hs, b.width).length, hs, 1.2);
+      els.push(text({ x: b.x, y: b.y + head.height + 6, width: b.width, height: hintH, text: hint, fontSize: hs, fontFamily: st.body, color: "#444444", align: "center", lineHeight: 1.2 }));
+      const top = b.y + head.height + 6 + hintH + 18;
+      const rowH = Math.min(st.largePrint ? 44 : 34, (b.y + b.height - top) / items.length);
+      const size = Math.min(st.largePrint ? 20 : 15, rowH * 0.5);
       items.forEach((it, k) => {
         const y = top + k * rowH;
         const wordEl = text({ x: b.x, y, width: b.width * 0.48, height: size * 1.13, text: `${k + 1}.  ${it.scrambled.split("").join(" ")}`, fontSize: size, bold: true, fontFamily: "Roboto Mono" });
@@ -724,10 +906,11 @@ function scramblePages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "word-scr
         if (!set) break;
         const x = b.x + (k % 2) * (colW + gap);
         const y = b.y + Math.floor(k / 2) * (rowH + gap);
-        const size = Math.min(9, (rowH - 18) / (set.items.length * 1.13 * 1.18));
-        els.push(text({ x, y, width: colW, height: 11, text: `${first + p + k}. ${set.title}`, fontSize: 9.5, bold: true }));
+        const size = Math.min(ctx.style.sizes.key, (rowH - ctx.style.sizes.key * 1.13 - 7) / (set.items.length * 1.13 * 1.18));
+        const ks = ctx.style.sizes.key;
+        els.push(text({ x, y, width: colW, height: ks * 1.13, text: `${first + p + k}. ${set.title}`, fontSize: ks, bold: true, fontFamily: ctx.style.label }));
         const answers = set.items.map((it, n) => `${n + 1}. ${it.word}`).join("\n");
-        els.push(text({ x, y: y + 16, width: colW, height: textBlockHeight(set.items.length, size, 1.18), text: answers, fontSize: size, lineHeight: 1.18 }));
+        els.push(text({ x, y: y + ks * 1.13 + 5, width: colW, height: textBlockHeight(set.items.length, size, 1.18), text: answers, fontSize: size, fontFamily: ctx.style.label, lineHeight: 1.18 }));
       }
       pages.push(page(ctx, "word-scramble-solutions", els));
     }
@@ -794,8 +977,9 @@ function cryptogramPages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "crypto
         if (!c) break;
         const top = b.y + k * (slotH + 24);
         const hint = !solved && c.hints.length ? `  ·  Hint: ${c.hints.map((h) => `${c.key[h]} = ${h}`).join(", ")}` : "";
-        els.push(text({ x: b.x, y: top, width: b.width, height: 14, text: `Cryptogram #${first + p + k}${hint}`, fontSize: solved ? 10 : 12, bold: true }));
-        const block = cryptogramBlock(c, b.x, top + 26, b.width, slotH - 30, solved);
+        const hs = solved ? ctx.style.sizes.key : ctx.style.sizes.label;
+        els.push(text({ x: b.x, y: top, width: b.width, height: textBlockHeight(measureLines(`Cryptogram ${first + p + k}${hint}`, ctx.style.label, true, hs, b.width).length, hs, 1.15), text: `Cryptogram ${first + p + k}${hint}`, fontSize: hs, bold: true, fontFamily: ctx.style.label, lineHeight: 1.15 }));
+        const block = cryptogramBlock(c, b.x, top + hs * 2.4 + 8, b.width, slotH - hs * 2.4 - 12, solved);
         els.push(...block.els.map((e) => (prov && !solved ? tag(ctx, e, prov) : e)));
       }
       pages.push(page(ctx, kind, els, { generator: { kind, seed: cfg.seed, params: { from: first + p } } }));
@@ -832,6 +1016,8 @@ function coloringPages(ctx: Ctx, assetIds: string[], blankBacks: boolean): Page[
 
 export interface GenerateOptions {
   spec: PrintSpec;
+  /** Interior look (faces, type sizes, ornament); classic when unset. */
+  style?: InteriorStyle;
   /** Expected total page count (drives the gutter margin). */
   pageCountHint: number;
   assets?: Asset[];
@@ -849,6 +1035,7 @@ export function generatePages(cfg: GeneratorConfig, opts: GenerateOptions): Page
   const g = interiorGeometry(opts.spec, opts.pageCountHint);
   const ctx: Ctx = {
     box: generatorBox(opts.spec, opts.pageCountHint),
+    style: opts.style ?? CLASSIC_STYLE,
     trimW: g.trimW,
     trimH: g.trimH,
     prov: { origin: "generated", generator: cfg.kind },
@@ -856,7 +1043,8 @@ export function generatePages(cfg: GeneratorConfig, opts: GenerateOptions): Page
   };
   switch (cfg.kind) {
     case "blank":
-      return Array.from({ length: cfg.count }, () => page(ctx, "blank", []));
+      // Blank pages carry no number, as in printed books.
+      return Array.from({ length: cfg.count }, () => page(ctx, "blank", [], { hideNumber: true }));
     case "lined":
       return ruledPages(ctx, cfg.count, inToPt(cfg.spacingIn), cfg.header);
     case "dot-grid":
@@ -895,7 +1083,7 @@ export function generatePages(cfg: GeneratorConfig, opts: GenerateOptions): Page
     case "text-page":
       return [textPage(ctx, cfg.title, cfg.body, cfg.aiRunId)];
     case "section-divider":
-      return [sectionDivider(ctx, cfg.title, cfg.subtitle, cfg.aiRunId)];
+      return [...(cfg.blankBefore ? [page(ctx, "blank", [], { hideNumber: true, label: "Blank" })] : []), sectionDivider(ctx, cfg)];
     case "table-of-contents":
       return [tocPage(ctx, cfg.entries)];
     case "monthly-calendar":
@@ -926,14 +1114,15 @@ export function estimatePageCount(cfg: GeneratorConfig): number {
   switch (cfg.kind) {
     case "journal-prompts":
       return cfg.prompts.filter((t) => t.trim()).length;
+    case "section-divider":
+      return cfg.blankBefore ? 2 : 1;
     case "title-page":
     case "belongs-to":
     case "text-page":
-    case "section-divider":
     case "table-of-contents":
       return 1;
     case "sudoku":
-      return puzzlePages(cfg, cfg.count, Math.ceil(cfg.count / cfg.perPage), Math.ceil(cfg.count / 6));
+      return puzzlePages(cfg, cfg.count, Math.ceil(cfg.count / cfg.perPage), Math.ceil(cfg.count / (cfg.keysPerPage ?? 6)));
     case "word-search": {
       const n = cfg.puzzles.filter((pz) => pz.words.length).length;
       return puzzlePages(cfg, n, n, Math.ceil(n / 4));
