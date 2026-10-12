@@ -36,7 +36,7 @@ export function needForSection(cfg: GeneratorConfig, theme: string): ContentNeed
     case "cryptogram":
       return { task: "phrases", theme, count: Math.max(1, cfg.phrases.length), maxLength: CRYPTOGRAM_MAX(cfg.perPage), style: "saying" };
     case "gratitude":
-      return { task: "phrases", theme, count: Math.max(1, cfg.affirmations?.length || Math.min(cfg.count, 60)), maxLength: 90, style: "affirmation" };
+      return { task: "phrases", theme, count: Math.max(1, cfg.count), maxLength: 90, style: "affirmation" };
     default:
       return null;
   }

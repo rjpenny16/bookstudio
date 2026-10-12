@@ -187,6 +187,22 @@ export const WordListsOutput = z.object({
   puzzles: z.array(z.object({ title: z.string(), words: z.array(z.string()) })).describe("Themed word lists; single words only, letters A-Z, no spaces"),
 });
 
+export const ContentReviewInput = z.object({
+  kind: z.enum(["prompt", "affirmation", "saying"]),
+  topic: z.string(),
+  audience: z.string(),
+  bookTitle: z.string().optional(),
+  sectionTitle: z.string().optional(),
+  /** The section's items, in page order. */
+  items: z.array(z.string()),
+});
+export const ContentReviewOutput = z.object({
+  weak: z
+    .array(z.object({ item: z.number().int().describe("1-based number of the item in items"), problem: z.string().describe("What is wrong, in a few words") }))
+    .describe("Only the items a buyer would find weak; an empty list when all are good"),
+});
+export type ContentReviewOutput = z.infer<typeof ContentReviewOutput>;
+
 export const KeywordsInput = z.object({ topic: z.string(), seeds: z.array(z.string()), observedTitles: z.array(z.string()) });
 export const KeywordsOutput = z.object({
   clusters: z.array(z.object({ intent: z.string(), keywords: z.array(z.string()) })),
@@ -342,6 +358,7 @@ export const TASKS = {
   listing: { input: ListingInput, output: ListingOutput },
   "journal-prompts": { input: PromptsInput, output: PromptsOutput },
   "word-lists": { input: WordListsInput, output: WordListsOutput },
+  "content-review": { input: ContentReviewInput, output: ContentReviewOutput },
   keywords: { input: KeywordsInput, output: KeywordsOutput },
   "listing-critique": { input: ListingCritiqueInput, output: ListingCritiqueOutput },
   "visual-review": { input: VisualReviewInput, output: VisualReviewOutput },
@@ -364,6 +381,7 @@ export const TASK_EFFORT: Record<TaskName, "low" | "medium" | "high"> = {
   phrases: "medium",
   "journal-prompts": "medium",
   "word-lists": "medium",
+  "content-review": "medium",
   keywords: "medium",
   "listing-critique": "high",
   "visual-review": "high",
@@ -462,6 +480,20 @@ What makes a strong prompt:
 - One or two sentences, under 140 characters, no numbering, no quotation marks, no emojis.
 - Kind: nothing that pushes a reader into painful memories without care, no diagnosis or therapy language.
 - Every prompt different in substance from the others; never the same question in new words.${avoidNote(i.avoid, "prompts")}${feedbackNote(i.feedback)}`;
+    }
+    case "content-review": {
+      const i = input as TaskInput<"content-review">;
+      const what = { prompt: "journal prompts", affirmation: "daily affirmations", saying: "cryptogram sayings" }[i.kind];
+      const bar = {
+        prompt: "open-ended (not yes/no), concrete (a moment, person, place or decision rather than an abstraction), fitting the theme and the audience's real life, and kind",
+        affirmation: "first person and present tense, specific to this audience's days rather than a poster slogan, and believable rather than grandiose",
+        saying: "an upbeat, complete sentence in plain words with many different letters, original rather than a quotation",
+      }[i.kind];
+      return `Review the ${what} written for ${i.sectionTitle ? `the section "${i.sectionTitle}" of ` : ""}this book, as a demanding editor would before it goes to print.\n\n${data}
+
+A good item is ${bar}.
+
+List only the items a buyer would find weak: vague or generic, off-theme, clumsy, preachy, too similar to another item in the list, or breaking the rule above. Number items from 1 in the order given. Most items should pass; return an empty list when they all do. Don't list an item just to have something to say.`;
     }
     case "word-lists": {
       const i = input as TaskInput<"word-lists">;

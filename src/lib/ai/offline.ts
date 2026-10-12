@@ -2,8 +2,9 @@ import { recipeBlueprint } from "@/lib/agent/recipes";
 import { genreOf } from "@/lib/cover/genres";
 import { splitTitle } from "@/lib/cover/lockup";
 import { restyleOffline } from "@/lib/cover/restyle";
-import { nearDuplicate } from "@/lib/quality/content";
-import { AFFIRMATION_BANK, PROMPT_BANK, SAYING_BANK, THEME_BANK } from "./offlineBanks";
+import { nearDuplicate, openerKey } from "@/lib/quality/content";
+import { AFFIRMATION_BANK, PROMPT_GROUPS, SAYING_BANK, THEME_BANK } from "./offlineBanks";
+import { AFFIRMATION_TOPICS, PROMPT_TOPICS, type Orientation } from "./offlineTopics";
 import type { TaskInput, TaskName, TaskOutput } from "./tasks";
 
 /**
@@ -92,6 +93,93 @@ function pick(pool: string[], count: number, seed: string, avoid: string[] = [])
   return Array.from({ length: Math.min(count, usable.length) }, (_, k) => usable[(start + k) % usable.length]);
 }
 
+/** Where a journal section looks, from its title and theme: "Looking Back: memories and reflection" looks back. */
+export function orientationOf(text: string): Orientation | null {
+  if (/look(ing)? back|memor|\bpast\b|remember|childhood/i.test(text)) return "back";
+  if (/look(ing)? ahead|\bhopes?\b|\bplans?\b|\bgoals?\b|future|growth|dreams?|intention/i.test(text)) return "ahead";
+  if (/right now|present|today|moment|notic|gratitude/i.test(text)) return "now";
+  return null;
+}
+
+/** `list` rotated to start at a seed-dependent item, so books on different topics don't all open the same way. */
+const rotate = <T,>(list: T[], seed: string) => (list.length ? [...list.slice(hash(seed) % list.length), ...list.slice(0, hash(seed) % list.length)] : list);
+
+/** Items of `lists` taken in turn (a, b, c, a, b, c…), each list weighted by how many items it gives per turn. */
+function weave(lists: string[][], weights: number[] = []): string[] {
+  const out: string[] = [];
+  const at = lists.map(() => 0);
+  while (lists.some((l, k) => at[k] < l.length))
+    lists.forEach((l, k) => {
+      for (let n = 0; n < (weights[k] ?? 1) && at[k] < l.length; n++) out.push(l[at[k]++]);
+    });
+  return out;
+}
+
+/** Two lists merged in proportion, `a` first, so the shorter one is spread evenly through the result instead of bunched at the start. */
+function blend(a: string[], b: string[]): string[] {
+  const out: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    if (j >= b.length || (i < a.length && i / a.length <= (j + 0.5) / b.length)) out.push(a[i++]);
+    else out.push(b[j++]);
+  }
+  return out;
+}
+
+/**
+ * Up to `count` distinct items from `ordered`, best first, skipping anything
+ * that repeats `avoid` and keeping any one opening ("What is…") to about
+ * `openerShare` of the result; over-used openings fill in only at the end.
+ */
+function pickOrdered(ordered: string[], count: number, avoid: string[], openerShare: number): string[] {
+  const chosen: string[] = [];
+  const later: string[] = [];
+  const limit = Math.max(2, Math.ceil(count * openerShare));
+  const openers = new Map<string, number>();
+  const fresh = (p: string) => !avoid.some((a) => nearDuplicate(p, a)) && !chosen.some((c) => nearDuplicate(p, c));
+  for (const p of ordered) {
+    if (chosen.length >= count) break;
+    if (!fresh(p)) continue;
+    const k = openerKey(p);
+    if ((openers.get(k) ?? 0) >= limit) {
+      later.push(p);
+      continue;
+    }
+    openers.set(k, (openers.get(k) ?? 0) + 1);
+    chosen.push(p);
+  }
+  for (const p of later) if (chosen.length < count && fresh(p)) chosen.push(p);
+  return chosen;
+}
+
+/**
+ * Offline prompts for a section, most fitting first: the matching topic banks
+ * (nurses, teachers, travel…) spread through the general prompts that look the
+ * same way as the section, then general prompts for any section, then the rest.
+ */
+export function offlinePrompts(i: { topic: string; audience: string; sectionTitle?: string; count: number; avoid?: string[] }): string[] {
+  const seed = `${i.topic}|${i.sectionTitle ?? ""}`;
+  const look = orientationOf(`${i.sectionTitle ?? ""} ${i.topic}`);
+  const topics = PROMPT_TOPICS.filter((t) => t.match.test(`${i.topic} ${i.sectionTitle ?? ""} ${i.audience}`));
+  const looks: Orientation[] = look ? [look] : ["back", "now", "ahead"];
+  const topical = weave(topics.map((t) => weave(looks.map((l) => rotate(t.prompts[l], seed)))));
+  const general = (keep: (g: (typeof PROMPT_GROUPS)[number]) => boolean) => weave(PROMPT_GROUPS.filter(keep).map((g) => rotate(g.prompts, seed)));
+  const ordered = look
+    ? [...blend(topical, general((g) => g.look === look)), ...general((g) => g.look === null), ...weave(topics.map((t) => weave((["back", "now", "ahead"] as const).filter((l) => l !== look).map((l) => t.prompts[l])))), ...general((g) => g.look !== null && g.look !== look)]
+    : blend(topical, general(() => true));
+  return pickOrdered(ordered, i.count, i.avoid ?? [], 0.15);
+}
+
+/** Offline affirmations: the matching topic banks first (two for every general one), then the general bank. */
+export function offlineAffirmations(i: { topic: string; audience: string; count: number; maxLength: number; avoid?: string[] }): string[] {
+  const seed = i.topic;
+  const topics = AFFIRMATION_TOPICS.filter((t) => t.match.test(`${i.topic} ${i.audience}`));
+  const topical = weave(topics.map((t) => rotate(t.affirmations, seed)));
+  const ordered = weave([topical, rotate(AFFIRMATION_BANK, seed)], [2, 1]).filter((a) => a.length <= i.maxLength);
+  return pickOrdered(ordered, i.count, i.avoid ?? [], 0.25);
+}
+
 function hash(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
@@ -141,8 +229,8 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
     }
     case "phrases": {
       const i = input as TaskInput<"phrases">;
-      const pool = (i.style === "affirmation" ? AFFIRMATION_BANK : SAYING_BANK).filter((p) => p.length <= i.maxLength);
-      return { phrases: pick(pool, i.count, i.topic, i.avoid) } as TaskOutput<T>;
+      if (i.style === "affirmation") return { phrases: offlineAffirmations(i) } as TaskOutput<T>;
+      return { phrases: pick(SAYING_BANK.filter((p) => p.length <= i.maxLength), i.count, i.topic, i.avoid) } as TaskOutput<T>;
     }
     case "listing": {
       const i = input as TaskInput<"listing">;
@@ -165,7 +253,7 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
     case "journal-prompts": {
       const i = input as TaskInput<"journal-prompts">;
       // Only distinct prompts: a shorter section beats a journal that repeats itself.
-      return { prompts: pick(PROMPT_BANK, i.count, `${i.topic}|${i.sectionTitle ?? ""}`, i.avoid) } as TaskOutput<T>;
+      return { prompts: offlinePrompts(i) } as TaskOutput<T>;
     }
     case "word-lists": {
       const i = input as TaskInput<"word-lists">;
@@ -189,6 +277,9 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
       }
       return { puzzles } as TaskOutput<T>;
     }
+    case "content-review":
+      // Offline can't judge writing; the rule-based checks in agent/content.ts still run.
+      return { weak: [] } as TaskOutput<T>;
     case "keywords": {
       const i = input as TaskInput<"keywords">;
       const t = i.topic.toLowerCase();

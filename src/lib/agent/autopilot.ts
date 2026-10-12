@@ -18,7 +18,7 @@ import { createProject } from "@/lib/schema/factory";
 import type { BookType, ModelRun, Project } from "@/lib/schema/project";
 import { assembleBook, clampPageTarget, describeBook, planSections, validateBlueprint, type PlannedSection } from "./blueprint";
 import { ART_CANDIDATES } from "./constants";
-import { applyContent, contentCall, refineContent, type ContentRequest } from "./content";
+import { contentCall, refineContent, reviewContent, writeSection, type ContentRequest, type ContentReview } from "./content";
 import { genreOfProject } from "@/lib/cover/genres";
 
 /**
@@ -181,21 +181,29 @@ export async function runAutopilot(
     const c = contentCall(req, { audience, bookTitle: title });
     return ai(c.task, c.input, c.outputs);
   };
+  let batches = 0;
   const written: PlannedSection[] = await step("content", async () => {
+    // Long sections are written in batches, each told what the earlier ones said.
     const out = await pool(planned, 3, async (sec): Promise<PlannedSection> => {
-      const need = sec.content;
-      if (!need) return sec;
-      const r = await write({ need, sectionTitle: sec.label, count: need.count, avoid: [] });
-      return { ...sec, config: applyContent(sec.config, need, r.output, r.runId) };
+      if (!sec.content) return sec;
+      const r = await writeSection(sec, write);
+      batches += r.batches;
+      return { ...sec, config: r.config };
     });
-    return [out, describeBook(out)];
+    return [out, `${describeBook(out)}${batches > out.filter((s) => s.content).length ? ` · ${batches} batches` : ""}`];
   });
 
   // 3b. Check the whole book's content for repeats and weak items, and replace them.
+  const review: ContentReview = async (req) => {
+    const r = await ai("content-review", { kind: req.kind, topic: req.theme, audience, bookTitle: title, sectionTitle: req.sectionTitle, items: req.items }, [`interior.review:${req.sectionTitle}`]);
+    return { weak: r.output.weak, runId: r.runId };
+  };
   const filled: PlannedSection[] = await step("check", async () => {
     const r = await refineContent(written, write);
-    notes.push(...r.notes);
-    return [r.sections, r.removed ? `${r.removed} replaced or removed, ${r.added} new item(s)` : "No repeats or weak items found"];
+    const v = await reviewContent(r.sections, review, write);
+    notes.push(...r.notes, ...v.notes);
+    const parts = [r.removed && `${r.removed} repeated or unusable replaced or removed, ${r.added} new`, v.flagged && `${v.flagged} weak flagged, ${v.rewritten} rewritten`].filter(Boolean);
+    return [v.sections, parts.length ? parts.join("; ") : "No repeats or weak items found"];
   });
 
   // 4. Layout

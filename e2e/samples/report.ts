@@ -2,12 +2,15 @@
  * Node half of the sample harness: the reference books, which spreads to
  * show, and the per-book report plus the cross-book summary.
  */
+import { weakItems } from "@/lib/agent/content";
+import { PROMPT_TOPICS } from "@/lib/ai/offlineTopics";
 import { runPreflight } from "@/lib/preflight";
 import { qualityReport, trimLabel } from "@/lib/quality";
 import { puzzleStats, type PuzzleStats } from "@/lib/quality/puzzles";
 import { scorecard } from "@/lib/quality/scorecard";
 import { genreOfProject } from "@/lib/cover/genres";
 import { coverGeometry, isRecto } from "@/lib/kdp/geometry";
+import { openerKey } from "@/lib/quality/content";
 import { backdrop, THUMBNAIL_PX } from "@/lib/quality/design";
 import { capHeight } from "@/lib/render/metrics";
 import { elementBounds } from "@/lib/schema/elements";
@@ -32,6 +35,7 @@ export const SAMPLE_BOOKS: SampleBook[] = [
   { id: "gratitude-journal", topic: "Daily gratitude journal", audience: "Women who want a calm five-minute morning routine", bookType: "journal", trimId: "6x9", pageTarget: 120 },
   { id: "weekly-planner", topic: "Undated weekly planner for teachers", audience: "Teachers", bookType: "planner", trimId: "7x10", pageTarget: 120 },
   { id: "bird-log", topic: "Bird watching log book", audience: "Backyard birders", bookType: "log-book", trimId: "6x9", pageTarget: 110 },
+  { id: "nurse-journal", topic: "Guided journal for nurses", audience: "Nurses in their first years on the job", bookType: "journal", trimId: "6x9", pageTarget: 140 },
 ];
 
 const MAX_SPREADS = 8;
@@ -99,7 +103,11 @@ export interface SampleReport {
     listing: { field: string; severity: string; issue: string }[];
     content: { section: string; severity: string; message: string }[];
   };
-  text: { journalPrompts: { total: number; unique: number }; affirmations: { pages: number; unique: number } };
+  text: {
+    /** `topical`: prompts from the reader's own topic bank (offline). `weak`: items the rule checks flag. `topOpener`: the largest share of a section that opens with the same two words. */
+    journalPrompts: { total: number; unique: number; topical: number; weak: number; topOpener: number };
+    affirmations: { pages: number; unique: number; weak: number };
+  };
   puzzles: PuzzleStats;
 }
 
@@ -140,13 +148,25 @@ export function sampleReport(id: string, project: Project): SampleReport {
   const prompts: string[] = [];
   const affirmations: string[] = [];
   let gratitudePages = 0;
+  let weakPrompts = 0;
+  let weakAffirmations = 0;
+  let topOpener = 0;
   for (const s of project.interior.sections) {
-    if (s.config.kind === "journal-prompts") prompts.push(...s.config.prompts);
+    if (s.config.kind === "journal-prompts") {
+      prompts.push(...s.config.prompts);
+      weakPrompts += weakItems("prompt", s.config.prompts, 160).size;
+      const openers = new Map<string, number>();
+      for (const p of s.config.prompts) openers.set(openerKey(p), (openers.get(openerKey(p)) ?? 0) + 1);
+      if (s.config.prompts.length) topOpener = Math.max(topOpener, Math.max(...openers.values()) / s.config.prompts.length);
+    }
     if (s.config.kind === "gratitude") {
       gratitudePages += s.config.count;
       affirmations.push(...(s.config.affirmations ?? []));
+      weakAffirmations += weakItems("affirmation", s.config.affirmations ?? [], 90).size;
     }
   }
+  const about = `${project.brief.topic} ${project.brief.audience}`;
+  const topicPrompts = new Set(PROMPT_TOPICS.filter((t) => t.match.test(about)).flatMap((t) => [...t.prompts.back, ...t.prompts.now, ...t.prompts.ahead]));
   const norm = (t: string) => t.trim().toLowerCase();
   return {
     id,
@@ -167,8 +187,8 @@ export function sampleReport(id: string, project: Project): SampleReport {
       content: quality.content.flatMap((s) => s.issues.map((i) => ({ section: s.label, severity: i.severity, message: i.message }))),
     },
     text: {
-      journalPrompts: { total: prompts.length, unique: new Set(prompts.map(norm)).size },
-      affirmations: { pages: gratitudePages, unique: new Set(affirmations.map(norm)).size },
+      journalPrompts: { total: prompts.length, unique: new Set(prompts.map(norm)).size, topical: prompts.filter((p) => topicPrompts.has(p)).length, weak: weakPrompts, topOpener: Math.round(topOpener * 100) / 100 },
+      affirmations: { pages: gratitudePages, unique: new Set(affirmations.map(norm)).size, weak: weakAffirmations },
     },
     puzzles: puzzleStats(project),
   };
@@ -190,7 +210,14 @@ function puzzleNotes(p: PuzzleStats): string {
 export function summaryMarkdown(reports: SampleReport[]): string {
   const rows = reports.map((r) => {
     const q = r.quality.counts;
-    const text = [r.text.journalPrompts.total && `${r.text.journalPrompts.unique}/${r.text.journalPrompts.total} unique prompts`, r.text.affirmations.pages && `${r.text.affirmations.unique} affirmations for ${r.text.affirmations.pages} pages`].filter(Boolean).join(", ");
+    const jp = r.text.journalPrompts;
+    const af = r.text.affirmations;
+    const text = [
+      jp.total && `${jp.unique}/${jp.total} unique prompts, ${jp.topical} from the reader's topic, ${jp.weak} weak, top opening ${pct(jp.topOpener)}`,
+      af.pages && `${af.unique} affirmations for ${af.pages} pages, ${af.weak} weak`,
+    ]
+      .filter(Boolean)
+      .join("; ");
     const c = r.cover;
     const cover = `${c.genre}: ${c.templateId ?? "–"} / ${c.paletteId ?? "–"}, score ${c.score ?? "–"}, hero ${c.heroCapPx} px, ${c.frontTextItems} front texts, min contrast ${c.minPixelContrast ?? c.minFrontContrast ?? "–"}, back ${c.backCopyChars} chars`;
     const variants = c.variants.length ? c.variants.map((v) => `${v.templateId}/${v.paletteId} ${Math.round(v.score)}`).join(", ") : "–";
