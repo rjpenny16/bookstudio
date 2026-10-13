@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { planSections, validateBlueprint, type PlannedSection } from "@/lib/agent/blueprint";
-import { BATCH_SIZE, refineContent, reviewContent, weakItems, writeSection, type ContentRequest } from "@/lib/agent/content";
+import { BATCH_SIZE, isFatal, refineContent, reviewContent, weakItems, writeSection, type ContentRequest } from "@/lib/agent/content";
+import { codexLimits } from "@/lib/ai/limits";
 import { estimateRun } from "@/lib/agent/estimate";
 import { recipeBlueprint } from "@/lib/agent/recipes";
 import { offlineAffirmations, offlinePrompts, offlineTask, orientationOf } from "@/lib/ai/offline";
@@ -152,6 +153,80 @@ describe("batched writing", () => {
   it("flags a gratitude section with fewer affirmations than pages", () => {
     const issues = checkSectionContent({ kind: "gratitude", count: 90, affirmations: ["I notice the good things around me.", "I can do hard things."] });
     expect(issues.some((i) => i.message.startsWith("2 affirmations for 90 pages"))).toBe(true);
+  });
+});
+
+/** An error like the one callAi throws, with the server's HTTP status. */
+const failure = (status: number, message = `failed with ${status}`) => Object.assign(new Error(message), { status });
+
+describe("failing calls", () => {
+  it("stops the run on a usage limit, a login problem or a cancel instead of leaving the section short", async () => {
+    await expect(writeSection(promptSection(10), async () => Promise.reject(failure(429, "ChatGPT usage limit reached")))).rejects.toThrow(/usage limit/);
+    await expect(refineContent([promptSection(5)], async () => Promise.reject(failure(401)))).rejects.toMatchObject({ status: 401 });
+    expect(isFatal(Object.assign(new Error("x"), { name: "AbortError" }))).toBe(true);
+    expect(isFatal(failure(504))).toBe(false);
+  });
+
+  it("retries a timed-out batch once with half the items, and notes a batch that still fails", async () => {
+    const asked: number[] = [];
+    let fail = true;
+    const r = await writeSection(promptSection(20, [], "Guided journal for nurses"), async (req) => {
+      asked.push(req.count);
+      if (fail) {
+        fail = false;
+        throw failure(504, "codex took longer than 8 minutes; try again.");
+      }
+      return offlineAsk(req);
+    });
+    expect(asked[1]).toBe(Math.ceil(asked[0] / 2));
+    expect(r.config.kind === "journal-prompts" && r.config.prompts).toHaveLength(20);
+    expect(r.problems).toEqual([]);
+
+    const broken = await writeSection(promptSection(20), async () => Promise.reject(failure(502, "codex's reply did not match the schema (prompts: expected array)")));
+    expect(broken.problems).toEqual(["Looking Back: a writing call failed (codex's reply did not match the schema (prompts: expected array))"]);
+  });
+
+  it("asks codex for smaller batches", async () => {
+    const asked: ContentRequest[] = [];
+    await writeSection(promptSection(50, [], "Guided journal for nurses"), async (req) => {
+      asked.push(req);
+      return offlineAsk(req);
+    }, [], codexLimits());
+    expect(asked.every((a) => a.count <= 20)).toBe(true);
+    expect(asked.every((a) => a.avoid.length <= 80)).toBe(true);
+  });
+
+  it("keeps no more calls in flight than the provider allows", async () => {
+    let live = 0;
+    let most = 0;
+    const sections = ["A", "B", "C", "D", "E"].map((label) => ({ ...promptSection(4, []), label, content: { task: "journal-prompts" as const, theme: `theme ${label}`, count: 4 } }));
+    await refineContent(sections, async (req) => {
+      live++;
+      most = Math.max(most, live);
+      await new Promise((r) => setTimeout(r, 5));
+      live--;
+      return offlineAsk(req);
+    }, { limits: { ...codexLimits(), concurrency: 2 } });
+    expect(most).toBe(2);
+  });
+
+  it("fills a section the model left short from the built-in bank, through the same checks", async () => {
+    const short = promptSection(12, ["Describe the moment you knew you wanted to work in care."], "Guided journal for nurses");
+    const r = await refineContent([short], async () => Promise.reject(failure(504)), { fallback: offlineAsk });
+    const prompts = r.sections[0].config.kind === "journal-prompts" ? r.sections[0].config.prompts : [];
+    expect(prompts).toHaveLength(12);
+    expect(r.banked).toBe(11);
+    expect(duplicates(prompts)).toEqual([]);
+    expect(r.notes).toContain("Looking Back: 11 of 12 prompts came from the built-in bank because the model came up short.");
+    expect(r.notes.some((n) => n.includes("a writing call failed"))).toBe(true);
+    expect(r.notes.some((n) => n.includes("became notes pages"))).toBe(false);
+  });
+
+  it("goes on without the model review when it fails, but not when it's fatal", async () => {
+    const items = Array.from({ length: 8 }, (_, i) => allPrompts[i * 7]);
+    const r = await reviewContent([promptSection(8, items)], async () => Promise.reject(failure(502)), offlineAsk);
+    expect(r.sections).toHaveLength(1);
+    await expect(reviewContent([promptSection(8, items)], async () => Promise.reject(failure(429)), offlineAsk)).rejects.toMatchObject({ status: 429 });
   });
 });
 

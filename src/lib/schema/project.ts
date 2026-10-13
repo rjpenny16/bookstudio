@@ -340,6 +340,8 @@ export interface ModelRun {
   promptHash: string;
   /** What the run produced, e.g. "listing.description", "page:abc". */
   outputs: string[];
+  /** How long the call took, in milliseconds (optional; older projects don't have it). */
+  ms?: number;
 }
 
 export interface ReviewFinding {
