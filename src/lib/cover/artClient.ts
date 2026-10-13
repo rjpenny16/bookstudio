@@ -15,6 +15,7 @@ import { applyCoverTemplate, type SavedCoverTemplate } from "./library";
 import { buildCover, PALETTES, type ArtTone, type CoverInput, type Palette } from "./templates";
 import { analyzeCover } from "./analyze";
 import { paletteFromPixels } from "./artPalette";
+import { markLibraryArtUsed } from "@/lib/storage/artLibrary";
 
 /**
  * Cover art in the browser: ask the server for images, keep the originals as
@@ -311,6 +312,7 @@ export async function designCover(project: Project, d: CoverDesign): Promise<Pro
     const asset = await artAsset(candidate, d.templateId, cg);
     added.push(asset);
     artInput = { assetId: asset.id, runId: candidate.runId, tone: d.templateId === "art-full-bleed" ? await measureTone(asset, cg) : undefined };
+    markLibraryArtUsed(candidate.id).catch(() => {});
   }
   const thumbs = d.thumbs ? await pageThumbnails(project) : [];
   added.push(...thumbs);

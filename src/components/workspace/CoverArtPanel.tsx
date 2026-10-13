@@ -8,9 +8,10 @@ import { coverGeometry } from "@/lib/kdp/geometry";
 import { effectiveDpi } from "@/lib/preflight";
 import { useProjectStore } from "@/lib/storage/store";
 import { genreOfProject } from "@/lib/cover/genres";
+import { addLibraryArt, keepCandidates, type LibraryArt } from "@/lib/cover/artLibrary";
+import { keepInLibrary } from "@/lib/storage/artLibrary";
+import { ArtLibrary } from "./ArtLibrary";
 
-/** Most candidates kept on a project; older ones are dropped first. */
-const KEEP = 8;
 const COUNT = 4;
 
 /** Art direction, candidate generation and the gallery on the Cover tab. */
@@ -23,10 +24,14 @@ export function CoverArtPanel({ onUse, busy, palette }: { onUse: (candidateId: s
   const [working, setWorking] = useState<null | "direct" | "generate" | "pick">(null);
   const [message, setMessage] = useState<{ kind: "info" | "fail"; text: string } | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [showLibrary, setShowLibrary] = useState(false);
   const abort = useRef<AbortController | null>(null);
 
   useEffect(() => {
     imageStatus().then(setStatus).catch(() => setStatus(null));
+    // Images made before the library existed (or in another browser tab) join it too.
+    const p = useProjectStore.getState().project;
+    if (p?.coverArt?.candidates.length) keepInLibrary(p, p.coverArt.candidates, p.modelRuns);
   }, []);
 
   // Image generation can take minutes (codex), so show how long it's been.
@@ -78,11 +83,17 @@ export function CoverArtPanel({ onUse, busy, palette }: { onUse: (candidateId: s
       });
       update((d) => {
         const prev = d.coverArt?.candidates ?? [];
-        d.coverArt = { ...d.coverArt, candidates: [...res.candidates, ...prev].slice(0, KEEP) };
+        d.coverArt = { ...d.coverArt, candidates: keepCandidates([...res.candidates, ...prev], d.coverArt?.chosenId) };
         d.modelRuns.push(...res.runs);
       });
+      keepInLibrary(useProjectStore.getState().project!, res.candidates, res.runs);
       setMessage(res.errors.length ? { kind: "fail", text: `${res.candidates.length} image(s) generated; ${res.errors.join("; ")}` } : { kind: "info", text: `${res.candidates.length} new candidate(s). Pick one to put it on the cover.` });
     });
+
+  const addFromLibrary = (art: LibraryArt) => {
+    update((d) => addLibraryArt(d, art, layout));
+    setMessage({ kind: "info", text: `Added "${art.name}" from the library. Choose "Use this" to put it on the cover.` });
+  };
 
   const pickBest = () =>
     run("pick", async () => {
@@ -154,6 +165,10 @@ export function CoverArtPanel({ onUse, busy, palette }: { onUse: (candidateId: s
           )}
         </div>
       )}
+      <button className="btn btn-sm" onClick={() => setShowLibrary((v) => !v)} aria-expanded={showLibrary}>
+        {showLibrary ? "Hide art library" : "Reuse art from the library"}
+      </button>
+      {showLibrary && <ArtLibrary layout={layout} cg={cg} genre={genreOfProject(project).id} exclude={new Set(candidates.map((c) => c.id))} onAdd={addFromLibrary} disabled={busy || !!working} />}
       <p className="field-hint" style={{ margin: 0 }}>
         Prompts always add: no text or logos in the art, a calm area for the title, a flat illustrated style that prints cleanly.{" "}
         {codex

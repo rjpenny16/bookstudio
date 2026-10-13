@@ -51,3 +51,7 @@ export async function getValue<T>(key: string): Promise<T | undefined> {
 export async function setValue<T>(key: string, value: T): Promise<void> {
   await set(key, value, db());
 }
+
+export async function deleteValue(key: string): Promise<void> {
+  await del(key, db());
+}
