@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import { codexPath, runCodex } from "./codex";
+import { codexLimits, DEFAULT_LIMITS, type ProviderLimits } from "./limits";
 import { offlineTask } from "./offline";
 import { SYSTEM_PROMPT, TASK_EFFORT, TASKS, taskPrompt, VISION_TASKS, type TaskInput, type TaskName, type TaskOutput } from "./tasks";
 
@@ -17,11 +18,13 @@ export interface ProviderStatus {
   model: string;
   configured: boolean;
   detail: string;
+  /** How the content writer should batch and pace calls to this provider. */
+  limits: ProviderLimits;
 }
 
 export interface TaskResult<T extends TaskName> {
   output: TaskOutput<T>;
-  meta: { provider: ProviderName; model: string; task: T; promptHash: string };
+  meta: { provider: ProviderName; model: string; task: T; promptHash: string; /** Wall-clock time of the call. */ ms: number };
 }
 
 /** An image sent alongside a vision task's prompt (base64, no data: prefix). */
@@ -42,6 +45,10 @@ export class AiError extends Error {
 const hasAnthropicCreds = () => Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
 
 export function providerStatus(): ProviderStatus {
+  return { ...providerChoice(), limits: (process.env.AI_PROVIDER ?? "").toLowerCase() === "codex" ? codexLimits(process.env) : DEFAULT_LIMITS };
+}
+
+function providerChoice(): Omit<ProviderStatus, "limits"> {
   const requested = (process.env.AI_PROVIDER ?? "").toLowerCase();
   if (requested === "codex") {
     return { provider: "codex", model: codexTextModel(), configured: true, detail: "Writing through the codex CLI on your ChatGPT subscription (no API key)" };
@@ -140,9 +147,35 @@ export function extractJson(reply: string): unknown {
 }
 
 /**
+ * The strict JSON Schema codex's --output-schema expects: every object lists
+ * all its properties as required and allows no others, and keywords strict
+ * mode doesn't take (zod's safe-integer bounds, $schema) are left out.
+ */
+export function strictSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(strictSchema);
+  if (!schema || typeof schema !== "object") return schema;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(schema)) {
+    if (k === "$schema" || k === "minimum" || k === "maximum") continue;
+    // Property names are data, not schema keywords.
+    out[k] = k === "properties" ? Object.fromEntries(Object.entries(v as object).map(([name, sub]) => [name, strictSchema(sub)])) : strictSchema(v);
+  }
+  if (out.type === "object" && out.properties) {
+    out.required = Object.keys(out.properties);
+    out.additionalProperties = false;
+  }
+  return out;
+}
+
+/** Set once a codex rejects --output-schema or --ephemeral (an older CLI); later calls use the prompt-only path. */
+let codexLegacy = false;
+const unknownFlag = (e: unknown) => e instanceof AiError && /unexpected argument|unrecognized (option|argument)|unknown (option|argument)/i.test(e.message);
+
+/**
  * Writing through the codex CLI and the user's ChatGPT subscription. codex
- * exec runs read-only in an empty temp dir; the schema goes in the prompt and
- * the reply is validated here, with one retry that names what was wrong.
+ * exec runs read-only and ephemeral in an empty temp dir. The reply's shape is
+ * enforced by --output-schema (on older CLIs the schema goes in the prompt),
+ * and it is validated here, with one retry that names what was wrong.
  */
 async function runCodexText<T extends TaskName>(task: T, prompt: string, images: TaskImage[], signal?: AbortSignal): Promise<TaskOutput<T>> {
   const schema = TASKS[task].output;
@@ -155,24 +188,37 @@ async function runCodexText<T extends TaskName>(task: T, prompt: string, images:
         return file;
       }),
     );
+    const jsonSchema = z.toJSONSchema(schema);
+    const schemaFile = path.join(dir, "schema.json");
+    await writeFile(schemaFile, JSON.stringify(strictSchema(jsonSchema)));
     const labels = images.length ? `The attached images are, in order:\n${images.map((img, i) => `${i + 1}. ${img.label}`).join("\n")}\n\n` : "";
-    const base = [
-      SYSTEM_PROMPT,
-      "Answer from your own knowledge. Do not run commands, read or write files, or browse; there is nothing in your working directory.",
-      `${labels}${prompt}`,
-      `Reply with only one JSON object that matches this JSON Schema: no prose, no code fences.\n${JSON.stringify(z.toJSONSchema(schema))}`,
-    ].join("\n\n");
+    const head = [SYSTEM_PROMPT, "Answer from your own knowledge. Do not run commands, read or write files, or browse; there is nothing in your working directory.", `${labels}${prompt}`];
+    // With --output-schema the shape is enforced, so the prompt needn't carry the schema.
+    const base = (legacy: boolean) =>
+      [...head, legacy ? `Reply with only one JSON object that matches this JSON Schema: no prose, no code fences.\n${JSON.stringify(jsonSchema)}` : "Reply with only the JSON object."].join("\n\n");
     const out = path.join(dir, "reply.txt");
     const model = process.env.CODEX_TEXT_MODEL?.trim();
     let problem = "";
     for (let attempt = 0; attempt < 2; attempt++) {
+      const legacy = codexLegacy;
       const args = ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never", "-C", codexPath(dir), "-o", codexPath(out), "-c", `model_reasoning_effort="${TASK_EFFORT[task]}"`];
+      if (!legacy) args.push("--ephemeral", "--output-schema", codexPath(schemaFile));
       if (model) args.push("-m", model);
       for (const f of files) args.push("--image", codexPath(f));
       // The prompt goes on stdin ("-"), after "--" so a variadic --image can't swallow it.
-      const stdin = problem ? `${base}\n\nYour previous reply was rejected (${problem}). Reply again with only the JSON object.` : base;
+      const stdin = problem ? `${base(legacy)}\n\nYour previous reply was rejected (${problem}). Reply again with only the JSON object.` : base(legacy);
       await rm(out, { force: true });
-      await runCodex({ args: ["-c", 'exec codex "$@"', "codex", ...args, "--", "-"], dir, timeoutMs: CODEX_TEXT_TIMEOUT_MS, signal, stdin, what: "writing", fail: (msg, status) => new AiError(msg, status) });
+      try {
+        await runCodex({ args: ["-c", 'exec codex "$@"', "codex", ...args, "--", "-"], dir, timeoutMs: CODEX_TEXT_TIMEOUT_MS, signal, stdin, what: "writing", fail: (msg, status) => new AiError(msg, status) });
+      } catch (e) {
+        // An older codex without these flags: remember, and run this attempt again the old way.
+        if (!legacy && unknownFlag(e)) {
+          codexLegacy = true;
+          attempt--;
+          continue;
+        }
+        throw e;
+      }
       const reply = await readFile(out, "utf8").catch(() => "");
       let parsed: unknown;
       try {
@@ -192,7 +238,16 @@ async function runCodexText<T extends TaskName>(task: T, prompt: string, images:
   }
 }
 
-export async function runTask<T extends TaskName>(task: T, rawInput: unknown, rawImages: unknown = [], signal?: AbortSignal): Promise<TaskResult<T>> {
+/** For tests: forget that a codex without --output-schema was seen. */
+export function resetCodexLegacy() {
+  codexLegacy = false;
+}
+
+/**
+ * Run one task. `offline` forces the built-in heuristics whatever the
+ * provider: the content writer uses it to fill a section the model left short.
+ */
+export async function runTask<T extends TaskName>(task: T, rawInput: unknown, rawImages: unknown = [], signal?: AbortSignal, offline = false): Promise<TaskResult<T>> {
   const inputParse = TASKS[task].input.safeParse(rawInput);
   if (!inputParse.success) throw new AiError(`Invalid input for ${task}: ${inputParse.error.issues[0]?.message}`, 400);
   const imagesParse = TaskImages.safeParse(rawImages ?? []);
@@ -201,7 +256,8 @@ export async function runTask<T extends TaskName>(task: T, rawInput: unknown, ra
   if (VISION_TASKS.includes(task) && !images.length) throw new AiError(`${task} needs at least one image.`, 400);
   const input = inputParse.data as TaskInput<T>;
   const prompt = taskPrompt(task, input);
-  const status = providerStatus();
+  const status = offline ? { provider: "offline" as const, model: "heuristic-v1" } : providerStatus();
+  const started = Date.now();
   const hash = createHash("sha256").update(SYSTEM_PROMPT + prompt);
   for (const img of images) hash.update(img.data);
   const promptHash = `sha256:${hash.digest("hex")}`;
@@ -210,5 +266,5 @@ export async function runTask<T extends TaskName>(task: T, rawInput: unknown, ra
   else if (status.provider === "ollama") output = await runOllama(task, prompt, status.model, images);
   else if (status.provider === "codex") output = await runCodexText(task, prompt, images, signal);
   else output = offlineTask(task, input);
-  return { output, meta: { provider: status.provider, model: status.model, task, promptHash } };
+  return { output, meta: { provider: status.provider, model: status.model, task, promptHash, ms: Date.now() - started } };
 }

@@ -1,7 +1,7 @@
 import type { BookType } from "@/lib/schema/project";
 import { MAX_PAGES } from "./blueprint";
 import { ART_CANDIDATES } from "./constants";
-import { BATCH_SIZE } from "./content";
+import { codexLimits, DEFAULT_LIMITS } from "@/lib/ai/limits";
 
 /**
  * A rough, honest estimate of what one autopilot run asks of the providers,
@@ -40,13 +40,16 @@ export function estimateRun(i: EstimateInput): RunEstimate {
   let tokHigh = 6_000 + 8_000 + 9_000 + 12_000 + 10_000 + 20_000 * 2;
   // Section content: 1-6 sections; sudoku/maze/number search need none, so puzzle books often need fewer.
   const sections: [number, number] = PUZZLES_WITHOUT_TEXT.includes(i.bookType) ? [0, 5] : i.bookType === "notebook" || i.bookType === "log-book" ? [0, 2] : [1, 5];
-  // Content is written in batches of 30 items, so the longest book (300 pages) takes up to 10 calls across its sections.
-  const batches = Math.max(sections[1], Math.ceil(MAX_PAGES / BATCH_SIZE));
+  // Content is written in batches (30 items on an API; on codex 20 prompts or a few puzzles per call), so the longest
+  // book (300 pages) takes up to 10 calls across its sections on an API and more on codex.
+  const batch = (i.provider === "codex" ? codexLimits() : DEFAULT_LIMITS).batch;
+  const perCall = PUZZLES_WITHOUT_TEXT.includes(i.bookType) ? Math.round((batch["word-lists"] + batch["crossword-clues"]) / 2) : batch["journal-prompts"];
+  const batches = Math.max(sections[1], Math.ceil(MAX_PAGES / perCall));
   low += sections[0];
-  // Each section may also need two top-up rounds, a review and one rewrite of its weak items.
-  high += sections[1] ? batches + sections[1] * 4 : 0;
+  // Each section may also need three top-up rounds, a review and one rewrite of its weak items.
+  high += sections[1] ? batches + sections[1] * 5 : 0;
   tokLow += sections[0] * 4_000;
-  tokHigh += sections[1] ? batches * 10_000 + sections[1] * 4 * 12_000 : 0;
+  tokHigh += sections[1] ? batches * 10_000 + sections[1] * 5 * 12_000 : 0;
   let visionCalls = 2;
   let images = 0;
   if (i.coverArt) {

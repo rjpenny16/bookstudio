@@ -1,5 +1,6 @@
 import { produce } from "immer";
-import { callAi, isModelOutput, modelRun, type AiCallResult } from "@/lib/ai/client";
+import { aiStatus, callAi, isModelOutput, modelRun, type AiCallResult } from "@/lib/ai/client";
+import { DEFAULT_LIMITS } from "@/lib/ai/limits";
 import type { BlueprintOutput, BriefOutput, TaskName } from "@/lib/ai/tasks";
 import { isArtTemplate, suggestArtTemplate } from "@/lib/cover/art";
 import { designCover, directArt, generateCandidates, paletteFromArt, pickCandidate } from "@/lib/cover/artClient";
@@ -19,7 +20,7 @@ import { createProject } from "@/lib/schema/factory";
 import type { BookType, ModelRun, Project } from "@/lib/schema/project";
 import { assembleBook, clampPageTarget, describeBook, planSections, validateBlueprint, type PlannedSection } from "./blueprint";
 import { ART_CANDIDATES } from "./constants";
-import { contentCall, refineContent, reviewContent, writeSection, type ContentRequest, type ContentReview } from "./content";
+import { contentCall, pool, refineContent, reviewContent, writeSection, type ContentAsk, type ContentRequest, type ContentReview } from "./content";
 import { genreOf, genreOfProject } from "@/lib/cover/genres";
 
 /**
@@ -108,21 +109,6 @@ export function syncTitlePage(project: Project): Project {
   });
 }
 
-/** Run async jobs with limited parallelism, keeping result order. */
-async function pool<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) {
-        const i = next++;
-        out[i] = await fn(items[i], i);
-      }
-    }),
-  );
-  return out;
-}
-
 export async function runAutopilot(
   input: AutopilotInput,
   onStep: (id: string, status: StepStatus, detail?: string) => void,
@@ -150,6 +136,8 @@ export async function runAutopilot(
       throw e;
     }
   };
+  // How hard to lean on the provider (codex gets smaller batches, fewer calls at once).
+  const limits = (await aiStatus().catch(() => null))?.limits ?? DEFAULT_LIMITS;
   const trim = findTrim(input.trimId) ?? findTrim("6x9")!;
   const ctx = { bookType: input.bookType, topic: input.topic, audience: input.audience, notes: input.notes };
 
@@ -185,10 +173,11 @@ export async function runAutopilot(
   let batches = 0;
   const written: PlannedSection[] = await step("content", async () => {
     // Long sections are written in batches, each told what the earlier ones said.
-    const out = await pool(planned, 3, async (sec): Promise<PlannedSection> => {
+    const out = await pool(planned, limits.concurrency, async (sec): Promise<PlannedSection> => {
       if (!sec.content) return sec;
-      const r = await writeSection(sec, write);
+      const r = await writeSection(sec, write, [], limits);
       batches += r.batches;
+      notes.push(...r.problems);
       return { ...sec, config: r.config };
     });
     return [out, `${describeBook(out)}${batches > out.filter((s) => s.content).length ? ` · ${batches} batches` : ""}`];
@@ -199,11 +188,20 @@ export async function runAutopilot(
     const r = await ai("content-review", { kind: req.kind, topic: req.theme, audience, bookTitle: title, sectionTitle: req.sectionTitle, items: req.items }, [`interior.review:${req.sectionTitle}`]);
     return { weak: r.output.weak, runId: r.runId };
   };
+  // Last resort for a section the model left short: the built-in banks, through the same checks.
+  const bank: ContentAsk = async (req) => {
+    const c = contentCall(req, { audience, bookTitle: title });
+    return { output: (await callAi(c.task, c.input, signal, undefined, { offline: true })).output };
+  };
   const filled: PlannedSection[] = await step("check", async () => {
-    const r = await refineContent(written, write);
-    const v = await reviewContent(r.sections, review, write);
+    const r = await refineContent(written, write, { limits, fallback: bank });
+    const v = await reviewContent(r.sections, review, write, limits);
     notes.push(...r.notes, ...v.notes);
-    const parts = [r.removed && `${r.removed} repeated or unusable replaced or removed, ${r.added} new`, v.flagged && `${v.flagged} weak flagged, ${v.rewritten} rewritten`].filter(Boolean);
+    const parts = [
+      r.removed && `${r.removed} repeated or unusable replaced or removed, ${r.added} new`,
+      r.banked && `${r.banked} filled from the built-in bank`,
+      v.flagged && `${v.flagged} weak flagged, ${v.rewritten} rewritten`,
+    ].filter(Boolean);
     return [v.sections, parts.length ? parts.join("; ") : "No repeats or weak items found"];
   });
 
@@ -413,7 +411,9 @@ export async function runAutopilot(
       d.modelRuns.push(...runs);
     });
     const final = applyFix(next, "suggest-ai-disclosure");
-    return [final, runs.length ? `${runs.length} model run(s) recorded; disclosure needs your confirmation` : "No model output used (offline heuristics)"];
+    const ms = runs.reduce((t, r) => t + (r.ms ?? 0), 0);
+    const time = ms ? `, ${ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : `${Math.round(ms / 1000)} s`} of model time` : "";
+    return [final, runs.length ? `${runs.length} model run(s) recorded${time}; disclosure needs your confirmation` : "No model output used (offline heuristics)"];
   });
 
   onPreview?.(project, "done");

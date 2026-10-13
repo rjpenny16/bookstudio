@@ -18,7 +18,7 @@ vi.mock("@anthropic-ai/sdk", () => {
   return { default: Anthropic };
 });
 
-const { extractJson, providerStatus, runTask } = await import("@/lib/ai/providers");
+const { extractJson, providerStatus, resetCodexLegacy, runTask, strictSchema } = await import("@/lib/ai/providers");
 
 const review = { score: 7, summary: "Clean cover.", thumbnailReadable: true, findings: [{ target: "Page 3 (Easy)", severity: "medium", issue: "Grid lines are faint.", suggestion: "Darken them." }] };
 const input = { title: "Big Sudoku", bookType: "puzzle", audience: "seniors", trim: '8.5" x 11"', pageCount: 120, largePrint: true, images: ["Cover: back, spine and front", "Page 3 (Easy)"] };
@@ -68,15 +68,19 @@ describe("codex writing provider (ChatGPT subscription)", () => {
     path.join(bin, "codex"),
     `#!/usr/bin/env bash
 out=""; prev=""; imgs=0
+rm -f "${bin}/schema.json"
 for a in "$@"; do
   [[ "$prev" == "-o" ]] && out="$a"
   [[ "$prev" == "--image" && -s "$a" ]] && imgs=$((imgs+1))
+  [[ "$prev" == "--output-schema" ]] && cp "$a" "${bin}/schema.json"
+  [[ "$a" == "--output-schema" && -n "$FAKE_LEGACY" ]] && legacy=1
   prev="$a"
 done
 printf '%s\\n' "$@" > "${bin}/args.txt"
 echo "$imgs" > "${bin}/images.txt"
 cat > "${bin}/stdin.txt"
 n=$(cat "${bin}/calls" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${bin}/calls"
+[[ -n "$legacy" ]] && { echo "error: unexpected argument '--output-schema' found" >&2; exit 2; }
 [[ -n "$FAKE_CODEX_FAIL" ]] && { echo "$FAKE_CODEX_FAIL" >&2; exit 1; }
 if [[ -n "$FAKE_REPLIES" ]]; then IFS='|' read -ra r <<< "$FAKE_REPLIES"; printf '%s' "\${r[$((n-1))]}" > "$out"; else printf '%s' "$FAKE_REPLY" > "$out"; fi
 `,
@@ -92,7 +96,9 @@ if [[ -n "$FAKE_REPLIES" ]]; then IFS='|' read -ra r <<< "$FAKE_REPLIES"; printf
     vi.stubEnv("CODEX_TEXT_MODEL", "");
     vi.stubEnv("FAKE_CODEX_FAIL", "");
     vi.stubEnv("FAKE_REPLIES", "");
+    vi.stubEnv("FAKE_LEGACY", "");
     writeFileSync(path.join(bin, "calls"), "0");
+    resetCodexLegacy();
     parse.mockReset();
   });
   afterEach(() => vi.unstubAllEnvs());
@@ -103,21 +109,60 @@ if [[ -n "$FAKE_REPLIES" ]]; then IFS='|' read -ra r <<< "$FAKE_REPLIES"; printf
     expect(providerStatus().model).toBe("gpt-5.5");
   });
 
-  it("runs codex exec read-only with the schema in the prompt and validates the reply", async () => {
+  it("runs codex exec read-only and ephemeral, enforces the reply's shape with a strict schema and validates it", async () => {
     vi.stubEnv("FAKE_REPLY", 'Here you go:\n```json\n{"phrases":["Bloom where you are planted."]}\n```');
     const res = await runTask("phrases", phrasesInput);
     expect(res.output).toEqual({ phrases: ["Bloom where you are planted."] });
     expect(res.meta).toMatchObject({ provider: "codex", model: "chatgpt", task: "phrases" });
+    expect(res.meta.ms).toBeGreaterThanOrEqual(0);
     expect(parse).not.toHaveBeenCalled();
     const args = read("args.txt").trim().split("\n");
     expect(args.slice(0, 5)).toEqual(["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--color"]);
     expect(args).toContain('model_reasoning_effort="medium"');
+    expect(args).toContain("--ephemeral");
+    expect(args[args.indexOf("--output-schema") + 1]).toMatch(/schema\.json$/);
     expect(args.slice(-2)).toEqual(["--", "-"]);
     expect(args).not.toContain("-m");
+    expect(JSON.parse(read("schema.json"))).toEqual({
+      type: "object",
+      properties: { phrases: { type: "array", items: { type: "string" } } },
+      required: ["phrases"],
+      additionalProperties: false,
+    });
     const stdin = read("stdin.txt");
     expect(stdin).toContain("gardening");
-    expect(stdin).toContain('"phrases"');
-    expect(stdin).toMatch(/JSON Schema/);
+    expect(stdin).not.toMatch(/JSON Schema/);
+  });
+
+  it("falls back to the schema in the prompt on a codex without --output-schema, and remembers", async () => {
+    vi.stubEnv("FAKE_LEGACY", "1");
+    vi.stubEnv("FAKE_REPLY", '{"phrases":["Grow slow."]}');
+    expect((await runTask("phrases", phrasesInput)).output).toEqual({ phrases: ["Grow slow."] });
+    expect(read("calls").trim()).toBe("2");
+    expect(read("args.txt")).not.toContain("--output-schema");
+    expect(read("stdin.txt")).toMatch(/JSON Schema/);
+    await runTask("phrases", phrasesInput);
+    expect(read("calls").trim()).toBe("3");
+  });
+
+  it("can be told to use the built-in heuristics instead", async () => {
+    const res = await runTask("phrases", { ...phrasesInput, count: 3 }, [], undefined, true);
+    expect(res.meta.provider).toBe("offline");
+    expect(res.output.phrases).toHaveLength(3);
+    expect(read("calls").trim()).toBe("0");
+  });
+
+  it("reports smaller batches and fewer calls at once for codex", () => {
+    expect(providerStatus().limits).toMatchObject({ concurrency: 2, batch: { "crossword-clues": 4, "word-lists": 8 } });
+    vi.stubEnv("CODEX_CONCURRENCY", "4");
+    expect(providerStatus().limits.concurrency).toBe(4);
+    vi.stubEnv("AI_PROVIDER", "anthropic");
+    expect(providerStatus().limits.batch["crossword-clues"]).toBe(30);
+  });
+
+  it("makes every task's output schema strict", () => {
+    const s = strictSchema({ $schema: "x", type: "object", properties: { n: { type: "integer", minimum: -9e15, maximum: 9e15 }, type: { type: "string" } } });
+    expect(s).toEqual({ type: "object", properties: { n: { type: "integer" }, type: { type: "string" } }, required: ["n", "type"], additionalProperties: false });
   });
 
   it("attaches vision images and passes CODEX_TEXT_MODEL", async () => {
