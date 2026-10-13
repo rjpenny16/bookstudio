@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Sidebar } from "@/components/Sidebar";
+import { InboxRunner } from "@/components/inbox/InboxRunner";
 import { fontFaceCss } from "@/lib/render/fonts";
 import "./globals.css";
 
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </a>
         <div className="shell">
           <Sidebar />
+          <InboxRunner />
           <main id="main" className="main">
             {children}
           </main>
