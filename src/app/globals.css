@@ -93,12 +93,12 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: va
 
 .sidebar-top { display: flex; align-items: center; justify-content: space-between; }
 .nav-links { display: flex; flex-direction: column; gap: 4px; }
-.menu-toggle { display: none; }
+.sidebar .menu-toggle { display: none; }
 @media (max-width: 860px) {
   .shell { grid-template-columns: minmax(0, 1fr); }
   .sidebar { position: sticky; top: 0; z-index: 20; height: auto; padding: 8px 16px; gap: 0; }
   .brand { padding: 0; }
-  .menu-toggle { display: inline-flex; }
+  .sidebar .menu-toggle { display: inline-flex; }
   .nav-links, .sidebar-foot { display: none; }
   .sidebar.open .nav-links { display: flex; padding: 8px 0 4px; }
   .sidebar.open .nav-link { padding: 10px; }
@@ -354,3 +354,8 @@ dialog.modal-wide { width: min(1080px, calc(100vw - 32px)); }
   .btn { height: 40px; }
   .btn-sm { height: 36px; }
 }
+
+/* Dashboard project list header: title on the left, search and sort on the right. */
+.projects-head { margin-bottom: 12px; }
+@media (max-width: 860px) { .projects-head .row, .projects-head input[type="search"] { width: 100% !important; } .projects-head select { flex: 1; } }
+@media (max-width: 520px) { .project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; } }

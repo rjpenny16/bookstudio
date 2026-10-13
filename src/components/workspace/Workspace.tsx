@@ -28,6 +28,10 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "export", label: "Export" },
 ];
 
+/** The tab each project was last left on, so reopening a book returns to where you were. */
+const tabKey = (id: string) => `bookstudio:tab:${id}`;
+const isTab = (t: string | null): t is TabId => TABS.some((x) => x.id === t);
+
 export interface Focus {
   pageIndex: number;
   elementId: string | null;
@@ -55,8 +59,13 @@ export function Workspace() {
       if (!p) return setLoaded({ id: params.id, status: "missing" });
       setProject(p);
       setLoaded({ id: params.id, status: "ready" });
-      const hash = window.location.hash.slice(1) as TabId;
-      if (TABS.some((t) => t.id === hash)) setTab(hash);
+      const hash = window.location.hash.slice(1);
+      let last: string | null = null;
+      try {
+        last = localStorage.getItem(tabKey(params.id));
+      } catch {}
+      if (isTab(hash)) setTab(hash);
+      else if (isTab(last)) setTab(last);
     });
     return () => {
       cancelled = true;
@@ -72,6 +81,27 @@ export function Workspace() {
     }, 600);
     return () => clearTimeout(t);
   }, [project, savedAt, markSaved]);
+
+  // Ask before leaving while an edit is still waiting to be saved.
+  const dirty = !!project && project.updatedAt !== savedAt;
+  useEffect(() => {
+    if (!dirty) return;
+    const onLeave = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", onLeave);
+    return () => window.removeEventListener("beforeunload", onLeave);
+  }, [dirty]);
+
+  // Ctrl+S saves now instead of opening the browser's "Save page" dialog.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "s") return;
+      e.preventDefault();
+      const p = useProjectStore.getState().project;
+      if (p) saveProject(p).then(() => markSaved(p.updatedAt));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [markSaved]);
 
   // Undo / redo shortcuts (not while typing in a form field)
   useEffect(() => {
@@ -94,9 +124,25 @@ export function Workspace() {
   const deferred = useDeferredValue(project);
   const report = useMemo(() => (deferred ? runPreflight(deferred) : null), [deferred]);
 
-  const selectTab = (t: TabId) => {
-    setTab(t);
-    history.replaceState(null, "", `#${t}`);
+  const selectTab = useCallback(
+    (t: TabId) => {
+      setTab(t);
+      history.replaceState(null, "", `#${t}`);
+      try {
+        localStorage.setItem(tabKey(params.id), t);
+      } catch {}
+    },
+    [params.id],
+  );
+
+  // Arrow keys, Home and End move between tabs (the WAI-ARIA tabs pattern).
+  const onTabKey = (e: React.KeyboardEvent) => {
+    const i = TABS.findIndex((t) => t.id === tab);
+    const next = e.key === "ArrowRight" ? (i + 1) % TABS.length : e.key === "ArrowLeft" ? (i - 1 + TABS.length) % TABS.length : e.key === "Home" ? 0 : e.key === "End" ? TABS.length - 1 : -1;
+    if (next < 0) return;
+    e.preventDefault();
+    selectTab(TABS[next].id);
+    document.getElementById(`tab-${TABS[next].id}`)?.focus();
   };
 
   const goToIssue = useCallback((issue: Issue) => {
@@ -108,7 +154,7 @@ export function Workspace() {
       selectTab("cover");
     } else if (issue.area === "listing") selectTab("listing");
     else selectTab("interior");
-  }, []);
+  }, [selectTab]);
 
   if (status === "loading") return <div className="page muted">Loading project…</div>;
   if (status === "missing" || !project)
@@ -143,7 +189,7 @@ export function Workspace() {
           {blocking ? ` · ${blocking} blocking` : warnings ? ` · ${warnings} warnings` : " ✓"}
         </button>
         <span className="spacer" />
-        <span className="muted" style={{ fontSize: 12 }} aria-live="polite">
+        <span className="muted" style={{ fontSize: 12 }} aria-live="polite" title="Changes save automatically in this browser (Ctrl+S saves now)">
           {saved ? "Saved" : "Saving…"}
         </span>
         <div className="btn-group">
@@ -156,9 +202,9 @@ export function Workspace() {
         </div>
       </header>
       <div className="ws-tabs">
-        <div className="tabs" role="tablist" aria-label="Project sections">
+        <div className="tabs" role="tablist" aria-label="Project sections" onKeyDown={onTabKey}>
           {TABS.map((t) => (
-            <button key={t.id} role="tab" id={`tab-${t.id}`} aria-controls={`panel-${t.id}`} aria-selected={tab === t.id} className="tab" onClick={() => selectTab(t.id)}>
+            <button key={t.id} role="tab" id={`tab-${t.id}`} aria-controls={`panel-${t.id}`} aria-selected={tab === t.id} tabIndex={tab === t.id ? 0 : -1} className="tab" onClick={() => selectTab(t.id)}>
               {t.label}
               {t.id === "preflight" && blocking > 0 && <span className="badge badge-fail" style={{ marginLeft: 6 }}>{blocking}</span>}
             </button>

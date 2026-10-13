@@ -65,16 +65,24 @@ export function ExportTab({ report, onGoPreflight }: { report: PreflightReport; 
               </button>
             </div>
           ) : (
-            <div className="notice notice-pass">Preflight passed ({report.passed}/{report.total}).</div>
+            <div className="notice notice-pass">
+              No blocking issues. {report.passed} of {report.total} checks pass
+              {report.total - report.passed > 0 ? `; ${report.total - report.passed} more are warnings or notes worth a look before you upload.` : "."}
+            </div>
           )}
           <label className="check">
             <input type="checkbox" checked={approved} onChange={(e) => setApproved(e.target.checked)} />
             <span>I reviewed the interior, cover and listing, and I hold the rights to everything in this book.</span>
           </label>
           <div className="row">
-            <button className="btn btn-primary" disabled={!approved || !!progress} onClick={fullPackage}>
+            <button className="btn btn-primary" aria-describedby={approved ? undefined : "export-needs-approval"} disabled={!approved || !!progress} onClick={fullPackage}>
               Download {draft ? "draft " : ""}KDP package (.zip)
             </button>
+            {!approved && (
+              <span id="export-needs-approval" className="muted" style={{ fontSize: 12 }}>
+                Tick the box above to enable the download.
+              </span>
+            )}
           </div>
           {progress && (
             <div className="stack" aria-live="polite">

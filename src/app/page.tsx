@@ -5,13 +5,29 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { coverGeometry } from "@/lib/kdp/geometry";
 import { parseProjectFile } from "@/lib/export/package";
-import type { Project } from "@/lib/schema/project";
+import { BOOK_TYPES, type Project } from "@/lib/schema/project";
 import { deleteProject, listProjects, loadProject, saveProject, type ProjectSummary } from "@/lib/storage/db";
 import { newId } from "@/lib/util/ids";
 import { PageThumb } from "@/components/workspace/PageThumb";
 import { CostEstimate, emptySetup, EXAMPLES, SetupForm, setupToParams, type SetupState } from "@/components/autopilot/SetupForm";
 import { aiStatus, type AiStatus } from "@/lib/ai/client";
 import { imageStatus, type ImageStatus } from "@/lib/cover/artClient";
+
+type SortId = "recent" | "title" | "pages";
+
+const typeLabel = (t: Project["bookType"]) => BOOK_TYPES.find((b) => b.id === t)?.label ?? t;
+
+/** "Edited 5 min ago", falling back to the date once it is more than a week old. */
+function edited(iso: string): string {
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "Edited just now";
+  if (mins < 60) return `Edited ${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `Edited ${hours} h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `Edited ${days} day${days === 1 ? "" : "s"} ago`;
+  return `Edited ${new Date(iso).toLocaleDateString()}`;
+}
 
 function CoverThumb({ id }: { id: string }) {
   const [p, setP] = useState<Project | null>(null);
@@ -31,6 +47,8 @@ export default function Dashboard() {
   const [setup, setSetup] = useState<SetupState>(emptySetup);
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [images, setImages] = useState<ImageStatus | null>(null);
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<SortId>("recent");
 
   const refresh = () => listProjects().then(setProjects);
   useEffect(() => {
@@ -51,6 +69,19 @@ export default function Dashboard() {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+
+  const duplicate = async (id: string) => {
+    const p = await loadProject(id);
+    if (!p) return;
+    const copy: Project = { ...structuredClone(p), id: newId("prj"), name: `${p.name} (copy)`, updatedAt: new Date().toISOString() };
+    await saveProject(copy);
+    refresh();
+  };
+
+  const q = query.trim().toLowerCase();
+  const shown = (projects ?? [])
+    .filter((p) => !q || `${p.title} ${p.name} ${typeLabel(p.bookType)}`.toLowerCase().includes(q))
+    .sort((a, b) => (sort === "title" ? (a.title || a.name).localeCompare(b.title || b.name) : sort === "pages" ? b.pages - a.pages : b.updatedAt.localeCompare(a.updatedAt)));
 
   return (
     <div className="page">
@@ -111,16 +142,37 @@ export default function Dashboard() {
         <input ref={fileRef} type="file" accept=".json,application/json" hidden onChange={(e) => importFile(e.target.files?.[0])} />
       </div>
       {error && <div className="notice notice-fail" style={{ marginBottom: 16 }}>{error}</div>}
-      <h2>Projects</h2>
+      <div className="row-between projects-head">
+        <h2 style={{ margin: 0 }}>
+          Projects{projects?.length ? <span className="muted" style={{ fontWeight: 500 }}> · {projects.length}</span> : null}
+        </h2>
+        {projects && projects.length > 1 && (
+          <div className="row">
+            <input type="search" aria-label="Search projects" placeholder="Search projects" value={query} onChange={(e) => setQuery(e.target.value)} style={{ width: 220 }} />
+            <select aria-label="Sort projects" value={sort} onChange={(e) => setSort(e.target.value as SortId)} style={{ width: "auto" }}>
+              <option value="recent">Recently edited</option>
+              <option value="title">Title A to Z</option>
+              <option value="pages">Most pages</option>
+            </select>
+          </div>
+        )}
+      </div>
       {projects === null ? (
         <p className="muted">Loading…</p>
       ) : projects.length === 0 ? (
         <div className="empty">
           <p>No books yet. Describe one above, or start from a KDP preset.</p>
         </div>
+      ) : shown.length === 0 ? (
+        <div className="empty">
+          <p>No projects match &ldquo;{query}&rdquo;.</p>
+          <button className="btn btn-sm" onClick={() => setQuery("")}>
+            Clear search
+          </button>
+        </div>
       ) : (
         <div className="project-grid">
-          {projects.map((p) => (
+          {shown.map((p) => (
             <div key={p.id} className="stack" style={{ gap: 6 }}>
               <Link href={`/projects/${p.id}`} className="project-card">
                 <div className="project-thumb">
@@ -128,10 +180,23 @@ export default function Dashboard() {
                 </div>
                 <strong style={{ fontSize: 13 }}>{p.title || p.name}</strong>
               </Link>
-              <div className="row-between">
-                <span className="muted" style={{ fontSize: 12 }}>
-                  {p.trimId}" · {p.pages} pp · {new Date(p.updatedAt).toLocaleDateString()}
-                </span>
+              <span className="muted" style={{ fontSize: 12 }}>
+                {p.title && p.name !== p.title && (
+                  <>
+                    {p.name}
+                    <br />
+                  </>
+                )}
+                {typeLabel(p.bookType)} · {p.trimId}" · {p.pages} pp
+                <br />
+                <time dateTime={p.updatedAt} title={new Date(p.updatedAt).toLocaleString()}>
+                  {edited(p.updatedAt)}
+                </time>
+              </span>
+              <div className="row" style={{ gap: 4 }}>
+                <button className="btn btn-ghost btn-sm" aria-label={`Duplicate ${p.title || p.name}`} onClick={() => duplicate(p.id)}>
+                  Duplicate
+                </button>
                 <button
                   className="btn btn-ghost btn-sm btn-danger"
                   aria-label={`Delete ${p.title || p.name}`}
