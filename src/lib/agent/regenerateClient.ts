@@ -16,6 +16,8 @@ import { ART_CANDIDATES } from "./constants";
 import { contentCall } from "./content";
 import { regenerateSection } from "./regenerate";
 import { genreOfProject } from "@/lib/cover/genres";
+import { keepCandidates } from "@/lib/cover/artLibrary";
+import { keepInLibrary } from "@/lib/storage/artLibrary";
 
 /**
  * The Review screen's "Regenerate with feedback" actions. Each reruns one
@@ -106,11 +108,12 @@ export async function regenerateCoverWithAi(project: Project, feedback: string, 
     const palette = PALETTES.find((p) => p.id === direction.palette) ?? c.palette;
     const gen = await generateCandidates(direction.concepts, layout, coverGeometry(project.spec, project.interior.pages.length), signal, genreOfProject(project).artStyle);
     runs.push(...gen.runs);
+    keepInLibrary(project, gen.candidates, gen.runs);
     const pick = await pickCandidate(project, gen.candidates, layout, palette, signal);
     if (pick.run) runs.push(pick.run);
     let next = produce(project, (d) => {
       const prev = d.coverArt?.candidates ?? [];
-      d.coverArt = { candidates: [...gen.candidates, ...prev].slice(0, 8), chosenId: gen.candidates[pick.index].id, pickReason: pick.reason };
+      d.coverArt = { candidates: keepCandidates([...gen.candidates, ...prev], gen.candidates[pick.index].id), chosenId: gen.candidates[pick.index].id, pickReason: pick.reason };
     });
     next = await designCover(next, { ...c, templateId: layout, palette, candidateId: gen.candidates[pick.index].id });
     const failed = gen.errors.length ? ` ${gen.errors.length} image request(s) failed: ${gen.errors[0]}` : "";

@@ -22,6 +22,7 @@ import { assembleBook, clampPageTarget, describeBook, planSections, validateBlue
 import { ART_CANDIDATES } from "./constants";
 import { contentCall, pool, refineContent, reviewContent, writeSection, type ContentAsk, type ContentRequest, type ContentReview } from "./content";
 import { genreOf, genreOfProject } from "@/lib/cover/genres";
+import { keepInLibrary } from "@/lib/storage/artLibrary";
 
 /**
  * The publishing agent. It is a deterministic workflow with model calls inside
@@ -314,6 +315,8 @@ export async function runAutopilot(
         }
         if (pick.textInArt.includes(pick.index)) notes.push("The cover art may contain stray lettering; check it closely or regenerate it.");
       }
+      // Every image goes to the art library, so the ones not picked can be reused on later books.
+      keepInLibrary(project, gen.candidates, runs);
       project = produce(project, (d) => {
         d.coverArt = { candidates: gen.candidates, chosenId: gen.candidates[pick.index].id, pickReason: pick.reason };
       });
