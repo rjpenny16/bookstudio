@@ -496,15 +496,23 @@ export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (ta
               {report.blocking} blocking preflight issue{report.blocking > 1 ? "s" : ""}. You can export a draft, but KDP will likely reject it.
             </div>
           ) : (
-            <div className="notice notice-pass">Preflight passed ({report.passed}/{report.total}).</div>
+            <div className="notice notice-pass">
+              No blocking issues. {report.passed} of {report.total} checks pass
+              {report.total - report.passed > 0 ? `; ${report.total - report.passed} more are warnings or notes worth a look before you upload.` : "."}
+            </div>
           )}
           <label className="check">
             <input id="approve-export" type="checkbox" checked={approved} onChange={(e) => setApproved(e.target.checked)} />
             <span>I reviewed the cover, pages and listing, and I hold the rights to everything in this book.</span>
           </label>
-          <button className="btn btn-primary" disabled={!approved || busy !== null} onClick={exportPackage}>
+          <button className="btn btn-primary" aria-describedby={approved ? undefined : "export-needs-approval"} disabled={!approved || busy !== null} onClick={exportPackage}>
             {busy === "export" && <span className="spinner" />} Export {report.blocking ? "draft " : ""}KDP package (.zip)
           </button>
+          {!approved && (
+            <span id="export-needs-approval" className="muted" style={{ fontSize: 12 }}>
+              Tick the box above to enable the export.
+            </span>
+          )}
           {progress && (
             <div className="progress" aria-label={progress.label}>
               <div style={{ width: `${Math.round(progress.f * 100)}%` }} />

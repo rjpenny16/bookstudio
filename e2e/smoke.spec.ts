@@ -396,3 +396,35 @@ test("settings show capabilities and test the connection", async ({ page }) => {
   await expect(page.getByRole("status").filter({ hasText: /Failed: Offline mode can't look at images/ })).toBeVisible();
   await expect(page.getByText(/never sent to or stored in this browser/)).toBeVisible();
 });
+
+test("projects can be searched, sorted and duplicated, and a book reopens on the tab it was left on", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: "Menu" })).toBeHidden();
+  for (const name of ["Alpha Notes", "Zeta Log"]) {
+    await page.goto("/new");
+    await page.getByLabel("Working title").fill(name);
+    await page.getByRole("button", { name: "Create book" }).click();
+    await expect(page).toHaveURL(/\/projects\/prj_/);
+  }
+
+  // Arrow keys move between tabs, and the last tab is remembered for this book.
+  await page.getByRole("tab", { name: "Cover" }).click();
+  await page.getByRole("tab", { name: "Cover" }).press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "Listing" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Listing" })).toBeFocused();
+  const url = page.url().replace(/#.*/, "");
+  await page.goto("/");
+  await page.goto(url);
+  await expect(page.getByRole("tab", { name: "Listing" })).toHaveAttribute("aria-selected", "true");
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Duplicate Zeta Log" }).first().click();
+  await expect(page.getByText("Zeta Log (copy)").first()).toBeVisible();
+  await page.getByLabel("Search projects").fill("alpha notes");
+  await expect(page.getByRole("link", { name: /Alpha Notes/ })).toHaveCount(await page.locator(".project-card").count());
+  await page.getByLabel("Search projects").fill("no such book");
+  await expect(page.getByText(/No projects match/)).toBeVisible();
+  await page.getByRole("button", { name: "Clear search" }).click();
+  await page.getByLabel("Sort projects").selectOption("title");
+  await expect(page.locator(".project-card").first()).toContainText("Alpha Notes");
+});
