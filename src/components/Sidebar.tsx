@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { useRunnerState } from "@/lib/inbox/runnerState";
 
 const NAV: { group: string; items: { href: string; label: string }[] }[] = [
-  { group: "Create", items: [{ href: "/", label: "Projects" }, { href: "/new", label: "New book" }, { href: "/autopilot", label: "AI Autopilot" }] },
+  { group: "Create", items: [{ href: "/", label: "Projects" }, { href: "/new", label: "New book" }, { href: "/autopilot", label: "AI Autopilot" }, { href: "/inbox", label: "Inbox" }] },
   { group: "Research", items: [{ href: "/research", label: "Research boards" }] },
   { group: "Publish", items: [{ href: "/tools", label: "KDP calculators" }] },
   { group: "Measure", items: [{ href: "/sales", label: "Sales reports" }] },
@@ -14,6 +15,7 @@ const NAV: { group: string; items: { href: string; label: string }[] }[] = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const runner = useRunnerState();
   // On phones the links fold away behind a Menu button and close again after a choice.
   const [open, setOpen] = useState(false);
   const [openedAt, setOpenedAt] = useState(pathname);
@@ -42,6 +44,11 @@ export function Sidebar() {
             {g.items.map((it) => (
               <Link key={it.href} href={it.href} className="nav-link" aria-current={active(it.href) ? "page" : undefined}>
                 {it.label}
+                {it.href === "/inbox" && runner.building && (
+                  <span className="badge badge-accent" style={{ marginLeft: 6 }} title={`Building "${runner.building}"`}>
+                    building
+                  </span>
+                )}
               </Link>
             ))}
           </div>

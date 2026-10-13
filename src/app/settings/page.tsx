@@ -7,6 +7,7 @@ import { downloadBlob } from "@/lib/export/package";
 import { RULES_VERSION } from "@/lib/kdp/rules";
 import { FONTS } from "@/lib/render/fonts";
 import { getValue, listProjects, loadProject } from "@/lib/storage/db";
+import { PhoneInboxCard } from "@/components/inbox/PhoneInboxCard";
 
 type Capability = "text" | "vision" | "images";
 interface Capabilities {
@@ -156,6 +157,7 @@ export default function Settings() {
             <li>Generated images are marked AI-generated, so the KDP image disclosure is pre-filled.</li>
           </ul>
         </div>
+        <PhoneInboxCard />
         <div className="card stack">
           <h2 style={{ margin: 0 }}>Your data</h2>
           <p className="muted" style={{ margin: 0 }}>{count ?? "…"} project(s) stored in this browser. Clearing site data deletes them, so export regularly.</p>
