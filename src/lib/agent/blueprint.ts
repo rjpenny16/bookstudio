@@ -80,7 +80,7 @@ export interface PlanInput extends BlueprintContext {
   pageTarget: number;
 }
 
-interface Sizing {
+export interface Sizing {
   largePrint: boolean;
   wideTrim: boolean;
 }
@@ -107,7 +107,7 @@ const wsSize = (z: Sizing, d: "easy" | "medium" | "hard") => WS_SIZE[`${z.wideTr
 const capDifficulty = (d: BlueprintOutput["sections"][number]["difficulty"]): "easy" | "medium" | "hard" => (d === "expert" ? "hard" : d);
 
 /** A puzzle config holding `n` puzzles, with placeholder content (real content is filled in later). */
-function puzzleConfig(kind: SectionKind, n: number, difficulty: BlueprintOutput["sections"][number]["difficulty"], z: Sizing): GeneratorConfig {
+export function puzzleConfig(kind: SectionKind, n: number, difficulty: BlueprintOutput["sections"][number]["difficulty"], z: Sizing): GeneratorConfig {
   const d = capDifficulty(difficulty);
   const seed = randomSeed();
   switch (kind) {
@@ -146,7 +146,7 @@ function fitPuzzles(make: (n: number) => GeneratorConfig, budget: number): numbe
   return n;
 }
 
-function puzzleContent(cfg: GeneratorConfig, theme: string, difficulty: "easy" | "medium" | "hard"): ContentNeed | null {
+export function puzzleContent(cfg: GeneratorConfig, theme: string, difficulty: "easy" | "medium" | "hard"): ContentNeed | null {
   if (cfg.kind === "word-search") return { task: "word-lists", theme, count: cfg.puzzles.length, wordsPerPuzzle: cfg.size <= 12 ? 10 : cfg.size <= 15 ? 15 : 18, maxLength: wordSearchMaxLength(cfg.size), difficulty: cfg.difficulty };
   // Longer words are harder to unscramble.
   if (cfg.kind === "word-scramble") return { task: "word-lists", theme, count: cfg.puzzles.length, wordsPerPuzzle: 15, maxLength: { easy: 6, medium: 8, hard: 10 }[cfg.difficulty ?? "medium"], difficulty };

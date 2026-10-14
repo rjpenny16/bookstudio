@@ -32,6 +32,7 @@ const PUZZLES_WITHOUT_TEXT = ["puzzle"];
 
 export function estimateRun(i: EstimateInput): RunEstimate {
   if (i.provider === "offline") return { modelCalls: [0, 0], tokens: [0, 0], images: 0, visionCalls: 0, offline: true };
+  if (i.bookType === "mystery") return mysteryEstimate(i);
   // brief, blueprint, listing, listing critique, cover design pick, visual review;
   // plus a second visual review when the first sends the cover back for one redesign.
   let low = 6;
@@ -58,6 +59,30 @@ export function estimateRun(i: EstimateInput): RunEstimate {
     high += 2;
     tokLow += 2_500 + 6_000;
     tokHigh += 6_000 + 14_000;
+    visionCalls++;
+    images = ART_CANDIDATES;
+  }
+  return { modelCalls: [low, high], tokens: [round(tokLow), round(tokHigh)], images, visionCalls, offline: false };
+}
+
+/**
+ * A mystery: brief, the case plan (one re-plan if it fails the fair-play
+ * check, one if the test reader solves it too soon or not at all) and the
+ * test reader, one call per chapter (6-14) plus the reveal, the listing and
+ * its critique, the cover pick and the visual review.
+ */
+function mysteryEstimate(i: EstimateInput): RunEstimate {
+  let low = 6 + 2 + 7;
+  let high = 7 + 5 + 15;
+  let tokLow = 2_500 + 10_000 + 4_000 + 7 * 5_000 + 4_000 + 5_000 + 5_000 + 9_000;
+  let tokHigh = 6_000 + 3 * 20_000 + 2 * 8_000 + 15 * 10_000 + 9_000 + 12_000 + 10_000 + 20_000 * 2;
+  let visionCalls = 2;
+  let images = 0;
+  if (i.coverArt) {
+    low += 2;
+    high += 2;
+    tokLow += 8_500;
+    tokHigh += 20_000;
     visionCalls++;
     images = ART_CANDIDATES;
   }

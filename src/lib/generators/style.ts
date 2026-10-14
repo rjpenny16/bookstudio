@@ -62,6 +62,7 @@ const FACES: Record<GenreId, Faces> = {
   journal: { heading: { family: "DM Serif Display", bold: false }, body: "Lora", label: "Raleway", ornament: "diamond" },
   planner: { heading: { family: "Montserrat", bold: true }, body: "Inter", label: "Inter", ornament: "bars" },
   "log-book": { heading: { family: "Roboto Slab", bold: true }, body: "Inter", label: "Inter", ornament: "double-rule" },
+  mystery: { heading: { family: "Playfair Display", bold: true }, body: "Lora", label: "Oswald", ornament: "diamond" },
 };
 
 /** The look books had before styles: Lora headings, Inter labels, a plain rule. */

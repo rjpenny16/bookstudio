@@ -15,8 +15,9 @@ export interface InferredSetup {
 }
 
 /** Book types autopilot can build (coloring needs your own art; "other" has no plan). */
-export const AUTOPILOT_BOOK_TYPES: BookType[] = ["notebook", "journal", "planner", "log-book", "puzzle", "activity"];
+export const AUTOPILOT_BOOK_TYPES: BookType[] = ["notebook", "journal", "planner", "log-book", "puzzle", "activity", "mystery"];
 
+const MYSTERY = /\b(murder|mystery|mysteries|whodunn?it|detective|sleuth|crime scene|case file|cold case)\b/i;
 const PUZZLE = /\b(sudoku|word ?search(es)?|word ?find|maze|mazes|cryptograms?|cipher|puzzles?|number ?search|word ?scrambles?|jumble|brain games?|logic)\b/i;
 const ACTIVITY = /\b(activity|activities|coloring|colouring|dot[- ]to[- ]dot|tracing)\b/i;
 const PLANNER = /\b(planner|agenda|organi[sz]er|calendar|schedule|habit tracker|weekly|monthly|daily plan|lesson plan)\b/i;
@@ -31,7 +32,11 @@ export function inferSetup(topic: string, audience: string): InferredSetup {
   const large = LARGE.test(text);
   let bookType: BookType = "journal";
   let why = "default for writing books";
-  if (PUZZLE.test(topic)) {
+  if (MYSTERY.test(topic)) {
+    // Checked before puzzles: "murder mystery puzzle book" is a story with puzzles in it.
+    bookType = "mystery";
+    why = `"${topic.match(MYSTERY)![0]}" suggests a murder mystery`;
+  } else if (PUZZLE.test(topic)) {
     bookType = kids && ACTIVITY.test(topic) ? "activity" : "puzzle";
     why = `"${topic.match(PUZZLE)![0]}" is a puzzle`;
   } else if (ACTIVITY.test(topic)) {
@@ -58,6 +63,9 @@ export function inferSetup(topic: string, audience: string): InferredSetup {
   } else if (bookType === "puzzle" || bookType === "activity") {
     trimId = "8.5x11";
     trimWhy = "puzzle and activity books sell best at letter size";
+  } else if (bookType === "mystery") {
+    trimId = "8.5x11";
+    trimWhy = "the puzzles that hold the clues need room to solve on the page";
   } else if (kids) {
     trimId = "8.5x11";
     trimWhy = "kids need room to write and draw";

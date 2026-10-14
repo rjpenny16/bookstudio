@@ -9,7 +9,7 @@ import type { BookType, Project } from "@/lib/schema/project";
  * template is used.
  */
 
-export type GenreId = "puzzle" | "large-print" | "kids" | "wellness" | "faith" | "journal" | "planner" | "log-book";
+export type GenreId = "puzzle" | "large-print" | "kids" | "wellness" | "faith" | "journal" | "planner" | "log-book" | "mystery";
 
 export interface TypeSystem {
   /** Display face for the main title words. */
@@ -115,6 +115,15 @@ export const GENRES: Record<GenreId, GenreProfile> = {
     artStyle: "detailed vintage field-guide illustration with a textured, natural palette",
     clutterOk: 0.1,
   },
+  mystery: {
+    id: "mystery",
+    label: "Murder mystery",
+    templates: ["framed", "minimal", "band", "label"],
+    palettes: ["charcoal", "midnight", "plum", "dusk"],
+    type: { hero: "Abril Fatface", heroBold: false, heroUpper: false, support: "Oswald", supportBold: false, supportUpper: true, kicker: "Oswald", body: "Lora" },
+    artStyle: "moody vintage noir illustration with strong silhouettes, one warm light source and deep shadows; atmospheric, never gory",
+    clutterOk: 0.1,
+  },
 };
 
 const LARGE_PRINT = /large[- ]print|big print|senior|low vision|elderly|retire/i;
@@ -133,6 +142,8 @@ export function genreOf(f: GenreFacts): GenreProfile {
   const words = `${f.topic} ${f.audience}`;
   const puzzleLike = f.bookType === "puzzle" || f.bookType === "activity";
   if (puzzleLike && LARGE_PRINT.test(words)) return GENRES["large-print"];
+  // A mystery keeps its noir look even in large print (the interior grows its type instead); kids get the kids' look.
+  if (f.bookType === "mystery") return KIDS.test(words) ? GENRES.kids : GENRES.mystery;
   if (f.bookType === "activity" || f.bookType === "coloring" || KIDS.test(words)) return GENRES.kids;
   if (puzzleLike) return GENRES.puzzle;
   if (f.bookType === "planner") return GENRES.planner;

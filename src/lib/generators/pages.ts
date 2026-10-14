@@ -2,17 +2,17 @@ import { interiorGeometry, symmetricContentBox, type Box } from "@/lib/kdp/geome
 import { line, path, pattern, rect, text } from "@/lib/schema/elements";
 import type { ArtifactProvenance, Asset, Element, Page, PrintSpec } from "@/lib/schema/project";
 import { measureLines, textWidth } from "@/lib/render/metrics";
-import { approxMeasure, textBlockHeight, wrapText } from "@/lib/render/textLayout";
+import { approxMeasure, lineAdvance, textBlockHeight, wrapText } from "@/lib/render/textLayout";
 import { inToPt, newId } from "@/lib/util/ids";
 import { addDays, addMonths, monthGrid, monthLabel, parseStart, shortDate, startOfWeek, WEEKDAYS, WEEKDAYS_SHORT } from "./calendar";
 import { generateCrossword, normalizeAnswer, type Crossword, type CrosswordDifficulty } from "./crossword";
 import { generateCryptogram, type Cryptogram } from "./cryptogram";
 import { generateMaze, mazeSolutionPath, mazeWallsPath, type Maze } from "./maze";
 import { createRng, randInt, randomSeed } from "./rng";
-import { scrambleWords } from "./scramble";
+import { scrambleWords, secretOrder } from "./scramble";
 import { CLASSIC_STYLE, LARGE_PRINT_MIN_PT, ornament, type InteriorStyle } from "./style";
 import { generateSudoku, type Sudoku, type SudokuDifficulty } from "./sudoku";
-import { DIGITS, generateWordSearch, type WordSearch, type WordSearchDifficulty } from "./wordsearch";
+import { DIGITS, generateWordSearch, normalizeWord, type WordSearch, type WordSearchDifficulty } from "./wordsearch";
 
 /**
  * Which part of a puzzle section to emit. "all" (default) prints the puzzles
@@ -28,7 +28,12 @@ interface PuzzleCommon {
   part?: PuzzlePart;
   /** Number of the first puzzle, so numbering continues across sections. */
   startNumber?: number;
+  /** The printed number of each puzzle, in place of startNumber + i (a mystery numbers its puzzles by clue). */
+  numbers?: number[];
 }
+
+/** The number printed on puzzle `i` of a config. */
+const numberOf = (cfg: PuzzleCommon, i: number) => cfg.numbers?.[i] ?? (cfg.startNumber ?? 1) + i;
 
 export type GeneratorConfig =
   | { kind: "blank"; count: number }
@@ -45,6 +50,10 @@ export type GeneratorConfig =
   | { kind: "title-page"; title: string; subtitle: string; author: string }
   | { kind: "belongs-to" }
   | { kind: "text-page"; title: string; body: string; aiRunId?: string }
+  /** Prose that flows over `pages` pages (a mystery's chapters), set as large as it fits. */
+  | { kind: "story"; title: string; kicker?: string; body: string; pages: number; aiRunId?: string }
+  /** A mystery's final deduction: one letter from each of several earlier clues spells where the proof is. `solved` fills it in for the answer key. */
+  | { kind: "deduction"; title: string; body: string; picks: { clue: number; letter: number }[]; answer: string; solved?: boolean; aiRunId?: string }
   | {
       kind: "section-divider";
       title: string;
@@ -65,17 +74,20 @@ export type GeneratorConfig =
   | ({ kind: "sudoku"; count: number; difficulty: SudokuDifficulty; perPage: 1 | 2 | 4; /** Solved grids per answer-key page (default 6; large print uses 4). */ keysPerPage?: 4 | 6 } & PuzzleCommon)
   | ({
       kind: "word-search";
-      puzzles: { title: string; words: string[] }[];
+      /** `message`: a clue hidden in the leftover letters (mystery books). */
+      puzzles: { title: string; words: string[]; message?: string }[];
       size: number;
       difficulty: WordSearchDifficulty;
       aiRunId?: string;
     } & PuzzleCommon)
   | ({ kind: "number-search"; count: number; size: number; difficulty: WordSearchDifficulty } & PuzzleCommon)
   | ({ kind: "maze"; count: number; difficulty: "easy" | "medium" | "hard" } & PuzzleCommon)
-  | ({ kind: "word-scramble"; puzzles: { title: string; words: string[] }[]; difficulty?: "easy" | "medium" | "hard"; aiRunId?: string } & PuzzleCommon)
+  /** `secret`: a word spelled by one shaded letter of each answer, top to bottom (mystery books). */
+  | ({ kind: "word-scramble"; puzzles: { title: string; words: string[]; secret?: string }[]; difficulty?: "easy" | "medium" | "hard"; aiRunId?: string } & PuzzleCommon)
   | ({
       kind: "crossword";
-      puzzles: { title: string; entries: { answer: string; clue: string }[] }[];
+      /** `key`: the answer that is a mystery's clue, starred and shaded. */
+      puzzles: { title: string; entries: { answer: string; clue: string }[]; key?: string }[];
       /** Most squares across or down. */
       size: number;
       difficulty: CrosswordDifficulty;
@@ -147,6 +159,7 @@ export const GENERATORS: GeneratorInfo[] = [
   { kind: "title-page", label: "Title page", group: "Front matter", description: "Title, subtitle and author", defaults: () => ({ kind: "title-page", title: "Title", subtitle: "", author: "" }) },
   { kind: "belongs-to", label: "This book belongs to", group: "Front matter", description: "Ownership page", defaults: () => ({ kind: "belongs-to" }) },
   { kind: "text-page", label: "Text page", group: "Front matter", description: "Heading and paragraphs: how to use, introduction, thank-you", defaults: () => ({ kind: "text-page", title: "How to Use This Book", body: "Write a short introduction here." }) },
+  { kind: "story", label: "Story chapter", group: "Front matter", description: "A chapter of prose that runs over as many pages as you set", defaults: () => ({ kind: "story", title: "Chapter One", kicker: "Chapter 1", body: "Write the chapter here.\n\nA blank line starts a new paragraph.", pages: 2 }) },
   { kind: "section-divider", label: "Section divider", group: "Front matter", description: "Full-page section title", defaults: () => ({ kind: "section-divider", title: "Part One", subtitle: "" }) },
   { kind: "table-of-contents", label: "Table of contents", group: "Front matter", description: "Section titles with page numbers", defaults: () => ({ kind: "table-of-contents", entries: [{ title: "Section", page: 5 }] }) },
   { kind: "blank", label: "Blank pages", group: "Front matter", description: "Empty pages", defaults: () => ({ kind: "blank", count: 2 }) },
@@ -491,6 +504,174 @@ function textPage(ctx: Ctx, title: string, body: string, aiRunId?: string): Page
   return page(ctx, "text-page", els, { label: title.slice(0, 40) || "Text page" });
 }
 
+/** Smallest story type: a chapter shrinks to fit its pages, but never below this. */
+const storyMin = (st: InteriorStyle) => (st.largePrint ? LARGE_PRINT_MIN_PT : st.genre === "kids" ? 12 : 10);
+const STORY_LEADING = 1.42;
+
+/**
+ * A chapter set at `size`: the lines of each page (a blank line between
+ * paragraphs, none at the top of a page) and the room the heading takes on
+ * the first one.
+ */
+function layoutStory(ctx: Ctx, title: string, kicker: string, body: string, size: number): { pages: string[][]; headH: number } {
+  const b = ctx.box;
+  const st = ctx.style;
+  let headH = 0;
+  if (kicker.trim()) headH += Math.max(st.sizes.small, 11) * 1.13 + 10;
+  if (title.trim()) headH += headingBlock(ctx, title, b.y, Math.round(st.sizes.pageTitle * 1.1)).height + 10 + ornamentElements(ctx, 0, 0, 70).height + 18;
+  // Lines that fit a height, measured the way text is drawn (the first line takes the font's height, the rest its leading).
+  const fit = (h: number) => Math.max(0, Math.floor((h - textBlockHeight(1, size, STORY_LEADING)) / lineAdvance(size, STORY_LEADING)) + 1);
+  const paras = body.replace(/\r/g, "").split(/\n\s*\n|\n/).map((x) => x.trim()).filter(Boolean);
+  const pages: string[][] = [[]];
+  let room = fit(b.height - headH);
+  for (const para of paras) {
+    const lines = measureLines(para, st.body, false, size, b.width);
+    // A blank line between paragraphs, unless the page has just begun.
+    if (pages[pages.length - 1].length) lines.unshift("");
+    for (const ln of lines) {
+      if (room <= 0) {
+        pages.push([]);
+        room = fit(b.height);
+        if (!ln) continue;
+      }
+      pages[pages.length - 1].push(ln);
+      room--;
+    }
+  }
+  return { pages, headH };
+}
+
+function storyPages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "story" }>): Page[] {
+  const b = ctx.box;
+  const st = ctx.style;
+  const count = Math.max(1, cfg.pages);
+  const kicker = cfg.kicker ?? "";
+  // The largest size (half points) at which the chapter fits its pages; at the smallest size, overflow stays on the last page.
+  let size = st.sizes.body;
+  let lay = layoutStory(ctx, cfg.title, kicker, cfg.body, size);
+  while (lay.pages.length > count && size > storyMin(st)) {
+    size -= 0.5;
+    lay = layoutStory(ctx, cfg.title, kicker, cfg.body, size);
+  }
+  if (lay.pages.length > count) lay.pages.splice(count - 1, lay.pages.length, lay.pages.slice(count - 1).flat());
+  const ai = (el: Element) => (cfg.aiRunId ? tag(ctx, el, { origin: "ai-generated", runId: cfg.aiRunId }) : el);
+  return Array.from({ length: count }, (_, n) => {
+    const els: Element[] = [];
+    let top = b.y;
+    if (n === 0) {
+      if (kicker.trim()) {
+        const ks = Math.max(st.sizes.small, 11);
+        els.push(text({ x: b.x, y: top, width: b.width, height: ks * 1.13, text: kicker.toUpperCase(), fontSize: ks, fontFamily: st.label, bold: true, color: "#555555", align: "center", letterSpacing: 0.2, name: "Chapter number" }));
+        top += ks * 1.13 + 10;
+      }
+      if (cfg.title.trim()) {
+        const head = headingBlock(ctx, cfg.title, top, Math.round(st.sizes.pageTitle * 1.1));
+        els.push(ai(head.el));
+        const o = ornamentElements(ctx, b.x + b.width / 2, top + head.height + 10, 70);
+        els.push(...o.els);
+      }
+      top = b.y + lay.headH;
+    }
+    const lines = lay.pages[n] ?? [];
+    if (lines.length)
+      els.push(ai(text({ x: b.x, y: top, width: b.width, height: textBlockHeight(lines.length, size, STORY_LEADING), text: lines.join("\n"), fontSize: size, fontFamily: st.body, color: INK, align: "left", lineHeight: STORY_LEADING, name: "Story" })));
+    return page(ctx, "story", els, { label: n === 0 ? cfg.title.slice(0, 40) || "Story" : `${cfg.title.slice(0, 32) || "Story"} (cont.)` });
+  });
+}
+
+/* --------------------------- mystery clue boxes --------------------------- */
+
+/**
+ * The "Case clue" box under a mystery puzzle: what to do, and one square per
+ * letter of the clue for the reader to fill in (the answer key fills them).
+ */
+function clueBox(ctx: Ctx, width: number, how: string, answer: string, solved = false): { height: number; draw: (x: number, y: number) => Element[] } {
+  const st = ctx.style;
+  const pad = 10;
+  const ls = st.sizes.small;
+  const inner = width - pad * 2;
+  const howH = textBlockHeight(measureLines(how, st.body, false, ls, inner).length, ls, 1.25);
+  const words = answer.toUpperCase().split(/\s+/).map((w) => normalizeWord(w)).filter(Boolean);
+  const longest = Math.max(1, ...words.map((w) => w.length));
+  const cs = Math.max(11, Math.min(st.largePrint ? 26 : 20, inner / longest));
+  const gap = cs * 0.6;
+  // Words wrap onto more rows of squares when the clue is too long for one.
+  const rows: { word: string; x: number }[][] = [[]];
+  let cx = 0;
+  for (const w of words) {
+    const ww = w.length * cs;
+    if (cx > 0 && cx + ww > inner) {
+      rows.push([]);
+      cx = 0;
+    }
+    rows[rows.length - 1].push({ word: w, x: cx });
+    cx += ww + gap;
+  }
+  const rowH = cs + 6;
+  const height = pad + ls * 1.13 + 4 + howH + 8 + rows.length * rowH + pad - 6;
+  const draw = (x: number, y: number): Element[] => {
+    const els: Element[] = [rect({ x, y, width, height, fill: "#f3f3f3", stroke: INK, strokeWidth: 0.8, cornerRadius: 6, name: "Case clue box" })];
+    els.push(text({ x: x + pad, y: y + pad, width: inner, height: ls * 1.13, text: "CASE CLUE", fontSize: ls, bold: true, fontFamily: st.label, color: INK, letterSpacing: 0.15, name: "Case clue" }));
+    els.push(text({ x: x + pad, y: y + pad + ls * 1.13 + 4, width: inner, height: howH, text: how, fontSize: ls, fontFamily: st.body, color: INK, lineHeight: 1.25, name: "Case clue how-to" }));
+    let ry = y + pad + ls * 1.13 + 4 + howH + 8;
+    for (const row of rows) {
+      const rowW = row.length ? row[row.length - 1].x + row[row.length - 1].word.length * cs : 0;
+      const ox = x + pad + (inner - rowW) / 2;
+      for (const { word, x: wx } of row)
+        [...word].forEach((ch, k) => {
+          els.push(rect({ x: ox + wx + k * cs, y: ry, width: cs, height: cs, fill: "#ffffff", stroke: INK, strokeWidth: 0.7 }));
+          if (solved) els.push(cellText(ox + wx + k * cs, ry, cs, ch, cs * 0.58, { bold: true, family: st.label }));
+        });
+      ry += rowH;
+    }
+    return els;
+  };
+  return { height, draw };
+}
+
+const ORDINAL = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+
+/**
+ * The final deduction page: the reader takes one letter from each listed
+ * clue (from their case notes) and the letters, in order, spell the answer.
+ */
+function deductionPage(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "deduction" }>): Page {
+  const b = ctx.box;
+  const st = ctx.style;
+  const els: Element[] = [];
+  const head = headingBlock(ctx, cfg.solved ? `${cfg.title}: Solution` : cfg.title, b.y, Math.round(st.sizes.pageTitle * 1.1));
+  els.push(head.el);
+  let y = b.y + head.height + 14;
+  const body = cfg.body.trim();
+  if (body) {
+    const h = textBlockHeight(measureLines(body, st.body, false, st.sizes.body, b.width).length, st.sizes.body, 1.35);
+    els.push(text({ x: b.x, y, width: b.width, height: h, text: body, fontSize: st.sizes.body, fontFamily: st.body, color: INK, lineHeight: 1.35, name: "Deduction how-to" }));
+    y += h + 18;
+  }
+  const answer = normalizeWord(cfg.answer);
+  const size = st.sizes.body;
+  const cs = Math.min(st.largePrint ? 28 : 24, size * 2);
+  // Two columns only for a long list on a wide page; rows tighten a little if the list is long.
+  const cols = cfg.picks.length > 10 && b.width >= 420 ? 2 : 1;
+  const colW = b.width / cols;
+  const perCol = Math.ceil(cfg.picks.length / cols);
+  const rowH = Math.max(cs + 2, Math.min(cs + 8, (b.y + b.height - y - 140) / Math.max(1, perCol)));
+  cfg.picks.forEach((p, k) => {
+    const col = Math.floor(k / perCol);
+    const x = b.x + col * colW;
+    const ry = y + (k % perCol) * rowH;
+    const label = `${k + 1}.  The ${ORDINAL(p.letter)} letter of clue ${p.clue}`;
+    els.push(text({ x, y: ry + (cs - size * 1.13) / 2, width: colW - cs - 16, height: size * 1.13, text: label, fontSize: size, fontFamily: st.body, color: INK }));
+    els.push(rect({ x: x + colW - cs - 12, y: ry, width: cs, height: cs, fill: "#ffffff", stroke: INK, strokeWidth: 0.8 }));
+    if (cfg.solved && answer[k]) els.push(cellText(x + colW - cs - 12, ry, cs, answer[k], cs * 0.58, { bold: true, family: st.label }));
+  });
+  y += perCol * rowH + 20;
+  const box = clueBox(ctx, b.width, "Copy the letters across, in order. They spell where the final proof is waiting.", answer, cfg.solved);
+  els.push(...box.draw(b.x, Math.min(y, b.y + b.height - box.height)));
+  const out = page(ctx, "deduction", els, { label: cfg.solved ? `${cfg.title} solution` : cfg.title });
+  return cfg.aiRunId ? { ...out, elements: out.elements.map((e) => (e.type === "text" && e.name === "Deduction how-to" ? tag(ctx, e, { origin: "ai-generated", runId: cfg.aiRunId }) : e)) } : out;
+}
+
 interface DividerParts {
   title: string;
   subtitle: string;
@@ -765,19 +946,24 @@ function wordSearchBlock(ws: WordSearch, x: number, y: number, size: number, sol
 
 function wordSearchPages(
   ctx: Ctx,
-  cfg: { puzzles: { title: string; words: string[] }[]; size: number; difficulty: WordSearchDifficulty; aiRunId?: string } & PuzzleCommon,
+  cfg: { puzzles: { title: string; words: string[]; message?: string }[]; size: number; difficulty: WordSearchDifficulty; aiRunId?: string } & PuzzleCommon,
   kind = "word-search",
   alphabet?: string,
 ): Page[] {
-  const results = cfg.puzzles.map((p, i) => ({ title: p.title, ws: generateWordSearch(p.words, cfg.size, cfg.difficulty, cfg.seed + i, alphabet) }));
-  const first = cfg.startNumber ?? 1;
+  const results = cfg.puzzles.map((p, i) => ({ title: p.title, ws: generateWordSearch(p.words, cfg.size, cfg.difficulty, cfg.seed + i, alphabet, p.message), message: p.message?.trim().toUpperCase() ?? "" }));
   const prov: ArtifactProvenance | undefined = cfg.aiRunId ? { origin: "ai-generated", runId: cfg.aiRunId } : undefined;
   const pages: Page[] = !showPuzzles(cfg.part)
     ? []
-    : results.map(({ title, ws }, i) => {
+    : results.map(({ title, ws, message }, i) => {
         const b = ctx.box;
         const st = ctx.style;
-        const head = headingBlock(ctx, `${first + i}. ${title}`, b.y);
+        const head = headingBlock(ctx, `${numberOf(cfg, i)}. ${title}`, b.y);
+        const nth = ({ 2: "second", 3: "third", 4: "fourth" } as Record<number, string>)[ws.messageStep ?? 1];
+        const how = nth
+          ? `Find and cross out every word. Then read the letters left over, row by row from the top left, and write down every ${nth} one: they spell the clue.`
+          : "Find and cross out every word. The letters left over, read row by row from the top left, spell the clue.";
+        const clue = ws.message ? clueBox(ctx, b.width, how, message) : null;
+        const clueH = clue ? clue.height + 14 : 0;
         const titleEl = head.el;
         // Word list: three columns (two when a word wouldn't fit), at the small size, shrunk only if needed.
         const words = ws.placed.map((p) => p.word).sort();
@@ -790,7 +976,7 @@ function wordSearchPages(
         }
         const rowStep = wsz * 1.5;
         const listH = Math.ceil(words.length / cols) * rowStep + 10;
-        const room = b.y + b.height - (b.y + head.height + 14);
+        const room = b.y + b.height - (b.y + head.height + 14) - clueH;
         const size = Math.min(b.width - 8, room - listH - 18);
         // Grid and list sit together in the middle of the space under the heading.
         const gy = b.y + head.height + 14 + Math.max(0, (room - size - 18 - listH) / 2);
@@ -801,6 +987,7 @@ function wordSearchPages(
           const wordEl = text({ x: b.x + (k % cols) * colW, y: gy + size + 18 + Math.floor(k / cols) * rowStep, width: colW - 4, height: wsz * 1.13, text: w, fontSize: wsz, fontFamily: st.label, align: "center" });
           els.push(prov ? tag(ctx, wordEl, prov) : wordEl);
         });
+        if (clue) els.push(...clue.draw(b.x, b.y + b.height - clue.height));
         return page(ctx, kind, els, { generator: { kind, seed: ws.seed, params: { size: cfg.size, difficulty: cfg.difficulty } } });
       });
   if (showSolutions(cfg) && results.length) {
@@ -811,7 +998,7 @@ function wordSearchPages(
       slots(ctx.box, 4, ks * 1.13 + 8).forEach((slot, k) => {
         const r = results[p + k];
         if (!r) return;
-        els.push(text({ x: slot.x, y: slot.y - ks * 1.13 - 8, width: slot.size, height: ks * 1.13, text: `${first + p + k}. ${r.title}`, fontSize: ks, bold: true, fontFamily: ctx.style.label }));
+        els.push(text({ x: slot.x, y: slot.y - ks * 1.13 - 8, width: slot.size, height: ks * 1.13, text: `${numberOf(cfg, p + k)}. ${r.title}${r.ws.message ? `  ·  Clue: ${r.message}` : ""}`, fontSize: ks, bold: true, fontFamily: ctx.style.label }));
         els.push(...wordSearchBlock(r.ws, slot.x + 4, slot.y + 4, slot.size - 8, true, ctx.style.label));
       });
       pages.push(page(ctx, `${kind}-solutions`, els));
@@ -902,34 +1089,52 @@ const SCRAMBLE_MAX_WORDS = 15;
 const SCRAMBLE_KEYS_PER_PAGE = 4;
 
 function scrambleSets(cfg: Extract<GeneratorConfig, { kind: "word-scramble" }>) {
-  return cfg.puzzles.map((p, i) => ({ title: p.title, items: scrambleWords(p.words, cfg.seed + i, cfg.difficulty).slice(0, SCRAMBLE_MAX_WORDS) })).filter((s) => s.items.length);
+  return cfg.puzzles
+    .map((p, i) => {
+      // A secret word puts the words that spell it first, each with its letter marked.
+      const order = p.secret ? secretOrder(p.words, p.secret) : null;
+      const items = scrambleWords(order?.words ?? p.words, cfg.seed + i, cfg.difficulty).slice(0, SCRAMBLE_MAX_WORDS);
+      return { title: p.title, items, secret: order ? normalizeWord(p.secret!) : "", marks: order?.marks ?? [] };
+    })
+    .filter((s) => s.items.length);
 }
 
 function scramblePages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "word-scramble" }>): Page[] {
   const b = ctx.box;
-  const first = cfg.startNumber ?? 1;
   const prov: ArtifactProvenance | undefined = cfg.aiRunId ? { origin: "ai-generated", runId: cfg.aiRunId } : undefined;
   const sets = scrambleSets(cfg);
   const pages: Page[] = [];
   if (showPuzzles(cfg.part))
-    sets.forEach(({ title, items }, i) => {
+    sets.forEach(({ title, items, secret, marks }, i) => {
       const st = ctx.style;
-      const head = headingBlock(ctx, `${first + i}. ${title}`, b.y);
+      const head = headingBlock(ctx, `${numberOf(cfg, i)}. ${title}`, b.y);
       const titleEl = head.el;
       const els: Element[] = [prov ? tag(ctx, titleEl, prov) : titleEl];
-      const hint = "Unscramble the letters to spell a word from the theme.";
+      const hint = secret ? "Unscramble the letters to spell a word from the theme, and write it in the squares." : "Unscramble the letters to spell a word from the theme.";
+      const clue = secret ? clueBox(ctx, b.width, `The shaded squares, read from the top answer down, spell the clue.`, secret) : null;
       const hs = st.sizes.small;
       const hintH = textBlockHeight(measureLines(hint, st.body, false, hs, b.width).length, hs, 1.2);
       els.push(text({ x: b.x, y: b.y + head.height + 6, width: b.width, height: hintH, text: hint, fontSize: hs, fontFamily: st.body, color: "#444444", align: "center", lineHeight: 1.2 }));
       const top = b.y + head.height + 6 + hintH + 18;
-      const rowH = Math.min(st.largePrint ? 44 : 34, (b.y + b.height - top) / items.length);
+      const bottom = b.y + b.height - (clue ? clue.height + 14 : 0);
+      const rowH = Math.min(st.largePrint ? 44 : 34, (bottom - top) / items.length);
       const size = Math.min(st.largePrint ? 20 : 15, rowH * 0.5);
+      // Answer squares when a secret is spelled: as wide as the longest answer allows, no taller than the row.
+      const longest = Math.max(...items.map((it) => it.word.length));
+      const cs = Math.min(rowH * 0.78, (b.width * 0.5) / longest, st.largePrint ? 26 : 22);
       items.forEach((it, k) => {
         const y = top + k * rowH;
         const wordEl = text({ x: b.x, y, width: b.width * 0.48, height: size * 1.13, text: `${k + 1}.  ${it.scrambled.split("").join(" ")}`, fontSize: size, bold: true, fontFamily: "Roboto Mono" });
         els.push(prov ? tag(ctx, wordEl, prov) : wordEl);
-        els.push(line({ x: b.x + b.width * 0.5, y: y + size * 1.13, width: b.width * 0.5, height: 0, stroke: RULE, strokeWidth: 0.6 }));
+        if (!secret) {
+          els.push(line({ x: b.x + b.width * 0.5, y: y + size * 1.13, width: b.width * 0.5, height: 0, stroke: RULE, strokeWidth: 0.6 }));
+          return;
+        }
+        const sy = y + size * 1.13 - cs + 2;
+        for (let c = 0; c < it.word.length; c++)
+          els.push(rect({ x: b.x + b.width * 0.5 + c * cs, y: sy, width: cs, height: cs, fill: k < marks.length && marks[k] === c ? "#cfcfcf" : "#ffffff", stroke: INK, strokeWidth: 0.7, name: k < marks.length && marks[k] === c ? "Clue square" : undefined }));
       });
+      if (clue) els.push(...clue.draw(b.x, b.y + b.height - clue.height));
       pages.push(page(ctx, "word-scramble", els, { generator: { kind: "word-scramble", seed: cfg.seed + i } }));
     });
   if (showSolutions(cfg) && sets.length) {
@@ -945,11 +1150,11 @@ function scramblePages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "word-scr
         if (!set) break;
         const x = b.x + (k % 2) * (colW + gap);
         const y = b.y + Math.floor(k / 2) * (rowH + gap);
-        const size = Math.min(ctx.style.sizes.key, (rowH - ctx.style.sizes.key * 1.13 - 7) / (set.items.length * 1.13 * 1.18));
+        const size = Math.min(ctx.style.sizes.key, (rowH - ctx.style.sizes.key * 1.13 - 7) / ((set.items.length + (set.secret ? 1 : 0)) * 1.13 * 1.18));
         const ks = ctx.style.sizes.key;
-        els.push(text({ x, y, width: colW, height: ks * 1.13, text: `${first + p + k}. ${set.title}`, fontSize: ks, bold: true, fontFamily: ctx.style.label }));
-        const answers = set.items.map((it, n) => `${n + 1}. ${it.word}`).join("\n");
-        els.push(text({ x, y: y + ks * 1.13 + 5, width: colW, height: textBlockHeight(set.items.length, size, 1.18), text: answers, fontSize: size, fontFamily: ctx.style.label, lineHeight: 1.18 }));
+        els.push(text({ x, y, width: colW, height: ks * 1.13, text: `${numberOf(cfg, p + k)}. ${set.title}`, fontSize: ks, bold: true, fontFamily: ctx.style.label }));
+        const lines = [...set.items.map((it, n) => `${n + 1}. ${it.word}`), ...(set.secret ? [`Clue: ${set.secret}`] : [])];
+        els.push(text({ x, y: y + ks * 1.13 + 5, width: colW, height: textBlockHeight(lines.length, size, 1.18), text: lines.join("\n"), fontSize: size, fontFamily: ctx.style.label, lineHeight: 1.18 }));
       }
       pages.push(page(ctx, "word-scramble-solutions", els));
     }
@@ -1007,6 +1212,7 @@ function cryptogramPages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "crypto
   const prov: ArtifactProvenance | undefined = cfg.aiRunId ? { origin: "ai-generated", runId: cfg.aiRunId } : undefined;
   const puzzles = cfg.phrases.map((t) => t.trim()).filter(Boolean).map((t, i) => generateCryptogram(t, cfg.seed + i, CRYPTO_HINTS[cfg.difficulty]));
   const pages: Page[] = [];
+  const label = (n: number) => `Cryptogram ${numberOf(cfg, n)}`;
   const emit = (solved: boolean, perPage: number, kind: string) => {
     const slotH = (b.height - (perPage - 1) * 24) / perPage;
     for (let p = 0; p < puzzles.length; p += perPage) {
@@ -1017,7 +1223,7 @@ function cryptogramPages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "crypto
         const top = b.y + k * (slotH + 24);
         const hint = !solved && c.hints.length ? `  ·  Hint: ${c.hints.map((h) => `${c.key[h]} = ${h}`).join(", ")}` : "";
         const hs = solved ? ctx.style.sizes.key : ctx.style.sizes.label;
-        els.push(text({ x: b.x, y: top, width: b.width, height: textBlockHeight(measureLines(`Cryptogram ${first + p + k}${hint}`, ctx.style.label, true, hs, b.width).length, hs, 1.15), text: `Cryptogram ${first + p + k}${hint}`, fontSize: hs, bold: true, fontFamily: ctx.style.label, lineHeight: 1.15 }));
+        els.push(text({ x: b.x, y: top, width: b.width, height: textBlockHeight(measureLines(`${label(p + k)}${hint}`, ctx.style.label, true, hs, b.width).length, hs, 1.15), text: `${label(p + k)}${hint}`, fontSize: hs, bold: true, fontFamily: ctx.style.label, lineHeight: 1.15 }));
         const block = cryptogramBlock(c, b.x, top + hs * 2.4 + 8, b.width, slotH - hs * 2.4 - 12, solved);
         els.push(...block.els.map((e) => (prov && !solved ? tag(ctx, e, prov) : e)));
       }
@@ -1038,7 +1244,13 @@ export const SQUARE_NUMBER = "Square number";
 /** Answers listed under easy crosswords, so the reader only has to work out where each one goes. */
 const showWordBank = (d: CrosswordDifficulty) => d === "easy";
 
-function crosswordGrid(ctx: Ctx, cw: Crossword, x: number, y: number, cell: number, solved: boolean): Element[] {
+/** Squares of a crossword's key answer (a mystery clue), as "row,col". */
+function keyCells(cw: Crossword, key?: string): Set<string> {
+  const w = key ? cw.words.find((x) => x.answer === normalizeAnswer(key)) : undefined;
+  return new Set(w ? [...w.answer].map((_, k) => (w.dir === "across" ? `${w.row},${w.col + k}` : `${w.row + k},${w.col}`)) : []);
+}
+
+function crosswordGrid(ctx: Ctx, cw: Crossword, x: number, y: number, cell: number, solved: boolean, shaded: Set<string> = new Set()): Element[] {
   const els: Element[] = [];
   const starts = new Map(cw.words.map((w) => [`${w.row},${w.col}`, w.number]));
   const numSize = Math.max(5, Math.min(cell * 0.3, 10));
@@ -1047,7 +1259,7 @@ function crosswordGrid(ctx: Ctx, cw: Crossword, x: number, y: number, cell: numb
       if (!ch) return;
       const cx = x + c * cell;
       const cy = y + r * cell;
-      els.push(rect({ x: cx, y: cy, width: cell, height: cell, fill: "#ffffff", stroke: INK, strokeWidth: Math.max(0.6, cell * 0.035) }));
+      els.push(rect({ x: cx, y: cy, width: cell, height: cell, fill: shaded.has(`${r},${c}`) ? "#d6d6d6" : "#ffffff", stroke: INK, strokeWidth: Math.max(0.6, cell * 0.035) }));
       const n = starts.get(`${r},${c}`);
       if (n && !solved) els.push(text({ x: cx + 1.5, y: cy + 1, width: cell - 2, height: numSize * 1.13, text: String(n), fontSize: numSize, fontFamily: ctx.style.label, color: INK, lineHeight: 1, name: SQUARE_NUMBER }));
       if (solved) els.push(cellText(cx, cy, cell, ch, cell * 0.58, { bold: true, family: ctx.style.label }));
@@ -1057,7 +1269,7 @@ function crosswordGrid(ctx: Ctx, cw: Crossword, x: number, y: number, cell: numb
 }
 
 /** Clue lists laid out at `size`: each clue hangs from its number. Returns the elements and the taller column's height. */
-function clueColumns(ctx: Ctx, cw: Crossword, x: number, y: number, width: number, size: number, prov?: ArtifactProvenance): { els: Element[]; height: number } {
+function clueColumns(ctx: Ctx, cw: Crossword, x: number, y: number, width: number, size: number, prov?: ArtifactProvenance, star?: string): { els: Element[]; height: number } {
   const st = ctx.style;
   const gap = 14;
   const colW = (width - gap) / 2;
@@ -1070,9 +1282,10 @@ function clueColumns(ctx: Ctx, cw: Crossword, x: number, y: number, width: numbe
     els.push(text({ x: cx, y: cy, width: colW, height: size * 1.13, text: dir === "across" ? "Across" : "Down", fontSize: size, bold: true, fontFamily: st.label, color: INK }));
     cy += size * 1.13 + 5;
     for (const w of cw.words.filter((w) => w.dir === dir)) {
-      const h = textBlockHeight(measureLines(w.clue, st.body, false, size, colW - numW).length, size, 1.2);
+      const said = star && w.answer === normalizeAnswer(star) ? `* ${w.clue}` : w.clue;
+      const h = textBlockHeight(measureLines(said, st.body, false, size, colW - numW).length, size, 1.2);
       els.push(text({ x: cx, y: cy, width: numW, height: size * 1.13, text: `${w.number}.`, fontSize: size, bold: true, fontFamily: st.label, color: INK }));
-      const clue = text({ x: cx + numW, y: cy, width: colW - numW, height: h, text: w.clue, fontSize: size, fontFamily: st.body, color: INK, lineHeight: 1.2 });
+      const clue = text({ x: cx + numW, y: cy, width: colW - numW, height: h, text: said, fontSize: size, fontFamily: st.body, color: INK, lineHeight: 1.2 });
       els.push(prov ? tag(ctx, clue, prov) : clue);
       cy += h + size * 0.35;
     }
@@ -1084,7 +1297,6 @@ function clueColumns(ctx: Ctx, cw: Crossword, x: number, y: number, width: numbe
 function crosswordPages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "crossword" }>): Page[] {
   const b = ctx.box;
   const st = ctx.style;
-  const first = cfg.startNumber ?? 1;
   const prov: ArtifactProvenance | undefined = cfg.aiRunId ? { origin: "ai-generated", runId: cfg.aiRunId } : undefined;
   const puzzles = crosswordsOf(cfg);
   const pages: Page[] = [];
@@ -1092,26 +1304,30 @@ function crosswordPages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "crosswo
   const minCell = st.largePrint ? 26 : 20;
   const minClue = st.largePrint ? LARGE_PRINT_MIN_PT : 8;
   if (showPuzzles(cfg.part))
-    puzzles.forEach(({ title, cw }, i) => {
-      const head = headingBlock(ctx, `${first + i}. ${title}`, b.y);
+    puzzles.forEach(({ title, cw, key }, i) => {
+      const head = headingBlock(ctx, `${numberOf(cfg, i)}. ${title}`, b.y);
       const top = b.y + head.height + 12;
       const bank = showWordBank(cfg.difficulty) ? `Word bank: ${cw.words.map((w) => w.answer).sort().join("  ·  ")}` : "";
+      const shaded = keyCells(cw, key);
+      const clue = shaded.size ? clueBox(ctx, b.width, "The answer to the starred (*) clue, in the shaded squares, is the case clue. Copy it here.", key!) : null;
+      const clueH = clue ? clue.height + 12 : 0;
       // The largest clue size that still leaves the grid squares big enough to write in.
       let layout: { size: number; cell: number; bankH: number } | null = null;
       for (let size = st.sizes.body; size >= minClue; size -= 0.5) {
-        const clues = clueColumns(ctx, cw, b.x, 0, b.width, size, prov);
+        const clues = clueColumns(ctx, cw, b.x, 0, b.width, size, prov, key);
         const bankH = bank ? textBlockHeight(measureLines(bank, st.label, false, size, b.width).length, size, 1.3) + 10 : 0;
-        const cell = Math.min(34, b.width / cw.cols, (b.y + b.height - top - 16 - clues.height - bankH) / cw.rows);
+        const cell = Math.min(34, b.width / cw.cols, (b.y + b.height - top - 16 - clues.height - bankH - clueH) / cw.rows);
         layout = { size, cell, bankH };
         if (cell >= minCell) break;
       }
       const { size, cell, bankH } = layout!;
       const gx = b.x + (b.width - cw.cols * cell) / 2;
       const titleEl = prov ? tag(ctx, head.el, prov) : head.el;
-      const els: Element[] = [titleEl, ...crosswordGrid(ctx, cw, gx, top, cell, false)];
+      const els: Element[] = [titleEl, ...crosswordGrid(ctx, cw, gx, top, cell, false, shaded)];
       const cy = top + cw.rows * cell + 16;
-      els.push(...clueColumns(ctx, cw, b.x, cy, b.width, size, prov).els);
-      if (bank) els.push(text({ x: b.x, y: b.y + b.height - bankH + 10, width: b.width, height: bankH - 10, text: bank, fontSize: size, fontFamily: st.label, color: "#333333", align: "center", lineHeight: 1.3, name: "Word bank" }));
+      els.push(...clueColumns(ctx, cw, b.x, cy, b.width, size, prov, key).els);
+      if (bank) els.push(text({ x: b.x, y: b.y + b.height - bankH - clueH + 10, width: b.width, height: bankH - 10, text: bank, fontSize: size, fontFamily: st.label, color: "#333333", align: "center", lineHeight: 1.3, name: "Word bank" }));
+      if (clue) els.push(...clue.draw(b.x, b.y + b.height - clue.height));
       pages.push(page(ctx, "crossword", els, { generator: { kind: "crossword", seed: cw.seed, params: { size: cfg.size, difficulty: cfg.difficulty } } }));
     });
   if (showSolutions(cfg) && puzzles.length) {
@@ -1123,8 +1339,9 @@ function crosswordPages(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "crosswo
         const z = puzzles[p + k];
         if (!z) return;
         const c = Math.min(slot.size / z.cw.cols, slot.size / z.cw.rows);
-        els.push(text({ x: slot.x, y: slot.y - ks * 1.13 - 6, width: slot.size, height: ks * 1.13, text: `${first + p + k}. ${z.title}`, fontSize: ks, bold: true, fontFamily: st.label }));
-        els.push(...crosswordGrid(ctx, z.cw, slot.x + (slot.size - z.cw.cols * c) / 2, slot.y, c, true));
+        const shaded = keyCells(z.cw, z.key);
+        els.push(text({ x: slot.x, y: slot.y - ks * 1.13 - 6, width: slot.size, height: ks * 1.13, text: `${numberOf(cfg, p + k)}. ${z.title}${shaded.size ? `  ·  Clue: ${normalizeAnswer(z.key!)}` : ""}`, fontSize: ks, bold: true, fontFamily: st.label }));
+        els.push(...crosswordGrid(ctx, z.cw, slot.x + (slot.size - z.cw.cols * c) / 2, slot.y, c, true, shaded));
       });
       pages.push(page(ctx, "crossword-solutions", els));
     }
@@ -1170,16 +1387,29 @@ export function generatorBox(spec: PrintSpec, pageCountHint: number): Box {
   return { ...box, height: box.height - reserve };
 }
 
-export function generatePages(cfg: GeneratorConfig, opts: GenerateOptions): Page[] {
+function makeCtx(kind: GeneratorKind, opts: GenerateOptions): Ctx {
   const g = interiorGeometry(opts.spec, opts.pageCountHint);
-  const ctx: Ctx = {
+  return {
     box: generatorBox(opts.spec, opts.pageCountHint),
     style: opts.style ?? CLASSIC_STYLE,
     trimW: g.trimW,
     trimH: g.trimH,
-    prov: { origin: "generated", generator: cfg.kind },
+    prov: { origin: "generated", generator: kind },
     assets: new Map((opts.assets ?? []).map((a) => [a.id, a])),
   };
+}
+
+/** Pages a chapter needs at the style's body size, so a book can be planned before it is laid out. */
+export function storyPagesNeeded(story: { title: string; kicker?: string; body: string }, opts: GenerateOptions): number {
+  const ctx = makeCtx("story", opts);
+  const at = (size: number) => layoutStory(ctx, story.title, story.kicker ?? "", story.body, size).pages.length;
+  const full = at(ctx.style.sizes.body);
+  // A chapter that spills a few lines onto another page is set a point smaller instead (the renderer shrinks it to fit).
+  return full > 1 && at(Math.max(storyMin(ctx.style), ctx.style.sizes.body - 1)) < full ? full - 1 : full;
+}
+
+export function generatePages(cfg: GeneratorConfig, opts: GenerateOptions): Page[] {
+  const ctx = makeCtx(cfg.kind, opts);
   switch (cfg.kind) {
     case "blank":
       // Blank pages carry no number, as in printed books.
@@ -1221,6 +1451,10 @@ export function generatePages(cfg: GeneratorConfig, opts: GenerateOptions): Page
       return [belongsToPage(ctx)];
     case "text-page":
       return [textPage(ctx, cfg.title, cfg.body, cfg.aiRunId)];
+    case "story":
+      return storyPages(ctx, cfg);
+    case "deduction":
+      return [deductionPage(ctx, cfg)];
     case "section-divider":
       return [...(cfg.blankBefore ? [page(ctx, "blank", [], { hideNumber: true, label: "Blank" })] : []), sectionDivider(ctx, cfg)];
     case "table-of-contents":
@@ -1261,6 +1495,7 @@ export function estimatePageCount(cfg: GeneratorConfig): number {
     case "belongs-to":
     case "text-page":
     case "table-of-contents":
+    case "deduction":
       return 1;
     case "sudoku":
       return puzzlePages(cfg, cfg.count, Math.ceil(cfg.count / cfg.perPage), Math.ceil(cfg.count / (cfg.keysPerPage ?? 6)));
@@ -1286,6 +1521,8 @@ export function estimatePageCount(cfg: GeneratorConfig): number {
     }
     case "coloring":
       return cfg.assetIds.length * (cfg.blankBacks ? 2 : 1);
+    case "story":
+      return Math.max(1, cfg.pages);
     default:
       return cfg.count;
   }
@@ -1316,8 +1553,8 @@ const printable = (p: { entries: { answer: string; clue: string }[] }, size: num
   p.entries.some((e) => e.clue.trim() && normalizeAnswer(e.answer).length >= 3 && normalizeAnswer(e.answer).length <= size);
 
 /** The crosswords a config prints, laid out from its seed (pages, answer keys and stats all use this). */
-export function crosswordsOf(cfg: Extract<GeneratorConfig, { kind: "crossword" }>): { title: string; cw: Crossword }[] {
-  return cfg.puzzles.filter((p) => printable(p, cfg.size)).map((p, i) => ({ title: p.title, cw: generateCrossword(p.entries, cfg.size, cfg.difficulty, cfg.seed + i) }));
+export function crosswordsOf(cfg: Extract<GeneratorConfig, { kind: "crossword" }>): { title: string; cw: Crossword; key?: string }[] {
+  return cfg.puzzles.filter((p) => printable(p, cfg.size)).map((p, i) => ({ title: p.title, cw: generateCrossword(p.entries, cfg.size, cfg.difficulty, cfg.seed + i, p.key), ...(p.key ? { key: p.key } : {}) }));
 }
 
 function crosswordCount(cfg: Extract<GeneratorConfig, { kind: "crossword" }>): number {

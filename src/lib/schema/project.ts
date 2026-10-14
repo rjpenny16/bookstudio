@@ -42,6 +42,8 @@ export type BookType =
   | "puzzle"
   | "coloring"
   | "activity"
+  /** Murder mystery: story chapters whose puzzles give up the clues that solve the case. */
+  | "mystery"
   | "other";
 
 export type ArtifactOrigin = "human" | "generated" | "ai-generated" | "user-upload";
@@ -404,5 +406,6 @@ export const BOOK_TYPES: { id: BookType; label: string }[] = [
   { id: "puzzle", label: "Puzzle book" },
   { id: "coloring", label: "Coloring book" },
   { id: "activity", label: "Activity book" },
+  { id: "mystery", label: "Murder mystery" },
   { id: "other", label: "Other" },
 ];

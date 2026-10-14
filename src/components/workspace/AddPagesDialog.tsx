@@ -203,6 +203,32 @@ export function AddPagesDialog({ open, onClose, project, currentIndex, onInsert 
           </div>
         )}
 
+        {cfg.kind === "story" && (
+          <div className="stack">
+            <div className="grid grid-2">
+              <div className="field">
+                <label>
+                  Chapter label
+                  <input value={cfg.kicker ?? ""} onChange={(e) => set({ kicker: e.target.value })} />
+                </label>
+              </div>
+              <Num label="Pages" value={cfg.pages} min={1} max={20} onChange={(pages) => set({ pages })} />
+            </div>
+            <div className="field">
+              <label>
+                Heading
+                <input value={cfg.title} onChange={(e) => set({ title: e.target.value })} />
+              </label>
+            </div>
+            <div className="field">
+              <label>
+                Story (blank line between paragraphs; the type shrinks a little if it runs long)
+                <textarea rows={10} value={cfg.body} onChange={(e) => set({ body: e.target.value, aiRunId: undefined })} />
+              </label>
+            </div>
+          </div>
+        )}
+
         {cfg.kind === "table-of-contents" && (
           <div className="field">
             <label>
