@@ -18,7 +18,7 @@ vi.mock("@anthropic-ai/sdk", () => {
   return { default: Anthropic };
 });
 
-const { extractJson, providerStatus, resetCodexLegacy, runTask, strictSchema } = await import("@/lib/ai/providers");
+const { codexTextTimeoutMs, extractJson, providerStatus, resetCodexLegacy, runTask, strictSchema } = await import("@/lib/ai/providers");
 
 const review = { score: 7, summary: "Clean cover.", thumbnailReadable: true, findings: [{ target: "Page 3 (Easy)", severity: "medium", issue: "Grid lines are faint.", suggestion: "Darken them." }] };
 const input = { title: "Big Sudoku", bookType: "puzzle", audience: "seniors", trim: '8.5" x 11"', pageCount: 120, largePrint: true, images: ["Cover: back, spine and front", "Page 3 (Easy)"] };
@@ -196,6 +196,16 @@ if [[ -n "$FAKE_REPLIES" ]]; then IFS='|' read -ra r <<< "$FAKE_REPLIES"; printf
     await expect(runTask("phrases", phrasesInput)).rejects.toMatchObject({ status: 429 });
     vi.stubEnv("FAKE_CODEX_FAIL", "boom");
     await expect(runTask("phrases", phrasesInput)).rejects.toThrow(/codex writing failed: [\s\S]*boom/);
+  });
+
+  it("gives the murder mystery tasks longer to write, and takes an override", () => {
+    vi.stubEnv("CODEX_TEXT_TIMEOUT_MINUTES", "");
+    expect(codexTextTimeoutMs("phrases")).toBe(8 * 60_000);
+    expect(codexTextTimeoutMs("mystery-plan")).toBe(25 * 60_000);
+    expect(codexTextTimeoutMs("mystery-chapter")).toBe(25 * 60_000);
+    vi.stubEnv("CODEX_TEXT_TIMEOUT_MINUTES", "40");
+    expect(codexTextTimeoutMs("mystery-plan")).toBe(40 * 60_000);
+    expect(codexTextTimeoutMs("phrases")).toBe(40 * 60_000);
   });
 
   it("finds the JSON object in a reply", () => {
