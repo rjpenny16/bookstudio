@@ -136,7 +136,16 @@ async function runOllama<T extends TaskName>(task: T, prompt: string, model: str
 
 /** codex picks its default model unless CODEX_TEXT_MODEL names one; the label is for provenance. */
 const codexTextModel = () => process.env.CODEX_TEXT_MODEL?.trim() || "chatgpt";
-const CODEX_TEXT_TIMEOUT_MS = 8 * 60_000;
+/**
+ * How long one codex writing call may run. The mystery tasks plan a whole
+ * case or write a full chapter at high effort, which routinely runs past the
+ * 8 minutes the shorter tasks get. CODEX_TEXT_TIMEOUT_MINUTES overrides both.
+ */
+export function codexTextTimeoutMs(task: TaskName): number {
+  const env = Number(process.env.CODEX_TEXT_TIMEOUT_MINUTES);
+  if (Number.isFinite(env) && env > 0) return env * 60_000;
+  return task.startsWith("mystery-") ? 25 * 60_000 : 8 * 60_000;
+}
 
 /** The JSON object in a reply, without code fences or a sentence around it. */
 export function extractJson(reply: string): unknown {
@@ -209,7 +218,7 @@ async function runCodexText<T extends TaskName>(task: T, prompt: string, images:
       const stdin = problem ? `${base(legacy)}\n\nYour previous reply was rejected (${problem}). Reply again with only the JSON object.` : base(legacy);
       await rm(out, { force: true });
       try {
-        await runCodex({ args: ["-c", 'exec codex "$@"', "codex", ...args, "--", "-"], dir, timeoutMs: CODEX_TEXT_TIMEOUT_MS, signal, stdin, what: "writing", fail: (msg, status) => new AiError(msg, status) });
+        await runCodex({ args: ["-c", 'exec codex "$@"', "codex", ...args, "--", "-"], dir, timeoutMs: codexTextTimeoutMs(task), signal, stdin, what: "writing", fail: (msg, status) => new AiError(msg, status) });
       } catch (e) {
         // An older codex without these flags: remember, and run this attempt again the old way.
         if (!legacy && unknownFlag(e)) {
