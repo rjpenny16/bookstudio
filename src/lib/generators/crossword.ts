@@ -197,7 +197,9 @@ function finish(layout: Layout, seed: number): Crossword {
  * the one that places the most answers wins, then the most crossings, then
  * the smallest footprint.
  */
-export function generateCrossword(entries: CrosswordEntry[], maxSize: number, difficulty: CrosswordDifficulty, seed: number): Crossword {
+export function generateCrossword(entries: CrosswordEntry[], maxSize: number, difficulty: CrosswordDifficulty, seed: number, must?: string): Crossword {
+  // An answer that must be in the grid (a mystery's clue word) outranks any number of others.
+  const required = must ? normalizeAnswer(must) : "";
   const seen = new Set<string>();
   const clean: CrosswordEntry[] = [];
   for (const e of entries) {
@@ -209,14 +211,14 @@ export function generateCrossword(entries: CrosswordEntry[], maxSize: number, di
   if (!clean.length) return { rows: 0, cols: 0, grid: [], words: [], skipped: [], seed };
   const rng = createRng(seed);
   let best: { layout: Layout; score: number } | null = null;
-  const early = new Set<string>();
+  const early = new Set<string>(required ? [required] : []);
   // A few complete layouts are compared for the most crossings and the smallest footprint.
   let complete = 0;
   for (let a = 0; a < ATTEMPTS && complete < 8; a++) {
     const layout = layOut(clean, maxSize, difficulty, rng, early);
     const b = bounds(layout.cells);
     const area = (b.r1 - b.r0 + 1) * (b.c1 - b.c0 + 1);
-    const score = layout.placed.length * 1000 + layout.crossings * 20 - area;
+    const score = layout.placed.length * 1000 + layout.crossings * 20 - area - (required && layout.skipped.includes(required) ? 1e6 : 0);
     if (!best || score > best.score) best = { layout, score };
     if (!layout.skipped.length) complete++;
     for (const s of layout.skipped) early.add(s);

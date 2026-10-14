@@ -5,6 +5,7 @@ import { restyleOffline } from "@/lib/cover/restyle";
 import { nearDuplicate, openerKey } from "@/lib/quality/content";
 import { AFFIRMATION_BANK, PROMPT_GROUPS, SAYING_BANK, THEME_BANK } from "./offlineBanks";
 import { CLUE_BANK } from "./offlineClues";
+import { mysteryByTitle, offlineMystery } from "./offlineMysteries";
 import { AFFIRMATION_TOPICS, PROMPT_TOPICS, type Orientation } from "./offlineTopics";
 import type { TaskInput, TaskName, TaskOutput } from "./tasks";
 
@@ -23,6 +24,7 @@ const NOUNS: Record<string, { noun: string; present: RegExp }> = {
   journal: { noun: "Journal", present: /journal|diary|notebook/i },
   planner: { noun: "Planner", present: /planner|organi[sz]er|agenda|calendar/i },
   "log-book": { noun: "Log Book", present: /\blog\b|logbook|log book|tracker|record book/i },
+  mystery: { noun: "Murder Mystery Puzzle Book", present: /mystery|mysteries|whodunn?it|puzzle book/i },
 };
 
 /** A title from the topic, adding the format noun only when the topic doesn't already name it, and before any "for …" phrase. */
@@ -55,6 +57,8 @@ export function offlineSubtitle(bookType: string, topic: string, audience: strin
       return `Plan, Prioritize and Stay on Track: A Planner for ${who}`;
     case "log-book":
       return `Record Dates, Details and Notes: A Log Book for ${who}`;
+    case "mystery":
+      return `Solve the Puzzles, Collect the Clues and Catch the Killer: A Whodunit for ${who}`;
     default:
       return `A Notebook for ${who}`;
   }
@@ -69,6 +73,7 @@ function offlineBlurb(i: { title: string; bookType: string; audience: string; pa
     journal: `${i.title} gives you a few quiet minutes a day to slow down, notice what matters and write it down.`,
     planner: `${i.title} turns busy weeks into clear plans, with room for every task, goal and note.`,
     "log-book": `${i.title} keeps every record in one tidy place, ready whenever you are.`,
+    mystery: `Someone at the dinner table is a murderer, and only you can prove who in ${i.title}.`,
   };
   return [
     hook[i.bookType] ?? `${i.title} is a simple, well-made notebook for everyday use.`,
@@ -78,6 +83,7 @@ function offlineBlurb(i: { title: string; bookType: string; audience: string; pa
       journal: "Each page gives you a gentle prompt and room to write, with no pressure to fill it perfectly.",
       planner: "Each spread gives you space for priorities, appointments and notes, so nothing slips through.",
       "log-book": "Each page has clear columns to fill in, so entries stay neat and easy to look back on.",
+      mystery: "Read each chapter, solve the word searches, crosswords, scrambles and codes that follow it, and collect the clues that crack the case, with every answer and the full solution at the back.",
     } as Record<string, string>)[i.bookType] ?? "",
     `Made for ${who}, with clear, uncluttered pages that are easy on the eyes.`,
     `${i.pageCount} pages in a ${i.trim} paperback that makes a thoughtful gift.`,
@@ -181,6 +187,26 @@ export function offlineAffirmations(i: { topic: string; audience: string; count:
   return pickOrdered(ordered, i.count, i.avoid ?? [], 0.25);
 }
 
+/**
+ * A chapter of a built-in case, or, for a plan a model wrote, a plain
+ * chapter from its summary with puzzles from the built-in word and clue banks.
+ */
+function offlineChapter(i: TaskInput<"mystery-chapter">): TaskOutput<"mystery-chapter"> {
+  const known = mysteryByTitle(i.caseFile);
+  if (known) return i.reveal ? { story: known.reveal, puzzles: [] } : structuredClone(known.chapters[i.chapter - 1] ?? { story: i.summary, puzzles: [] });
+  if (i.reveal) return { story: i.summary, puzzles: [] };
+  const puzzles = i.clues.map((c) => {
+    if (c.kind === "crossword") {
+      const bank = offlineTask("crossword-clues", { topic: c.theme, audience: i.audience, count: 1, entriesPerPuzzle: Math.max(4, i.entriesPerPuzzle - 1), maxLength: i.maxLength }).puzzles[0];
+      return { title: bank?.title ?? "Crossword", words: [], entries: [{ answer: c.answer, clue: `The case clue hidden in this chapter (${c.answer.length} letters)` }, ...(bank?.entries ?? [])] };
+    }
+    if (c.kind === "cryptogram") return { title: "Coded Message", words: [], entries: [] };
+    const bank = offlineTask("word-lists", { topic: c.theme, audience: i.audience, count: 1, wordsPerPuzzle: i.wordsPerPuzzle, maxLength: i.maxLength }).puzzles[0];
+    return { title: bank?.title ?? "Word Puzzle", words: bank?.words ?? [], entries: [] };
+  });
+  return { story: i.summary, puzzles };
+}
+
 function hash(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
@@ -200,10 +226,11 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
         type === "planner" ? "daily-planner" :
         type === "log-book" ? "log" :
         type === "activity" ? "maze" :
+        type === "mystery" ? "word-search" :
         /gratitude|thank/i.test(i.topic) ? "gratitude" :
         type === "journal" ? "journal-prompts" :
         /dot|bullet/i.test(i.topic) ? "dot-grid" : "lined";
-      const noun = type === "puzzle" ? "Puzzle Book" : type === "planner" ? "Planner" : type === "log-book" ? "Log Book" : type === "journal" ? "Journal" : type === "activity" ? "Activity Book" : "Notebook";
+      const noun = type === "puzzle" ? "Puzzle Book" : type === "planner" ? "Planner" : type === "log-book" ? "Log Book" : type === "journal" ? "Journal" : type === "activity" ? "Activity Book" : type === "mystery" ? "Murder Mystery" : "Notebook";
       const audience = i.audience.trim() || "adults";
       const out: TaskOutput<"brief"> = {
         angle: `A practical ${noun.toLowerCase()} about ${topic.toLowerCase()} for ${audience}.`,
@@ -214,7 +241,8 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
         keywordIdeas: [`${i.topic} ${noun}`.toLowerCase(), `${i.topic} gift for ${audience}`.toLowerCase(), `${noun} for ${audience}`.toLowerCase(), `${i.topic} book`.toLowerCase(), `${i.topic} workbook`.toLowerCase()],
         interiorPlan: `${generator.replace("-", " ")} pages with a title page.`,
         generator,
-        pageTarget: type === "puzzle" ? 120 : 120,
+        // The built-in mysteries fill about 50 pages; a little room is left for notes.
+        pageTarget: type === "mystery" ? 56 : 120,
         difficulty: "medium",
         coverDirection: "Clean, high-contrast title readable as a thumbnail.",
         coverTemplate: genre.templates[0] as TaskOutput<"brief">["coverTemplate"],
@@ -368,6 +396,13 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
     }
     case "visual-review":
       return { score: 0, summary: "Offline mode can't look at images; only the rule-based design checks ran.", thumbnailReadable: true, findings: [] } as TaskOutput<T>;
+    case "mystery-plan": {
+      // A built-in case, written to pass the fair-play checks; the topic picks the setting.
+      const i = input as TaskInput<"mystery-plan">;
+      return structuredClone(offlineMystery(i.topic, hash(i.topic)).plan) as TaskOutput<T>;
+    }
+    case "mystery-chapter":
+      return offlineChapter(input as TaskInput<"mystery-chapter">) as TaskOutput<T>;
   }
   throw new Error(`Unknown task ${task}`);
 }

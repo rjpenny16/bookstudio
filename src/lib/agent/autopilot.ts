@@ -23,6 +23,7 @@ import { ART_CANDIDATES } from "./constants";
 import { contentCall, pool, refineContent, reviewContent, writeSection, type ContentAsk, type ContentRequest, type ContentReview } from "./content";
 import { genreOf, genreOfProject } from "@/lib/cover/genres";
 import { keepInLibrary } from "@/lib/storage/artLibrary";
+import { assembleMystery, caseFile, mysterySizing, mysteryStyle, planMystery, writeMystery, type MysteryAsk } from "./mystery";
 
 /**
  * The publishing agent. It is a deterministic workflow with model calls inside
@@ -152,74 +153,107 @@ export async function runAutopilot(
   const title = brief.titleIdeas.find((t) => !findProhibited(t).length) ?? input.topic;
   const audience = brief.audience || input.audience;
 
-  // 2. Plan: sections and page budget
-  const { blueprint, blueprintRunId, planned } = await step("plan", async () => {
-    const r = await ai(
-      "blueprint",
-      { topic: input.topic, audience, bookType: input.bookType, notes: input.notes, trim: trim.label, title, angle: brief.angle, interiorPlan: brief.interiorPlan, pageTarget },
-      ["interior.plan", "interior.how-to", "interior.closing"],
-    );
-    const checked = validateBlueprint(r.output, { ...ctx, audience });
-    if (checked.fallback) notes.push(checked.fallback);
-    const bp: BlueprintOutput = checked.blueprint;
-    const sections = planSections(bp, { ...ctx, audience, trimId: trim.id, pageTarget });
-    return [{ blueprint: bp, blueprintRunId: checked.fallback ? undefined : r.runId, planned: sections }, `${sections.length} section(s): ${sections.map((s) => s.label).join(", ")}`];
-  });
-
-  // 3. Content for each section that needs it (prompts, word lists, sayings)
-  const write = (req: ContentRequest) => {
-    const c = contentCall(req, { audience, bookTitle: title });
-    return ai(c.task, c.input, c.outputs);
-  };
-  let batches = 0;
-  const written: PlannedSection[] = await step("content", async () => {
-    // Long sections are written in batches, each told what the earlier ones said.
-    const out = await pool(planned, limits.concurrency, async (sec): Promise<PlannedSection> => {
-      if (!sec.content) return sec;
-      const r = await writeSection(sec, write, [], limits);
-      batches += r.batches;
-      notes.push(...r.problems);
-      return { ...sec, config: r.config };
-    });
-    return [out, `${describeBook(out)}${batches > out.filter((s) => s.content).length ? ` · ${batches} batches` : ""}`];
-  });
-
-  // 3b. Check the whole book's content for repeats and weak items, and replace them.
-  const review: ContentReview = async (req) => {
-    const r = await ai("content-review", { kind: req.kind, topic: req.theme, audience, bookTitle: title, sectionTitle: req.sectionTitle, items: req.items }, [`interior.review:${req.sectionTitle}`]);
-    return { weak: r.output.weak, runId: r.runId };
-  };
-  // Last resort for a section the model left short: the built-in banks, through the same checks.
-  const bank: ContentAsk = async (req) => {
-    const c = contentCall(req, { audience, bookTitle: title });
-    return { output: (await callAi(c.task, c.input, signal, undefined, { offline: true })).output };
-  };
-  const filled: PlannedSection[] = await step("check", async () => {
-    const r = await refineContent(written, write, { limits, fallback: bank });
-    const v = await reviewContent(r.sections, review, write, limits);
-    notes.push(...r.notes, ...v.notes);
-    const parts = [
-      r.removed && `${r.removed} repeated or unusable replaced or removed, ${r.added} new`,
-      r.banked && `${r.banked} filled from the built-in bank`,
-      v.flagged && `${v.flagged} weak flagged, ${v.rewritten} rewritten`,
-    ].filter(Boolean);
-    return [v.sections, parts.length ? parts.join("; ") : "No repeats or weak items found"];
-  });
-
-  // 4. Layout
-  let project = await step("layout", async () => {
-    const sections = assembleBook(blueprint, filled, { ...ctx, audience, trimId: trim.id, pageTarget, title, subtitle: brief.subtitle, author: input.author, blueprintRunId });
-    // The inside is styled like the cover's genre; large print comes from the plan as well as the words.
-    const genre = genreOf({ bookType: input.bookType, topic: input.topic, audience }).id;
-    const style = { genre, largePrint: blueprint.largePrint || genre === "large-print" };
-    const p = createProject({ name: title, bookType: input.bookType, trimId: trim.id, paper: "white", ink: "black", bleed: false, author: input.author, interior: sections, style });
-    return [p, `${p.interior.pages.length} pages in ${p.interior.sections.length} parts`];
-  });
+  // 2-4. A murder mystery has its own plan (the case), content (chapters) and layout.
+  const built = input.bookType === "mystery" ? await buildMystery() : await buildInterior();
+  let project = built.project;
+  const interiorSummary = built.summary;
   onPreview?.(project, "layout");
-  const interiorSummary = describeBook(filled);
   project = produce(project, (d) => {
-    d.brief = { topic: input.topic, audience, notes: input.notes, angle: brief.angle, titleIdeas: brief.titleIdeas, ...(brief.titleHero.trim() ? { titleHero: brief.titleHero.trim() } : {}), keywordIdeas: brief.keywordIdeas, interiorPlan: interiorSummary, coverDirection: brief.coverDirection, risks: brief.risks };
+    d.brief = { topic: input.topic, audience, notes: input.notes, angle: brief.angle, titleIdeas: brief.titleIdeas, ...(brief.titleHero.trim() ? { titleHero: brief.titleHero.trim() } : {}), keywordIdeas: brief.keywordIdeas, interiorPlan: built.plan, coverDirection: brief.coverDirection, risks: brief.risks };
   });
+
+  async function buildMystery(): Promise<{ project: Project; summary: string; plan: string }> {
+    const mi = { topic: input.topic, audience, notes: input.notes, angle: brief.angle, title, trimId: trim.id, pageTarget, difficulty: brief.difficulty };
+    const z = mysterySizing(mi);
+    const ask: MysteryAsk = (task, payload, outputs) => ai(task, payload as never, outputs) as never;
+    const planned = await step("plan", async () => {
+      const r = await planMystery(ask, z, mi);
+      notes.push(...r.notes);
+      const clues = r.plan.chapters.reduce((n, c) => n + c.clues.length, 0);
+      return [r, `${r.plan.caseTitle}: ${r.plan.suspects.length} suspects, ${r.plan.chapters.length} chapters, ${clues} clues${r.problems.length ? `, ${r.problems.length} fair-play note(s)` : ", fair-play check passed"}`];
+    });
+    const plan = planned.plan;
+    const written = await step("content", async () => {
+      const w = await writeMystery(ask, plan, z, audience, (items, fn) => pool(items, limits.concurrency, fn));
+      notes.push(...w.notes);
+      const words = [...w.chapters, w.reveal].reduce((n, c) => n + c.story.split(/\s+/).filter(Boolean).length, 0);
+      return [w, `${w.chapters.length} chapters and the solution, about ${Math.round(words / 100) * 100} words`];
+    });
+    await step("check", async () => [null, written.notes.length ? `${written.notes.length} chapter(s) needed fixes` : "Every chapter holds its clues"]);
+    return step("layout", async () => {
+      const book = assembleMystery(plan, written.chapters, written.reveal, z, { ...mi, subtitle: brief.subtitle, author: input.author, planRunId: planned.runId });
+      const p = createProject({ name: title, bookType: input.bookType, trimId: trim.id, paper: "white", ink: "black", bleed: false, author: input.author, interior: book.sections, style: mysteryStyle(mi) });
+      return [{ project: p, summary: book.summary, plan: `${book.summary}\n\nCase plan\n\n${caseFile(plan)}` }, `${p.interior.pages.length} pages: ${plan.chapters.length} chapters, ${book.clues} clue puzzles`];
+    });
+  }
+
+  async function buildInterior(): Promise<{ project: Project; summary: string; plan: string }> {
+    // 2. Plan: sections and page budget
+    const { blueprint, blueprintRunId, planned } = await step("plan", async () => {
+      const r = await ai(
+        "blueprint",
+        { topic: input.topic, audience, bookType: input.bookType, notes: input.notes, trim: trim.label, title, angle: brief.angle, interiorPlan: brief.interiorPlan, pageTarget },
+        ["interior.plan", "interior.how-to", "interior.closing"],
+      );
+      const checked = validateBlueprint(r.output, { ...ctx, audience });
+      if (checked.fallback) notes.push(checked.fallback);
+      const bp: BlueprintOutput = checked.blueprint;
+      const sections = planSections(bp, { ...ctx, audience, trimId: trim.id, pageTarget });
+      return [{ blueprint: bp, blueprintRunId: checked.fallback ? undefined : r.runId, planned: sections }, `${sections.length} section(s): ${sections.map((s) => s.label).join(", ")}`];
+    });
+
+    // 3. Content for each section that needs it (prompts, word lists, sayings)
+    const write = (req: ContentRequest) => {
+      const c = contentCall(req, { audience, bookTitle: title });
+      return ai(c.task, c.input, c.outputs);
+    };
+    let batches = 0;
+    const written: PlannedSection[] = await step("content", async () => {
+      // Long sections are written in batches, each told what the earlier ones said.
+      const out = await pool(planned, limits.concurrency, async (sec): Promise<PlannedSection> => {
+        if (!sec.content) return sec;
+        const r = await writeSection(sec, write, [], limits);
+        batches += r.batches;
+        notes.push(...r.problems);
+        return { ...sec, config: r.config };
+      });
+      return [out, `${describeBook(out)}${batches > out.filter((s) => s.content).length ? ` · ${batches} batches` : ""}`];
+    });
+
+    // 3b. Check the whole book's content for repeats and weak items, and replace them.
+    const review: ContentReview = async (req) => {
+      const r = await ai("content-review", { kind: req.kind, topic: req.theme, audience, bookTitle: title, sectionTitle: req.sectionTitle, items: req.items }, [`interior.review:${req.sectionTitle}`]);
+      return { weak: r.output.weak, runId: r.runId };
+    };
+    // Last resort for a section the model left short: the built-in banks, through the same checks.
+    const bank: ContentAsk = async (req) => {
+      const c = contentCall(req, { audience, bookTitle: title });
+      return { output: (await callAi(c.task, c.input, signal, undefined, { offline: true })).output };
+    };
+    const filled: PlannedSection[] = await step("check", async () => {
+      const r = await refineContent(written, write, { limits, fallback: bank });
+      const v = await reviewContent(r.sections, review, write, limits);
+      notes.push(...r.notes, ...v.notes);
+      const parts = [
+        r.removed && `${r.removed} repeated or unusable replaced or removed, ${r.added} new`,
+        r.banked && `${r.banked} filled from the built-in bank`,
+        v.flagged && `${v.flagged} weak flagged, ${v.rewritten} rewritten`,
+      ].filter(Boolean);
+      return [v.sections, parts.length ? parts.join("; ") : "No repeats or weak items found"];
+    });
+
+    // 4. Layout
+    const laidOut = await step("layout", async () => {
+      const sections = assembleBook(blueprint, filled, { ...ctx, audience, trimId: trim.id, pageTarget, title, subtitle: brief.subtitle, author: input.author, blueprintRunId });
+      // The inside is styled like the cover's genre; large print comes from the plan as well as the words.
+      const genre = genreOf({ bookType: input.bookType, topic: input.topic, audience }).id;
+      const style = { genre, largePrint: blueprint.largePrint || genre === "large-print" };
+      const p = createProject({ name: title, bookType: input.bookType, trimId: trim.id, paper: "white", ink: "black", bleed: false, author: input.author, interior: sections, style });
+      return [p, `${p.interior.pages.length} pages in ${p.interior.sections.length} parts`];
+    });
+    const summary = describeBook(filled);
+    return { project: laidOut, summary, plan: summary };
+  }
 
   // 5. Listing
   const categoryOptions = suggestCategories({ bookType: input.bookType, topic: input.topic, audience }, 12);

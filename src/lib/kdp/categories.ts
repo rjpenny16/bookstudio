@@ -25,16 +25,21 @@ export interface KdpCategory {
   kids?: boolean;
 }
 
-const PUZZLE: BookType[] = ["puzzle", "activity"];
+const PUZZLE: BookType[] = ["puzzle", "activity", "mystery"];
 const JOURNAL: BookType[] = ["journal", "notebook"];
 const PLANNER: BookType[] = ["planner", "log-book", "journal"];
 const LOG: BookType[] = ["log-book", "journal", "notebook"];
 
 export const KDP_CATEGORIES: KdpCategory[] = [
+  // Murder mysteries: the story's genre, for browsers of crime fiction (the puzzle categories below fit them too).
+  { path: "Mystery, Thriller & Suspense > Mystery > Cozy", bookTypes: ["mystery"], tags: ["cozy", "village", "manor", "tea", "cat", "bakery", "garden", "murder", "mystery"] },
+  { path: "Mystery, Thriller & Suspense > Mystery > Amateur Sleuths", bookTypes: ["mystery"], tags: ["sleuth", "amateur", "detective", "whodunit", "murder", "mystery"] },
+  { path: "Mystery, Thriller & Suspense > Mystery > Police Procedurals", bookTypes: ["mystery"], tags: ["police", "inspector", "detective", "procedural", "case", "crime"] },
+  { path: "Children's Books > Mysteries & Detectives", bookTypes: ["mystery"], tags: ["mystery", "detective", "kids", "clues", "case"], kids: true },
   // Puzzles & games
   { path: "Humor & Entertainment > Puzzles & Games > Sudoku", bookTypes: PUZZLE, tags: ["sudoku", "number", "numbers", "logic"] },
   { path: "Humor & Entertainment > Puzzles & Games > Word Search", bookTypes: PUZZLE, tags: ["word", "search", "wordsearch", "find", "seek", "words"] },
-  { path: "Humor & Entertainment > Puzzles & Games > Logic & Brain Teasers", bookTypes: PUZZLE, tags: ["logic", "brain", "teaser", "teasers", "cryptogram", "cryptograms", "number", "variety", "mixed", "memory", "seniors", "puzzles"] },
+  { path: "Humor & Entertainment > Puzzles & Games > Logic & Brain Teasers", bookTypes: PUZZLE, tags: ["logic", "brain", "teaser", "teasers", "cryptogram", "cryptograms", "number", "variety", "mixed", "memory", "seniors", "puzzles", "mystery", "murder", "detective", "whodunit", "clues"] },
   { path: "Humor & Entertainment > Puzzles & Games > Mazes", bookTypes: PUZZLE, tags: ["maze", "mazes", "labyrinth"] },
   { path: "Humor & Entertainment > Puzzles & Games > Word Games", bookTypes: PUZZLE, tags: ["word", "scramble", "scrambles", "anagram", "cryptogram", "cryptograms", "words", "vocabulary"] },
   { path: "Humor & Entertainment > Puzzles & Games > Puzzles", bookTypes: PUZZLE, tags: ["puzzle", "puzzles", "variety", "activity", "mixed"] },

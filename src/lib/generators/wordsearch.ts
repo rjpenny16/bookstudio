@@ -42,6 +42,12 @@ export interface WordSearch {
   placed: PlacedWord[];
   skipped: string[];
   seed: number;
+  /** Hidden message in the leftover squares, when one was asked for and fitted (letters only). */
+  message?: string;
+  /** Squares holding the message, in reading order. */
+  messageCells?: [number, number][];
+  /** The message is every `messageStep`-th leftover letter, so it is spread over the grid instead of reading in plain sight. */
+  messageStep?: number;
 }
 
 export const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -125,6 +131,13 @@ export function doubleReads(ws: WordSearch): number {
  * A word search where every listed word can be found exactly once. When a
  * second reading is made entirely of other words' letters (no filler to
  * change), the grid is laid out again; the first clean layout wins.
+ *
+ * With a `message`, the leftover squares spell it once every word is found,
+ * the classic hidden-message puzzle: read row by row from the top left,
+ * every `messageStep`-th leftover letter (2nd, 3rd or 4th, as the free
+ * squares allow) is the next letter of the message. Spacing the letters
+ * out keeps the message from reading in plain sight along the top rows.
+ * A layout that leaves too few squares free is tried again.
  */
 export function generateWordSearch(
   words: string[],
@@ -132,18 +145,20 @@ export function generateWordSearch(
   difficulty: WordSearchDifficulty,
   seed: number,
   alphabet: string = LETTERS,
+  message?: string,
 ): WordSearch {
+  const hidden = message ? normalizeWord(message, alphabet) : "";
   let best: { ws: WordSearch; doubles: number } | null = null;
   for (let attempt = 0; attempt < 6; attempt++) {
-    const ws = layOut(words, size, difficulty, seed + attempt * 7919, alphabet);
-    const doubles = doubleReads(ws);
+    const ws = layOut(words, size, difficulty, seed + attempt * 7919, alphabet, hidden);
+    const doubles = doubleReads(ws) + (hidden && !ws.message ? 100 : 0);
     if (!doubles) return { ...ws, seed };
     if (!best || doubles < best.doubles || (doubles === best.doubles && ws.placed.length > best.ws.placed.length)) best = { ws, doubles };
   }
   return { ...best!.ws, seed };
 }
 
-function layOut(words: string[], size: number, difficulty: WordSearchDifficulty, seed: number, alphabet: string): WordSearch {
+function layOut(words: string[], size: number, difficulty: WordSearchDifficulty, seed: number, alphabet: string, message = ""): WordSearch {
   const rng = createRng(seed);
   const grid: string[][] = Array.from({ length: size }, () => Array<string>(size).fill(""));
   const norm = (w: string) => normalizeWord(w, alphabet);
@@ -169,6 +184,15 @@ function layOut(words: string[], size: number, difficulty: WordSearchDifficulty,
   const filler = () => (rng() < decoyShare ? pool[Math.floor(rng() * pool.length)] : alphabet[Math.floor(rng() * alphabet.length)]);
   const fixed = Array.from({ length: size }, () => Array<boolean>(size).fill(false));
   for (const p of placed) for (let k = 0; k < p.word.length; k++) fixed[p.row + p.dr * k][p.col + p.dc * k] = true;
+  // The hidden message takes every step-th free square in reading order; filler goes in between and after.
+  const free: [number, number][] = [];
+  for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) if (!fixed[r][c]) free.push([r, c]);
+  const step = message ? Math.max(1, Math.min(4, Math.floor(free.length / message.length))) : 1;
+  const messageCells = message && free.length > message.length ? Array.from({ length: message.length }, (_, k) => free[(k + 1) * step - 1]) : [];
+  messageCells.forEach(([r, c], k) => {
+    grid[r][c] = message[k];
+    fixed[r][c] = true;
+  });
   for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) if (!fixed[r][c]) grid[r][c] = filler();
   // Every listed word must be findable exactly once: break up any extra reading the filler made.
   for (let round = 0; round < 40; round++) {
@@ -186,7 +210,14 @@ function layOut(words: string[], size: number, difficulty: WordSearchDifficulty,
     }
     if (!changed) break;
   }
-  return { size, grid, placed, skipped, seed };
+  return { size, grid, placed, skipped, seed, ...(messageCells.length ? { message, messageCells, messageStep: step } : {}) };
+}
+
+/** The letters left over once every placed word is crossed out, in reading order (every `messageStep`-th is the hidden message). */
+export function leftoverLetters(ws: WordSearch): string {
+  const used = new Set<string>();
+  for (const p of ws.placed) for (let k = 0; k < p.word.length; k++) used.add(`${p.row + p.dr * k},${p.col + p.dc * k}`);
+  return ws.grid.flatMap((row, r) => row.filter((_, c) => !used.has(`${r},${c}`))).join("");
 }
 
 /** Check a placed word actually reads correctly in the grid. */

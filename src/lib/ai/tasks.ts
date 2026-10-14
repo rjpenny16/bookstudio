@@ -226,6 +226,99 @@ export const ContentReviewOutput = z.object({
 });
 export type ContentReviewOutput = z.infer<typeof ContentReviewOutput>;
 
+/** Puzzle kinds that can hide a mystery's clue (see generators/pages: hidden message, shaded squares, starred answer, the decoded text). */
+export const MYSTERY_CLUE_KINDS = ["word-search", "crossword", "word-scramble", "cryptogram"] as const;
+export type MysteryClueKind = (typeof MYSTERY_CLUE_KINDS)[number];
+
+export const MysteryPlanInput = z.object({
+  topic: z.string(),
+  audience: z.string(),
+  title: z.string(),
+  angle: z.string(),
+  notes: z.string(),
+  chapters: z.number().int(),
+  cluesPerChapter: z.number().int(),
+  kinds: z.array(z.enum(MYSTERY_CLUE_KINDS)),
+  difficulty: z.enum(["easy", "medium", "hard"]),
+  /** Longest crossword answer the grids can hold. */
+  maxAnswer: z.number().int(),
+  /** What the fair-play check found wrong with the previous plan, to fix this time. */
+  problems: z.array(z.string()).optional(),
+  feedback: Feedback,
+});
+
+const Named = z.object({ name: z.string(), description: z.string().describe("One sentence") });
+
+export const MysteryPlanOutput = z.object({
+  caseTitle: z.string().describe("Name of the case, under 40 characters, e.g. 'The Lighthouse Inheritance'"),
+  setting: z.string().describe("Where and when, one or two sentences"),
+  premise: z.string().describe("The hook: who died, how they were found, and why it isn't simple. 2-3 sentences"),
+  victim: Named,
+  sleuth: Named.describe("The detective the reader works alongside"),
+  suspects: z
+    .array(z.object({ name: z.string(), role: z.string().describe("Who they are to the victim, a few words"), motive: z.string().describe("One sentence"), alibi: z.string().describe("What they claim, one sentence") }))
+    .describe("4-6 suspects, the culprit among them"),
+  culprit: z.string().describe("The guilty suspect's name, copied exactly from suspects"),
+  motive: z.string().describe("Why the culprit did it, one or two sentences"),
+  method: z.string().describe("How and when it was done, two or three sentences"),
+  chapters: z
+    .array(
+      z.object({
+        title: z.string().describe("Chapter title, under 40 characters"),
+        summary: z.string().describe("What happens in the chapter, 2-4 sentences"),
+        clues: z.array(
+          z.object({
+            kind: z.enum(MYSTERY_CLUE_KINDS),
+            answer: z.string().describe("The clue text the puzzle gives up, in capitals (see the rules for each kind)"),
+            reveals: z.string().describe("What the clue tells the sleuth, one sentence"),
+            suspect: z.string().describe("The suspect it is about, copied exactly from suspects, or empty for a clue about the crime itself"),
+            effect: z.enum(["implicates", "clears", "neutral"]),
+            theme: z.string().describe("Theme of the puzzle's other words, tied to the scene (e.g. 'the greenhouse')"),
+          }),
+        ),
+      }),
+    )
+    .describe("The chapters in reading order"),
+  solution: z.string().describe("How the clues together prove the culprit's guilt and clear everyone else, 3-6 sentences"),
+});
+export type MysteryPlanOutput = z.infer<typeof MysteryPlanOutput>;
+
+export const MysteryChapterInput = z.object({
+  /** The plan in plain words: setting, people, culprit, method and the clue chain. */
+  caseFile: z.string(),
+  audience: z.string(),
+  chapter: z.number().int(),
+  totalChapters: z.number().int(),
+  title: z.string(),
+  summary: z.string(),
+  /** Summaries of the chapters before this one. */
+  earlier: z.array(z.string()),
+  clues: z.array(z.object({ kind: z.enum(MYSTERY_CLUE_KINDS), answer: z.string(), reveals: z.string(), theme: z.string() })),
+  /** About how long the story should be, in words. */
+  words: z.number().int(),
+  wordsPerPuzzle: z.number().int(),
+  entriesPerPuzzle: z.number().int(),
+  maxLength: z.number().int(),
+  difficulty: z.enum(["easy", "medium", "hard"]),
+  /** The closing chapter: the sleuth explains the solution; no clues. */
+  reveal: z.boolean(),
+  feedback: Feedback,
+});
+
+export const MysteryChapterOutput = z.object({
+  story: z.string().describe("The chapter's prose; a blank line between paragraphs; no chapter heading"),
+  puzzles: z
+    .array(
+      z.object({
+        title: z.string().describe("Puzzle title, under 24 characters"),
+        words: z.array(z.string()).describe("word-search and word-scramble: the themed words; empty for other kinds"),
+        entries: z.array(z.object({ answer: z.string(), clue: z.string() })).describe("crossword: themed answers and clues, the clue answer included; empty for other kinds"),
+      }),
+    )
+    .describe("One per clue, in the same order; empty for the reveal"),
+});
+export type MysteryChapterOutput = z.infer<typeof MysteryChapterOutput>;
+
 export const KeywordsInput = z.object({ topic: z.string(), seeds: z.array(z.string()), observedTitles: z.array(z.string()) });
 export const KeywordsOutput = z.object({
   clusters: z.array(z.object({ intent: z.string(), keywords: z.array(z.string()) })),
@@ -390,6 +483,8 @@ export const TASKS = {
   "cover-art-pick": { input: CoverArtPickInput, output: CoverArtPickOutput },
   "cover-variant-pick": { input: CoverVariantPickInput, output: CoverVariantPickOutput },
   "cover-style": { input: CoverStyleInput, output: CoverStyleOutput },
+  "mystery-plan": { input: MysteryPlanInput, output: MysteryPlanOutput },
+  "mystery-chapter": { input: MysteryChapterInput, output: MysteryChapterOutput },
 } as const;
 
 /** Tasks whose prompt is accompanied by images. */
@@ -414,11 +509,13 @@ export const TASK_EFFORT: Record<TaskName, "low" | "medium" | "high"> = {
   "cover-art-pick": "medium",
   "cover-variant-pick": "medium",
   "cover-style": "medium",
+  "mystery-plan": "high",
+  "mystery-chapter": "high",
 };
 export type TaskInput<T extends TaskName> = z.infer<(typeof TASKS)[T]["input"]>;
 export type TaskOutput<T extends TaskName> = z.infer<(typeof TASKS)[T]["output"]>;
 
-export const SYSTEM_PROMPT = `You are the publishing assistant inside BookStudio, an open-source studio for Amazon KDP print books (journals, planners, notebooks, puzzle and activity books).
+export const SYSTEM_PROMPT = `You are the publishing assistant inside BookStudio, an open-source studio for Amazon KDP print books (journals, planners, notebooks, puzzle and activity books, and murder mystery puzzle books).
 
 Your work ends up printed in a book someone paid for, so write for that buyer: concrete, specific, warm where it fits, never padded. Every item you write should be one the buyer would be glad to find in the book; when asked for many items, make each one different from the others in substance, not just in wording.
 
@@ -433,6 +530,22 @@ const avoidNote = (avoid: string[] | undefined, what: string) =>
 const feedbackNote = (feedback: string | undefined) =>
   feedback?.trim() ? `\n\nThis replaces an earlier version the publisher wasn't happy with. Their feedback is in "feedback"; apply it, keeping to the rules above.` : "";
 
+/** How each puzzle kind hides a mystery clue, for the plan. */
+const CLUE_RULE: Record<MysteryClueKind, string> = {
+  "word-search": "  - word-search: the clue is hidden in the leftover letters. answer: a short phrase of 2-5 words, 8-20 letters in all (e.g. 'MUD ON THE LEFT BOOT').",
+  crossword: "  - crossword: the clue is one starred answer. answer: one word of 4-{max} letters (e.g. 'WINDOW').",
+  "word-scramble": "  - word-scramble: one shaded letter of each unscrambled word spells the clue. answer: one word of 4-8 common letters (e.g. 'ASHES'); avoid J, Q, X and Z.",
+  cryptogram: "  - cryptogram: the decoded sentence is the clue. answer: one sentence of 30-90 characters (e.g. 'THE DOCTORS CAR NEVER LEFT THE DRIVE').",
+};
+
+/** What a chapter's puzzle needs from the writer, by kind. */
+const CHAPTER_PUZZLE: Record<MysteryClueKind, string> = {
+  "word-search": "exactly {words} themed words of 3-{max} letters; none of them may be a word of the hidden clue.",
+  crossword: "exactly {entries} entries of 3-{max} letters, one of them {answer} with a fair clue that fits the scene; answers that interlock well (shared common letters, mixed lengths).",
+  "word-scramble": "exactly {words} themed words of 4-8 letters, chosen so that each letter of {answer} appears in a different word.",
+  cryptogram: "nothing to write (the clue sentence is the puzzle): give a title, and leave words and entries empty.",
+};
+
 /** Reading level and word choice by audience, shared by the word tasks. */
 const WORD_LEVEL = `Match the words to the audience: young children get short, common, concrete words (3-7 letters) they can read; seniors and large-print readers get familiar everyday words; "hard" puzzles may use longer and less common words that adults still know.`;
 
@@ -446,7 +559,7 @@ export function taskPrompt<T extends TaskName>(task: T, input: TaskInput<T>): st
 - titleIdeas: 5 distinct, memorable titles under 60 characters that a buyer would search for or remember; title case; no subtitle stuffed into the title, no repeated words.
 - subtitle: names the audience and the main benefit, under 120 characters.
 - keywordIdeas: 10 phrases real buyers type into Amazon, each a different angle (audience, occasion, use case, format, problem solved).
-- Pick the generator that best fits the book type and topic, a realistic page target (puzzle books 100-160, journals and planners 100-200, notebooks 100-150), and the cover template and palette that suit the audience and genre conventions.\n${TEMPLATE_GUIDE}\n${genreHint(input as z.infer<typeof BriefInput>)}
+- Pick the generator that best fits the book type and topic, a realistic page target (puzzle books 100-160, journals and planners 100-200, notebooks 100-150, murder mysteries 60-100), and the cover template and palette that suit the audience and genre conventions.\n${TEMPLATE_GUIDE}\n${genreHint(input as z.infer<typeof BriefInput>)}
 - risks: concrete risks to check (trademarks in the topic, crowded niches, policy issues, content that needs care for this audience). Say "none found" rather than inventing risks.`;
     case "blueprint":
       return `Plan the interior of this KDP paperback as an ordered list of sections.\n\n${data}\n\nSection kinds:
@@ -541,6 +654,42 @@ List only the items a buyer would find weak: vague or generic, off-theme, clumsy
 - Clues are short (under 70 characters), accurate and unambiguous, never contain the answer or a form of it, and match the reader. ${level}
 - No duplicate answers within a crossword; across crosswords reuse as few answers as possible.
 - ${WORD_LEVEL}${avoidNote(i.avoid, "puzzle titles")}${feedbackNote(i.feedback)}`;
+    }
+    case "mystery-plan": {
+      const i = input as TaskInput<"mystery-plan">;
+      const kinds = i.kinds.map((k) => CLUE_RULE[k].replace("{max}", String(i.maxAnswer))).join("\n");
+      return `Plan a murder mystery puzzle book: a story told in chapters, where the reader solves puzzles to collect the clues that reveal the killer.\n\n${data}
+
+The plan is the backbone of the book: write it as a careful mystery writer would before drafting a single chapter.
+
+- ${i.chapters} chapters with ${i.cluesPerChapter === 1 ? "one clue" : `${i.cluesPerChapter} clues`} each (a chapter may have one more or one fewer where the story needs it). Chapter 1 sets the scene and introduces the victim and every suspect; the body is found by chapter 2; the last chapter brings the final piece of evidence; the solution comes after it and is not a chapter.
+- 4-6 suspects, each with a believable motive and an alibi. The culprit appears in chapter 1 and is never treated as obviously guilty.
+- Fair play: the reader must be able to solve it from the clues alone. At least 3 clues implicate the culprit (motive, opportunity or a broken alibi, and a physical clue), spread through the book with the decisive one late. Every innocent suspect is cleared by at least one clue; one or two of them are first implicated by a red herring that a later clue clears. No clue clears the culprit, and the solution uses no fact the reader never saw.
+- Each clue is the answer to one puzzle. Use these kinds, mixing them so no two chapters in a row lean on the same one:
+${kinds}
+- A clue's answer is the evidence itself, in capitals, readable on its own once found. Never put a suspect's name in an answer. No two clues share an answer.
+- theme: the scene the puzzle's other words come from, so each puzzle feels part of its chapter.
+- Tone for ${i.audience || "adult readers"}: a cozy, clever mystery. The death happens off the page; no gore, cruelty or graphic violence${/kid|child|ages? \d/i.test(i.audience) ? ", and for children no one is harmed on the page and the crime is a disappearance or a theft-gone-wrong told gently" : ""}. Original characters and places only: no real people, brands or famous fictional detectives.${i.problems?.length ? `\n\nAn earlier plan failed these checks; fix every one:\n${i.problems.map((p) => `- ${p}`).join("\n")}` : ""}${feedbackNote(i.feedback)}`;
+    }
+    case "mystery-chapter": {
+      const i = input as TaskInput<"mystery-chapter">;
+      if (i.reveal)
+        return `Write the solution of this murder mystery puzzle book: the scene where the sleuth gathers everyone and explains what happened.\n\n${data}
+
+- About ${i.words} words, in the same voice as the chapters. Walk through the clues in the order the reader found them, quoting each clue's words, and show how each one cleared an innocent suspect or pointed at the culprit, then how the culprit did it and why. End with the culprit's reaction and a short, satisfying last beat.
+- Plain prose with a blank line between paragraphs; dialogue is welcome. No heading, no lists, no gore. Leave puzzles empty.${feedbackNote(i.feedback)}`;
+      const puzzles = i.clues.map((c, n) => `${n + 1}. ${c.kind} on "${c.theme}" hiding "${c.answer}": ${CHAPTER_PUZZLE[c.kind].replace("{words}", String(i.wordsPerPuzzle)).replace("{entries}", String(i.entriesPerPuzzle)).replace("{max}", String(i.maxLength)).replace("{answer}", c.answer)}`).join("\n");
+      return `Write chapter ${i.chapter} of ${i.totalChapters} of this murder mystery puzzle book, and the puzzles that hide its clues.\n\n${data}
+
+The story:
+- About ${i.words} words. Follow the chapter summary and stay true to the case file: the people, the timeline and what each clue means. Continue from the earlier chapters without retelling them.
+- Show, through the sleuth's eyes, the moment each clue turns up, but stop short of stating it: the reader gets the clue by solving the puzzle. End on a line that sends the reader to the puzzle${i.clues.length > 1 ? "s" : ""}.
+- Never reveal or hint at the culprit beyond what the clues allow. Give the innocent suspects real reasons to look guilty.
+- Vivid, plain prose for ${i.audience || "adult readers"}: short paragraphs, dialogue, a little humor. A blank line between paragraphs. No heading, no gore.
+
+The puzzles, one for each clue in order:
+${puzzles}
+- Words and answers: single words, letters A-Z only, family-friendly, no names of people, brands or trademarks. ${WORD_LEVEL}${feedbackNote(i.feedback)}`;
     }
     case "keywords":
       return `Suggest keyword clusters for researching this niche.\n\n${data}\n\nGroup buyer search phrases by intent (e.g. gift, specific audience, use case, format). These are suggestions to validate, not search-volume data; say so in notes.`;

@@ -18,6 +18,7 @@ const STARTERS: Record<BookType, string> = {
   puzzle: "sudoku",
   coloring: "blank",
   activity: "maze",
+  mystery: "story",
   other: "lined",
 };
 

@@ -37,6 +37,7 @@ export const SAMPLE_BOOKS: SampleBook[] = [
   { id: "weekly-planner", topic: "Undated weekly planner for teachers", audience: "Teachers", bookType: "planner", trimId: "7x10", pageTarget: 120 },
   { id: "bird-log", topic: "Bird watching log book", audience: "Backyard birders", bookType: "log-book", trimId: "6x9", pageTarget: 110 },
   { id: "crosswords", topic: "Crossword puzzles for adults", audience: "Adults who enjoy a relaxing puzzle", bookType: "puzzle", trimId: "8.5x11", pageTarget: 100 },
+  { id: "murder-mystery", topic: "Murder mystery puzzle book at a country manor", audience: "Adults who love cozy mysteries", bookType: "mystery", trimId: "8.5x11", pageTarget: 56 },
   { id: "nurse-journal", topic: "Guided journal for nurses", audience: "Nurses in their first years on the job", bookType: "journal", trimId: "6x9", pageTarget: 140 },
 ];
 
