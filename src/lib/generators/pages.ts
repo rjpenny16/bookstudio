@@ -52,6 +52,8 @@ export type GeneratorConfig =
   | { kind: "text-page"; title: string; body: string; aiRunId?: string }
   /** Prose that flows over `pages` pages (a mystery's chapters), set as large as it fits. */
   | { kind: "story"; title: string; kicker?: string; body: string; pages: number; aiRunId?: string }
+  /** A mystery's final deduction: one letter from each of several earlier clues spells where the proof is. `solved` fills it in for the answer key. */
+  | { kind: "deduction"; title: string; body: string; picks: { clue: number; letter: number }[]; answer: string; solved?: boolean; aiRunId?: string }
   | {
       kind: "section-divider";
       title: string;
@@ -625,6 +627,49 @@ function clueBox(ctx: Ctx, width: number, how: string, answer: string, solved = 
     return els;
   };
   return { height, draw };
+}
+
+const ORDINAL = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+
+/**
+ * The final deduction page: the reader takes one letter from each listed
+ * clue (from their case notes) and the letters, in order, spell the answer.
+ */
+function deductionPage(ctx: Ctx, cfg: Extract<GeneratorConfig, { kind: "deduction" }>): Page {
+  const b = ctx.box;
+  const st = ctx.style;
+  const els: Element[] = [];
+  const head = headingBlock(ctx, cfg.solved ? `${cfg.title}: Solution` : cfg.title, b.y, Math.round(st.sizes.pageTitle * 1.1));
+  els.push(head.el);
+  let y = b.y + head.height + 14;
+  const body = cfg.body.trim();
+  if (body) {
+    const h = textBlockHeight(measureLines(body, st.body, false, st.sizes.body, b.width).length, st.sizes.body, 1.35);
+    els.push(text({ x: b.x, y, width: b.width, height: h, text: body, fontSize: st.sizes.body, fontFamily: st.body, color: INK, lineHeight: 1.35, name: "Deduction how-to" }));
+    y += h + 18;
+  }
+  const answer = normalizeWord(cfg.answer);
+  const size = st.sizes.body;
+  const cs = Math.min(st.largePrint ? 28 : 24, size * 2);
+  // Two columns only for a long list on a wide page; rows tighten a little if the list is long.
+  const cols = cfg.picks.length > 10 && b.width >= 420 ? 2 : 1;
+  const colW = b.width / cols;
+  const perCol = Math.ceil(cfg.picks.length / cols);
+  const rowH = Math.max(cs + 2, Math.min(cs + 8, (b.y + b.height - y - 140) / Math.max(1, perCol)));
+  cfg.picks.forEach((p, k) => {
+    const col = Math.floor(k / perCol);
+    const x = b.x + col * colW;
+    const ry = y + (k % perCol) * rowH;
+    const label = `${k + 1}.  The ${ORDINAL(p.letter)} letter of clue ${p.clue}`;
+    els.push(text({ x, y: ry + (cs - size * 1.13) / 2, width: colW - cs - 16, height: size * 1.13, text: label, fontSize: size, fontFamily: st.body, color: INK }));
+    els.push(rect({ x: x + colW - cs - 12, y: ry, width: cs, height: cs, fill: "#ffffff", stroke: INK, strokeWidth: 0.8 }));
+    if (cfg.solved && answer[k]) els.push(cellText(x + colW - cs - 12, ry, cs, answer[k], cs * 0.58, { bold: true, family: st.label }));
+  });
+  y += perCol * rowH + 20;
+  const box = clueBox(ctx, b.width, "Copy the letters across, in order. They spell where the final proof is waiting.", answer, cfg.solved);
+  els.push(...box.draw(b.x, Math.min(y, b.y + b.height - box.height)));
+  const out = page(ctx, "deduction", els, { label: cfg.solved ? `${cfg.title} solution` : cfg.title });
+  return cfg.aiRunId ? { ...out, elements: out.elements.map((e) => (e.type === "text" && e.name === "Deduction how-to" ? tag(ctx, e, { origin: "ai-generated", runId: cfg.aiRunId }) : e)) } : out;
 }
 
 interface DividerParts {
@@ -1408,6 +1453,8 @@ export function generatePages(cfg: GeneratorConfig, opts: GenerateOptions): Page
       return [textPage(ctx, cfg.title, cfg.body, cfg.aiRunId)];
     case "story":
       return storyPages(ctx, cfg);
+    case "deduction":
+      return [deductionPage(ctx, cfg)];
     case "section-divider":
       return [...(cfg.blankBefore ? [page(ctx, "blank", [], { hideNumber: true, label: "Blank" })] : []), sectionDivider(ctx, cfg)];
     case "table-of-contents":
@@ -1448,6 +1495,7 @@ export function estimatePageCount(cfg: GeneratorConfig): number {
     case "belongs-to":
     case "text-page":
     case "table-of-contents":
+    case "deduction":
       return 1;
     case "sudoku":
       return puzzlePages(cfg, cfg.count, Math.ceil(cfg.count / cfg.perPage), Math.ceil(cfg.count / (cfg.keysPerPage ?? 6)));

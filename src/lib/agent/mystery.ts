@@ -75,8 +75,8 @@ export function mysteryStyle(i: { audience: string; topic: string; notes?: strin
   return { genre: KIDS.test(words) ? "kids" : "mystery", largePrint: LARGE.test(words) };
 }
 
-/** Pages outside the chapters: title, how to solve, suspects, case notes, contents; accusation, key divider, solution divider, closing. */
-const FIXED_PAGES = 5 + 4;
+/** Pages outside the chapters: title, how to solve, suspects, case notes, contents; final deduction, accusation, key divider, deduction key, solution divider, closing. */
+const FIXED_PAGES = 5 + 6;
 
 /** Rough page count of a plan's shape (the exact count is measured once the chapters are written). */
 const shapePages = (chapters: number, clues: number, story: number) => FIXED_PAGES + chapters * (story + clues) + Math.ceil((chapters * clues) / 4) + 3 + Math.max(2, story);
@@ -229,9 +229,144 @@ export function checkMysteryPlan(raw: MysteryPlan, z: Pick<MysterySizing, "kinds
     if (clues.some((cl) => cl.suspect === culprit && cl.effect === "clears")) problems.push(`A clue clears the culprit, ${culprit}; a fair mystery never clears the guilty party.`);
     for (const n of names.filter((x) => x !== culprit))
       if (!clues.some((cl) => cl.suspect === n && cl.effect === "clears")) problems.push(`Nothing clears ${n}; every innocent suspect needs a clue that rules them out.`);
+    // The first quarter gathers neutral facts; nothing there points at the killer.
+    const quarter = Math.max(1, Math.ceil(plan.chapters.length / 4));
+    for (const cl of against.filter((x) => x.chapter < quarter)) problems.push(`Chapter ${cl.chapter + 1}'s clue "${cl.answer}" points at the culprit too early; the first ${quarter} chapter(s) should give neutral facts (places, times, objects).`);
+    storyChecks(plan, names, culprit, clues, nameParts, problems);
   }
+  for (const cl of clues) if (cl.source.trim().length < 8) problems.push(`Chapter ${cl.chapter + 1}'s clue "${cl.answer}" needs a source: the thing in the story the puzzle comes from.`);
   const fatal = !culprit || plan.chapters.length < 4 || valid < 4;
   return { plan, problems, fatal };
+}
+
+/** Minutes after midnight for "HH:MM", or null. */
+export function clockMinutes(t: string): number | null {
+  const m = t.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+/** Two place names for the same spot ("the study", "Study", "Sir Edmund's study"). */
+const samePlace = (a: string, b: string) => {
+  const n = (s: string) => s.toLowerCase().replace(/^the\s+/, "").replace(/[^a-z0-9 ]/g, "").trim();
+  const x = n(a);
+  const y = n(b);
+  return !!x && !!y && (x === y || x.includes(y) || y.includes(x));
+};
+
+/**
+ * The checks on the story behind the clues: every innocent suspect has a
+ * secret that explains their suspicious behavior; the true timeline is
+ * possible (nobody in two places at once), gives every innocent suspect an
+ * alibi at the time of death and puts the culprit at the scene; the wrong
+ * theory peaks mid-book and is cleared after the halfway point; and the
+ * final deduction can be spelled from the clues' letters.
+ */
+function storyChecks(plan: MysteryPlan, names: string[], culprit: string, clues: (MysteryClue & { chapter: number })[], nameParts: string[], problems: string[]) {
+  const innocent = names.filter((n) => n !== culprit);
+  for (const s of plan.suspects) if (s.name !== culprit && (s.secret ?? "").trim().length < 12) problems.push(`${s.name} needs a secret that isn't the murder but explains why they act guilty.`);
+
+  // Timeline.
+  const people = [...names, plan.victim.name];
+  const tod = clockMinutes(plan.timeOfDeath);
+  if (tod === null) problems.push(`timeOfDeath "${plan.timeOfDeath}" must be HH:MM on a 24-hour clock.`);
+  if (!plan.crimeScene.trim()) problems.push("Name the crime scene.");
+  if (plan.timeline.length < 6) problems.push(`The timeline needs the victim and every suspect around the death (has ${plan.timeline.length} entries).`);
+  const at = new Map<string, string>();
+  for (const e of plan.timeline) {
+    const who = people.find((n) => sameName(n, e.who));
+    const t = clockMinutes(e.time);
+    if (!who) problems.push(`Timeline: "${e.who}" is not the victim or a suspect.`);
+    else e.who = who;
+    if (t === null) problems.push(`Timeline: "${e.time}" must be HH:MM.`);
+    if (!who || t === null) continue;
+    const key = `${who}@${t}`;
+    const was = at.get(key);
+    if (was !== undefined && !samePlace(was, e.where)) problems.push(`Timeline: ${who} is in two places at ${e.time} (${was} and ${e.where}).`);
+    at.set(key, e.where);
+  }
+  if (tod !== null && plan.crimeScene.trim()) {
+    const near = (t: number) => Math.min(Math.abs(t - tod), 1440 - Math.abs(t - tod));
+    for (const n of innocent) {
+      const e = plan.timeline.find((x) => x.who === n && clockMinutes(x.time) === tod);
+      if (!e) problems.push(`Timeline: where is ${n} at ${plan.timeOfDeath}, the time of death? Every innocent suspect needs an entry then.`);
+      else if (samePlace(e.where, plan.crimeScene)) problems.push(`Timeline: ${n} is at the crime scene at the time of death but is innocent.`);
+    }
+    if (!plan.timeline.some((x) => x.who === culprit && samePlace(x.where, plan.crimeScene) && near(clockMinutes(x.time) ?? -9999) <= 60))
+      problems.push(`Timeline: the culprit, ${culprit}, must be at ${plan.crimeScene} within an hour of ${plan.timeOfDeath}.`);
+  }
+
+  // The wrong theory: an innocent suspect, implicated before 60% of the book and cleared after the halfway point.
+  const n = plan.chapters.length;
+  const ft = names.find((x) => sameName(x, plan.falseTheory.suspect));
+  if (!ft || ft === culprit) problems.push(`falseTheory must name an innocent suspect (has "${plan.falseTheory.suspect}").`);
+  else {
+    plan.falseTheory.suspect = ft;
+    if (!clues.some((cl) => cl.suspect === ft && cl.effect === "implicates" && cl.chapter < n * 0.6)) problems.push(`The wrong theory against ${ft} needs a clue that implicates them before 60% of the book.`);
+    if (!clues.some((cl) => cl.suspect === ft && cl.effect === "clears" && cl.chapter >= Math.floor(n / 2))) problems.push(`The clue that clears ${ft} should come after the halfway point, so the wrong theory holds through the middle.`);
+  }
+
+  // The final deduction is spelled from letters of the clues.
+  const oneWord = !/\s/.test(plan.finalProof.answer.trim());
+  const proof = lettersOf(plan.finalProof.answer);
+  plan.finalProof.answer = proof;
+  if (!oneWord || proof.length < 4 || proof.length > 12) problems.push(`finalProof "${plan.finalProof.answer}" must be one word of 4-12 letters.`);
+  if (nameParts.includes(proof)) problems.push("finalProof must name where the proof is, not a person.");
+  if (clues.some((cl) => lettersOf(cl.answer) === proof)) problems.push("finalProof must be new, not one of the clue answers.");
+  const pool = clues.map((cl) => lettersOf(cl.answer)).join("");
+  const missing = [...new Set(proof)].filter((ch) => !pool.includes(ch));
+  if (missing.length) problems.push(`finalProof "${proof}" can't be spelled from the clues: no clue has the letter(s) ${missing.join(", ")}.`);
+}
+
+/**
+ * Which letter of which clue spells each letter of the final proof: clue
+ * numbers are 1-based through the book, letters count letters only. Picks
+ * favor early letters (easy to count), spread across the book and use each
+ * clue once where they can.
+ */
+export function deductionPicks(answers: string[], proof: string): { clue: number; letter: number }[] | null {
+  const words = answers.map((a) => lettersOf(a));
+  const target = lettersOf(proof);
+  const used = new Set<number>();
+  const picks: { clue: number; letter: number }[] = [];
+  for (let i = 0; i < target.length; i++) {
+    // Early letters are easy to count: the clue where this letter comes soonest wins, an unused clue near this
+    // letter's share of the book breaking ties, so the picks spread through the book.
+    const home = (i * words.length) / target.length;
+    const cost = (k: number) => words[k].indexOf(target[i]) * 2 + (used.has(k) ? 30 : 0) + Math.abs(k - home) * 0.5;
+    const candidates = words.map((_, k) => k).filter((k) => words[k].includes(target[i]));
+    if (!candidates.length) return null;
+    const pick = candidates.reduce((a, b) => (cost(b) < cost(a) ? b : a));
+    used.add(pick);
+    picks.push({ clue: pick + 1, letter: words[pick].indexOf(target[i]) + 1 });
+  }
+  return picks;
+}
+
+/** What a reader can see by each checkpoint: the clues found so far, never who is guilty. */
+export function testCheckpoints(plan: MysteryPlan): TaskInput<"mystery-test">["checkpoints"] {
+  const n = plan.chapters.length;
+  return [0.25, 0.5, 0.75, 1].map((share) => ({
+    label: `${Math.round(share * 100)}%`,
+    clues: plan.chapters.slice(0, Math.max(1, Math.ceil(n * share))).flatMap((ch, c) => ch.clues.map((cl) => `Chapter ${c + 1} (${cl.source}): ${cl.answer}. ${cl.reveals}`)),
+  }));
+}
+
+/**
+ * Judge a test reader's verdicts: a confident correct accusation at 25% or
+ * 50% means the killer is too easy to spot; at the end the clues must lead
+ * a careful reader to the culprit.
+ */
+export function judgeTest(verdicts: TaskOutput<"mystery-test">["verdicts"], culprit: string): string[] {
+  const problems: string[] = [];
+  const by = (label: string) => verdicts.find((v) => v.checkpoint.trim() === label);
+  for (const label of ["25%", "50%"]) {
+    const v = by(label);
+    if (v && sameName(v.suspect, culprit) && v.confidence >= 4) problems.push(`A test reader confidently named ${culprit} at ${label} of the book ("${v.reasoning.trim()}"); the early clues give the killer away. Make them neutral or point them elsewhere.`);
+  }
+  const end = by("100%");
+  if (end && (!sameName(end.suspect, culprit) || end.confidence < 3)) problems.push(`With every clue in hand, a test reader accused ${end.suspect} (confidence ${end.confidence}/5), not ${culprit}: "${end.reasoning.trim()}". Strengthen the late clues against the culprit and make sure each innocent suspect is clearly cleared.`);
+  return problems;
 }
 
 /** Drop the clues that can't be hidden (wrong kind or answer), so a plan with small faults can still be built. */
@@ -250,10 +385,11 @@ function usableClues(plan: MysteryPlan, z: Pick<MysterySizing, "kinds" | "maxAns
 
 /** The plan in plain words, for the chapter writer and the publisher's brief (it names the culprit). */
 export function caseFile(plan: MysteryPlan): string {
-  const people = plan.suspects.map((s) => `- ${s.name}, ${s.role}. Motive: ${s.motive} Alibi: ${s.alibi}`).join("\n");
+  const people = plan.suspects.map((s) => `- ${s.name}, ${s.role}. Motive: ${s.motive} Alibi: ${s.alibi}${s.secret?.trim() ? ` Secret: ${s.secret}` : ""}`).join("\n");
   const chain = plan.chapters
-    .map((ch, c) => `${c + 1}. ${ch.title}: ${ch.summary}${ch.clues.map((cl) => `\n   Clue (${cl.kind}) "${cl.answer}": ${cl.reveals}${cl.suspect ? ` [${cl.effect} ${cl.suspect}]` : ""}`).join("")}`)
+    .map((ch, c) => `${c + 1}. ${ch.title}: ${ch.summary}${ch.clues.map((cl) => `\n   Clue (${cl.kind}) "${cl.answer}", from ${cl.source}: ${cl.reveals}${cl.suspect ? ` [${cl.effect} ${cl.suspect}]` : ""}`).join("")}`)
     .join("\n");
+  const timeline = plan.timeline.map((e) => `- ${e.time} ${e.who}, ${e.where}: ${e.doing}`).join("\n");
   return [
     `${plan.caseTitle}. ${plan.setting}`,
     plan.premise,
@@ -261,12 +397,15 @@ export function caseFile(plan: MysteryPlan): string {
     `Sleuth: ${plan.sleuth.name}, ${plan.sleuth.description}`,
     `Suspects:\n${people}`,
     `Culprit: ${plan.culprit}. Motive: ${plan.motive} Method: ${plan.method}`,
+    `Crime scene: ${plan.crimeScene}, at ${plan.timeOfDeath}. True timeline:\n${timeline}`,
+    `The wrong theory mid-book: ${plan.falseTheory.suspect}. ${plan.falseTheory.why}`,
     `Chapters and clues:\n${chain}`,
+    `Final deduction: the reader spells ${plan.finalProof.answer} from letters of the clues. ${plan.finalProof.reveals}`,
     `Solution: ${plan.solution}`,
   ].join("\n\n");
 }
 
-export type MysteryAsk = <T extends "mystery-plan" | "mystery-chapter">(task: T, input: TaskInput<T>, outputs: string[]) => Promise<{ output: TaskOutput<T>; runId?: string }>;
+export type MysteryAsk = <T extends "mystery-plan" | "mystery-chapter" | "mystery-test">(task: T, input: TaskInput<T>, outputs: string[]) => Promise<{ output: TaskOutput<T>; runId?: string }>;
 
 export interface PlannedMystery {
   plan: MysteryPlan;
@@ -280,7 +419,10 @@ export interface PlannedMystery {
  * Ask for a plan, check it, and when it breaks the rules ask once more with
  * the problems spelled out. The better of the two is kept; if neither can
  * be built (no culprit among the suspects, too few chapters or clues), a
- * built-in case is used instead and the run says so.
+ * built-in case is used instead and the run says so. A plan that passes
+ * then goes to a test reader who sees only the clues, checkpoint by
+ * checkpoint; if the killer is obvious too early or the clues never lead
+ * to them, the plan is sent back once more with what the reader concluded.
  */
 export async function planMystery(ask: MysteryAsk, z: MysterySizing, i: MysteryInput): Promise<PlannedMystery> {
   const input: TaskInput<"mystery-plan"> = { topic: i.topic, audience: i.audience, title: i.title, angle: i.angle, notes: i.notes, chapters: z.chapters, cluesPerChapter: z.cluesPerChapter, kinds: z.kinds, difficulty: z.difficulty, maxAnswer: z.maxAnswer };
@@ -301,7 +443,33 @@ export async function planMystery(ask: MysteryAsk, z: MysterySizing, i: MysteryI
     notes.push(`Case plan: the model's plan couldn't be built (${best.problems[0] ?? "unusable"}), so the built-in case "${fallback.plan.caseTitle}" was used.`);
     return { plan: structuredClone(fallback.plan), problems: [], notes };
   }
+  // The test reader: one more plan when the reader solves it too soon or can't solve it at all.
+  const tested = await readTest(ask, best.plan);
+  if (tested.length) {
+    const third = await ask("mystery-plan", { ...input, problems: [...tested, ...best.problems].slice(0, 12) }, outputs).catch(() => null);
+    const again = third ? { ...checkMysteryPlan(third.output, z), runId: third.runId } : null;
+    const againTest = again && !again.fatal && again.problems.length <= best.problems.length ? await readTest(ask, again.plan) : null;
+    if (again && againTest && againTest.length < tested.length) {
+      best = again;
+      notes.push(againTest.length ? `Case plan: the test reader still found: ${againTest.join(" ")}` : "Case plan: a test reader solved the first plan too soon or not at all; the revised plan passed the test.");
+      return { plan: usableClues(best.plan, z), runId: best.runId, problems: [...best.problems, ...againTest], notes };
+    }
+    notes.push(`Case plan: the test reader found: ${tested.join(" ")}`);
+    return { plan: usableClues(best.plan, z), runId: best.runId, problems: [...best.problems, ...tested], notes };
+  }
   return { plan: usableClues(best.plan, z), runId: best.runId, problems: best.problems, notes };
+}
+
+/** Ask a test reader to solve the case from the clues alone; returns what went wrong (none when the call fails or answers nothing, as offline). */
+async function readTest(ask: MysteryAsk, plan: MysteryPlan): Promise<string[]> {
+  const input: TaskInput<"mystery-test"> = {
+    premise: plan.premise,
+    victim: `${plan.victim.name}, ${plan.victim.description}`,
+    suspects: plan.suspects.map((s) => ({ name: s.name, role: s.role, motive: s.motive, alibi: s.alibi })),
+    checkpoints: testCheckpoints(plan),
+  };
+  const r = await ask("mystery-test", input, ["interior.case-test"]).catch(() => null);
+  return r ? judgeTest(r.output.verdicts, plan.culprit) : [];
 }
 
 /* --------------------------------- chapters -------------------------------- */
@@ -339,7 +507,8 @@ export function chapterRequest(plan: MysteryPlan, c: number, z: MysterySizing, a
     title: ch.title,
     summary: ch.summary,
     earlier: plan.chapters.slice(0, c).map((x, k) => `${k + 1}. ${x.title}: ${x.summary}`),
-    clues: ch.clues.map((cl) => ({ kind: cl.kind, answer: cl.answer, reveals: cl.reveals, theme: cl.theme })),
+    clues: ch.clues.map((cl) => ({ kind: cl.kind, answer: cl.answer, reveals: cl.reveals, theme: cl.theme, source: cl.source })),
+    previousClues: c > 0 ? plan.chapters[c - 1].clues.map((cl) => cl.answer) : [],
     words: z.wordsPerChapter,
     wordsPerPuzzle: ws.words,
     entriesPerPuzzle: cw.entries,
@@ -370,10 +539,14 @@ export function ensureSecret(words: string[], secret: string): string[] {
  * enough, scrambles able to spell their secret, crosswords holding their
  * key answer. Returns what is still wrong, for one rewrite.
  */
-export function checkChapter(out: MysteryChapterOutput, clues: MysteryClue[], z: MysterySizing, words: number): { chapter: WrittenChapter; problems: string[] } {
+export function checkChapter(out: MysteryChapterOutput, clues: MysteryClue[], z: MysterySizing, words: number, previous: MysteryClue[] = []): { chapter: WrittenChapter; problems: string[] } {
   const problems: string[] = [];
   const story = out.story.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim();
   if (wordCount(story) < Math.min(120, words * 0.4)) problems.push(`The story is too short (${wordCount(story)} words; write about ${words}).`);
+  // Readers who skip a puzzle still learn its answer here; one-word clues can be checked for.
+  for (const cl of previous)
+    if ((cl.kind === "crossword" || cl.kind === "word-scramble") && !new RegExp(`\\b${cl.answer}\\b`, "i").test(story))
+      problems.push(`Let the sleuth learn the last chapter's clue "${cl.answer}" plainly, using the word itself, for readers who skipped the puzzle.`);
   const puzzles: ChapterPuzzle[] = clues.map((cl, k) => {
     const p = out.puzzles[k] ?? { title: "", words: [], entries: [] };
     const title = p.title.trim().slice(0, 24) || titleCase(cl.theme.replace(/^the\s+/i, "")) || "Clue";
@@ -427,17 +600,18 @@ export async function writeMystery(ask: MysteryAsk, plan: MysteryPlan, z: Myster
   const chapters = await pool(plan.chapters, async (ch, c) => {
     const req = chapterRequest(plan, c, z, audience, file);
     const clues = ch.clues;
+    const previous = c > 0 ? plan.chapters[c - 1].clues : [];
     let r: { output: MysteryChapterOutput; runId?: string } | null = null;
     try {
       r = await ask("mystery-chapter", req, [`interior.chapter:${c + 1}`]);
     } catch (e) {
       if ((e as { status?: number })?.status && [401, 403, 429, 499, 503].includes((e as { status: number }).status)) throw e;
     }
-    let checked = r ? checkChapter(r.output, clues, z, req.words) : { chapter: { story: ch.summary, puzzles: [] }, problems: ["no answer"] };
+    let checked = r ? checkChapter(r.output, clues, z, req.words, previous) : { chapter: { story: ch.summary, puzzles: [] }, problems: ["no answer"] };
     let runId = r?.runId;
     if (checked.problems.length) {
       const again = await ask("mystery-chapter", { ...req, feedback: `Fix these: ${checked.problems.join(" ")}`.slice(0, 500) }, [`interior.chapter:${c + 1}`]).catch(() => null);
-      const second = again ? checkChapter(again.output, clues, z, req.words) : null;
+      const second = again ? checkChapter(again.output, clues, z, req.words, previous) : null;
       if (second && second.problems.length <= checked.problems.length) {
         checked = second;
         runId = again!.runId ?? runId;
@@ -533,7 +707,7 @@ export function assembleMystery(plan: MysteryPlan, chapters: WrittenChapter[], r
     `Read each chapter, then solve the puzzles that follow it. Every puzzle hides one clue:`,
     used.map((k) => `• ${HOW[k]}`).join("\n"),
     "Write each clue in your Case Notes and think about what it tells you. Some clues point at a suspect, some clear one, and not every suspicious detail is what it seems.",
-    "When you finish the last chapter, name the killer on The Accusation page, then turn to the solution. Stuck on a puzzle? Every answer is in the Answer Key.",
+    "After the last chapter, the Final Deduction combines letters from your clues to show where the proof is hidden. Then name the killer on The Accusation page and turn to the solution. Stuck on a puzzle? Every answer is in the Answer Key, and each chapter mentions the clue the puzzle before it hid.",
   ].join("\n\n");
   const cast = [
     `The victim: ${plan.victim.name}. ${plan.victim.description}`,
@@ -580,6 +754,21 @@ export function assembleMystery(plan: MysteryPlan, chapters: WrittenChapter[], r
     body.push({ entry: `${c + 1}. ${ch.title}`, items });
   });
 
+  // The final deduction: one letter from earlier clues spells where the proof is (skipped if the clues can't spell it).
+  const answers = plan.chapters.flatMap((ch) => ch.clues.map((cl) => cl.answer));
+  const picks = deductionPicks(answers, plan.finalProof.answer);
+  const deduction: GeneratorConfig | null = picks
+    ? {
+        kind: "deduction",
+        title: "Final Deduction",
+        body: `${plan.sleuth.name} has every clue now. One question is left: where is the proof that will stand up in court? Take one letter from each clue below, counting letters only (skip spaces and punctuation), using the clues in your Case Notes.`,
+        picks,
+        answer: plan.finalProof.answer,
+        aiRunId: runId,
+      }
+    : null;
+  if (deduction) body.push({ entry: "Final Deduction", items: [{ label: "Final deduction", role: "body", config: deduction }] });
+
   // The answer key groups each kind's puzzles in one section, in the order they appear.
   const keys: SectionInput[] = [];
   for (const kind of used) {
@@ -595,6 +784,7 @@ export function assembleMystery(plan: MysteryPlan, chapters: WrittenChapter[], r
     else continue;
     keys.push({ label: `Answers: ${NAME[kind][1]}`, role: "back", config: withPart(config, "solutions") });
   }
+  if (deduction && deduction.kind === "deduction") keys.push({ label: "Answers: final deduction", role: "back", config: { ...deduction, solved: true } });
 
   const solution = { title: "The Solution", kicker: plan.caseTitle, body: reveal.story };
   const back: SectionInput[] = [

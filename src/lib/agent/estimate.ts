@@ -66,15 +66,16 @@ export function estimateRun(i: EstimateInput): RunEstimate {
 }
 
 /**
- * A mystery: brief, the case plan (and one re-plan if it fails the fair-play
- * check), one call per chapter (6-12) plus the reveal, the listing and its
- * critique, the cover pick and the visual review.
+ * A mystery: brief, the case plan (one re-plan if it fails the fair-play
+ * check, one if the test reader solves it too soon or not at all) and the
+ * test reader, one call per chapter (6-14) plus the reveal, the listing and
+ * its critique, the cover pick and the visual review.
  */
 function mysteryEstimate(i: EstimateInput): RunEstimate {
-  let low = 6 + 1 + 7;
-  let high = 7 + 2 + 13;
-  let tokLow = 2_500 + 8_000 + 7 * 5_000 + 4_000 + 5_000 + 5_000 + 9_000;
-  let tokHigh = 6_000 + 2 * 16_000 + 13 * 10_000 + 9_000 + 12_000 + 10_000 + 20_000 * 2;
+  let low = 6 + 2 + 7;
+  let high = 7 + 5 + 15;
+  let tokLow = 2_500 + 10_000 + 4_000 + 7 * 5_000 + 4_000 + 5_000 + 5_000 + 9_000;
+  let tokHigh = 6_000 + 3 * 20_000 + 2 * 8_000 + 15 * 10_000 + 9_000 + 12_000 + 10_000 + 20_000 * 2;
   let visionCalls = 2;
   let images = 0;
   if (i.coverArt) {

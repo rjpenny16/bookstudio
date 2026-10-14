@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assembleMystery, BUILT_IN_CASES, checkMysteryPlan, ensureSecret, mysterySizing, mysteryStyle, planMystery, writeMystery, type MysteryAsk, type MysteryInput } from "@/lib/agent/mystery";
+import { assembleMystery, BUILT_IN_CASES, checkChapter, checkMysteryPlan, deductionPicks, ensureSecret, judgeTest, mysterySizing, mysteryStyle, planMystery, testCheckpoints, writeMystery, type MysteryAsk, type MysteryInput } from "@/lib/agent/mystery";
 import { pool } from "@/lib/agent/content";
 import { inferSetup } from "@/lib/agent/setup";
 import { offlineTask } from "@/lib/ai/offline";
@@ -106,6 +106,84 @@ describe("the case plan", () => {
     expect(r.problems.join(" ")).toMatch(/names a suspect/);
   });
 
+  it("requires a secret for every innocent suspect", () => {
+    const p = plan();
+    p.suspects[2].secret = "";
+    expect(checkMysteryPlan(p, z).problems.join(" ")).toMatch(/Agnes Pell needs a secret/);
+  });
+
+  it("checks the timeline: no one in two places, alibis at the time of death, the culprit at the scene", () => {
+    const p = plan();
+    p.timeline.push({ time: "21:30", who: "Victor Lane", where: "the garden", doing: "walking" });
+    p.timeline = p.timeline.filter((e) => !(e.who === "Thomas Briggs" && e.time === "00:00"));
+    p.timeline.find((e) => e.who === "Agnes Pell" && e.time === "00:00")!.where = "the study";
+    p.timeline = p.timeline.filter((e) => !(e.who === "Victor Lane" && e.where === "the study"));
+    const all = checkMysteryPlan(p, z).problems.join(" ");
+    expect(all).toMatch(/Victor Lane is in two places at 21:30/);
+    expect(all).toMatch(/where is Thomas Briggs at 00:00/);
+    expect(all).toMatch(/Agnes Pell is at the crime scene/);
+    expect(all).toMatch(/culprit, Victor Lane, must be at the study/);
+  });
+
+  it("keeps the first quarter's clues neutral", () => {
+    const p = plan();
+    p.chapters[0].clues[0] = { ...p.chapters[0].clues[0], suspect: "Victor Lane", effect: "implicates" };
+    expect(checkMysteryPlan(p, z).problems.join(" ")).toMatch(/points at the culprit too early/);
+  });
+
+  it("needs a wrong theory that holds through the middle", () => {
+    const p = plan();
+    p.falseTheory.suspect = "Victor Lane";
+    expect(checkMysteryPlan(p, z).problems.join(" ")).toMatch(/falseTheory must name an innocent suspect/);
+    const q = plan();
+    // Clear the wrong suspect in chapter 2 instead of after the halfway point.
+    const ledger = q.chapters[4].clues.splice(0, 1)[0];
+    q.chapters[1].clues.push(ledger);
+    expect(checkMysteryPlan(q, z).problems.join(" ")).toMatch(/should come after the halfway point/);
+  });
+
+  it("needs every puzzle to come from something in the story", () => {
+    const p = plan();
+    p.chapters[3].clues[0].source = "";
+    expect(checkMysteryPlan(p, z).problems.join(" ")).toMatch(/needs a source/);
+  });
+
+  it("checks the final proof can be spelled from the clues, and spells it", () => {
+    const p = plan();
+    p.finalProof.answer = "JUKEBOX";
+    expect(checkMysteryPlan(p, z).problems.join(" ")).toMatch(/can't be spelled from the clues/);
+    const answers = ["CHECK THE DECANTER", "WINDOW", "BOOTS", "LEDGER"];
+    const picks = deductionPicks(answers, "BENCH")!;
+    expect(picks.map((x) => normalizeWord(answers[x.clue - 1])[x.letter - 1]).join("")).toBe("BENCH");
+    expect(deductionPicks(answers, "QUIZ")).toBeNull();
+  });
+
+  it("judges a test reader: too easy early, or unsolvable at the end", () => {
+    expect(judgeTest([{ checkpoint: "25%", suspect: "Victor Lane", confidence: 5, reasoning: "Only he had a reason." }], "Victor Lane").join(" ")).toMatch(/at 25%/);
+    expect(judgeTest([{ checkpoint: "25%", suspect: "Victor Lane", confidence: 2, reasoning: "A hunch." }], "Victor Lane")).toEqual([]);
+    expect(judgeTest([{ checkpoint: "100%", suspect: "Agnes Pell", confidence: 4, reasoning: "The will." }], "Victor Lane").join(" ")).toMatch(/accused Agnes Pell/);
+    // The test sees the clues found by each checkpoint, never who is guilty.
+    const cps = testCheckpoints(plan());
+    expect(cps.map((c) => c.label)).toEqual(["25%", "50%", "75%", "100%"]);
+    expect(cps[0].clues.length).toBeLessThan(cps[3].clues.length);
+    expect(JSON.stringify(cps)).not.toMatch(/implicates|clears/);
+  });
+
+  it("sends the plan back when the test reader solves it too soon", async () => {
+    const asked: string[] = [];
+    let plans = 0;
+    const eager: MysteryAsk = async (task, input, outputs) => {
+      asked.push(task);
+      if (task === "mystery-plan") plans++;
+      if (task === "mystery-test") return { output: { verdicts: [{ checkpoint: "25%", suspect: plans < 2 ? "Victor Lane" : "unsure", confidence: plans < 2 ? 5 : 1, reasoning: "The clues point at him at once." }, { checkpoint: "100%", suspect: "Victor Lane", confidence: 5, reasoning: "All of it." }] } as never };
+      return offlineAsk(task, input, outputs);
+    };
+    const r = await planMystery(eager, z, base);
+    expect(asked).toEqual(["mystery-plan", "mystery-test", "mystery-plan", "mystery-test"]);
+    expect(r.problems).toEqual([]);
+    expect(r.notes.join(" ")).toMatch(/revised plan passed the test/);
+  });
+
   it("re-plans once with the problems, and falls back to a built-in case when the plan can't be built", async () => {
     const asked: unknown[] = [];
     const bad: MysteryAsk = async (task, input, outputs) => {
@@ -179,7 +257,17 @@ describe("a whole mystery book", () => {
 
     // The contents list every chapter.
     const toc = project.interior.sections.find((s) => s.config.kind === "table-of-contents")!.config;
-    expect(toc.kind === "table-of-contents" && toc.entries.length).toBe(planned.plan.chapters.length + 5);
+    expect(toc.kind === "table-of-contents" && toc.entries.length).toBe(planned.plan.chapters.length + 6);
+
+    // The final deduction comes after the last chapter, and its picks spell the proof from the printed clue answers.
+    const deduction = project.interior.sections.find((s) => s.label === "Final deduction")!.config;
+    expect(deduction.kind).toBe("deduction");
+    if (deduction.kind === "deduction") {
+      const answers = planned.plan.chapters.flatMap((c) => c.clues.map((cl) => normalizeWord(cl.answer)));
+      expect(deduction.picks.map((p) => answers[p.clue - 1][p.letter - 1]).join("")).toBe(planned.plan.finalProof.answer);
+    }
+    expect(labels.indexOf("Final deduction")).toBeLessThan(labels.indexOf("The accusation"));
+    expect(labels).toContain("Answers: final deduction");
 
     // No spoilers in the listing summary.
     expect(book.summary).not.toContain(planned.plan.culprit);
@@ -187,6 +275,19 @@ describe("a whole mystery book", () => {
     const report = runPreflight(project);
     // The listing and AI disclosure are filled in by later autopilot steps.
     expect(report.checks.filter((c) => c.status === "fail" && c.id !== "metadata" && c.id !== "ai-disclosure").map((c) => c.title)).toEqual([]);
+  });
+
+  it("asks a chapter to name the last chapter's clue, for readers who skip puzzles", () => {
+    const c = BUILT_IN_CASES[0];
+    const z = mysterySizing(base);
+    const story = { story: "Nothing about it at all. ".repeat(40), puzzles: [{ title: "Kitchen", words: c.chapters[4].puzzles[0].words, entries: [] }] };
+    expect(checkChapter(story, c.plan.chapters[4].clues, z, 300, c.plan.chapters[3].clues).problems.join(" ")).toMatch(/"CODICIL" plainly/);
+    // The built-in cases do it in every chapter.
+    for (const m of BUILT_IN_CASES)
+      m.plan.chapters.slice(1).forEach((ch, k) => {
+        const r = checkChapter(m.chapters[k + 1], ch.clues, z, 250, m.plan.chapters[k].clues);
+        expect(r.problems.filter((x) => /plainly/.test(x)), `${m.plan.caseTitle} chapter ${k + 2}`).toEqual([]);
+      });
   });
 
   it("fits each chapter's story on its pages", async () => {
