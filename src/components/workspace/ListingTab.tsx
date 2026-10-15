@@ -10,6 +10,8 @@ import { aiUsage } from "@/lib/preflight/aiUsage";
 import { describeInterior, listingFacts, trimLabel } from "@/lib/quality";
 import { isLowContent, type AiDisclosureLevel } from "@/lib/schema/project";
 import { useProjectStore } from "@/lib/storage/store";
+import { applyTitle } from "@/lib/agent/regenerateClient";
+import type { TitleOption } from "@/lib/schema/project";
 
 
 function trimTrailing(xs: string[]): string[] {
@@ -25,6 +27,7 @@ function Count({ n, max }: { n: number; max: number }) {
 export function ListingTab() {
   const project = useProjectStore((s) => s.project)!;
   const update = useProjectStore((s) => s.update);
+  const replace = useProjectStore((s) => s.replace);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ kind: "info" | "fail"; text: string } | null>(null);
   const m = project.metadata;
@@ -33,6 +36,22 @@ export function ListingTab() {
   const r = royaltyUsd(project.spec, n, m.listPriceUsd);
   const usage = aiUsage(project);
   const low = isLowContent(project.bookType);
+  const otherTitles = (project.brief.titleOptions ?? []).filter((o) => o.title !== m.title);
+
+  /** Swap in a title named from the content; the title page and cover follow. */
+  const chooseTitle = async (o: TitleOption) => {
+    setBusy(true);
+    setNote(null);
+    try {
+      const r = await applyTitle(project, o);
+      replace({ ...r.project, updatedAt: new Date().toISOString() });
+      setNote({ kind: "info", text: r.summary });
+    } catch (e) {
+      setNote({ kind: "fail", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
   const ts = m.title.length + m.subtitle.length;
   const set = (fn: (d: typeof m) => void) =>
     update((d) => {
@@ -120,6 +139,15 @@ export function ListingTab() {
               </span>
               <input value={m.title} onChange={(e) => set((d) => void (d.title = e.target.value))} />
             </label>
+            {otherTitles.length > 0 && (
+              <div className="chip-list" aria-label="Other titles" style={{ marginTop: 6 }}>
+                {otherTitles.map((o) => (
+                  <button key={o.title} className="chip" title={o.why} disabled={busy} onClick={() => chooseTitle(o)}>
+                    {o.title}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div className="field">
             <label>

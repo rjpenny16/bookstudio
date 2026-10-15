@@ -37,6 +37,7 @@ export const EXAMPLES: { topic: string; audience: string }[] = [
   { topic: "large print sudoku", audience: "seniors" },
   { topic: "ocean animals word search", audience: "kids ages 6-9" },
   { topic: "fishing log book", audience: "anglers" },
+  { topic: "cozy murder mystery at a seaside hotel", audience: "adults" },
 ];
 
 export const emptySetup = (): SetupState => ({ topic: "", audience: "", author: DEFAULT_AUTHOR, notes: "", coverArt: true });

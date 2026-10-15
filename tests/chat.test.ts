@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ackLine, parseIdea, routeOffline, stageFor, stepLine } from "@/lib/agent/chat";
 import { assembleMystery, mysterySizing, mysteryStyle, planMystery, writeMystery, type MysteryAsk } from "@/lib/agent/mystery";
 import { chapterSection, chapterStory, regenerateChapter } from "@/lib/agent/regenerate";
+import { groupPages, viewGroups } from "@/lib/agent/caseView";
 import { pool } from "@/lib/agent/content";
 import { offlineTask } from "@/lib/ai/offline";
 import { TASKS, type TaskInput } from "@/lib/ai/tasks";
@@ -71,6 +72,17 @@ describe("rewriting one chapter", () => {
     const others = (p: Project) => p.interior.sections.filter((s) => s.id !== before.id && s.config.kind !== "table-of-contents").map((s) => JSON.stringify(s.config));
     expect(others(r.project)).toEqual(others(project));
     expect(r.summary).toMatch(/Rewrote chapter 3/);
+    // Review & Publish groups each chapter with its puzzles; without a plan every section stands alone.
+    const groups = viewGroups(project);
+    const chapters = groups.filter((g) => g.chapter);
+    expect(chapters).toHaveLength(plan.chapters.length);
+    const labels = (ids: string[]) => ids.map((id) => project.interior.sections.find((s) => s.id === id)!.label);
+    expect(labels(chapters[1].sectionIds)[0]).toMatch(/^Chapter 2:/);
+    expect(labels(chapters[1].sectionIds).slice(1).every((l) => /^Puzzle \d+/.test(l))).toBe(true);
+    expect(chapters[1].sectionIds).toHaveLength(1 + plan.chapters[1].clues.length);
+    expect(groupPages(project, chapters[0])).toEqual([...groupPages(project, chapters[0])].sort((a, b) => a - b));
+    expect(groups.some((g) => g.label === "The suspects" && !g.chapter)).toBe(true);
+    expect(viewGroups({ ...project, mystery: undefined }).every((g) => g.sectionIds.length === 1)).toBe(true);
     await expect(regenerateChapter(project, plan, 3, "x", async () => ({ output: { story: "Too short.", recap: "", puzzles: [] } as never }))).rejects.toThrow(/too short/);
   });
 });

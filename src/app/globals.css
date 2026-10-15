@@ -375,3 +375,10 @@ dialog.modal-wide { width: min(1080px, calc(100vw - 32px)); }
 .composer { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; }
 .composer textarea { width: 100%; resize: vertical; min-height: 48px; }
 @media (max-width: 640px) { .bubble { max-width: 100%; } }
+
+/* Mystery case panel */
+.case-suspects { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.spoilers summary { cursor: pointer; font-weight: 600; }
+.table-scroll { overflow-x: auto; max-width: 100%; }
+.case-clues { width: 100%; border-collapse: collapse; font-size: 13px; }
+.case-clues th, .case-clues td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
