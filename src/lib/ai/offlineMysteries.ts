@@ -708,7 +708,10 @@ export const OFFLINE_MYSTERIES: OfflineMystery[] = [RAVENSCROFT, HARBOR];
 
 /** The case that suits a topic best (by its words, else alternating by a hash of the topic). */
 export function offlineMystery(topic: string, hash: number): OfflineMystery {
-  return OFFLINE_MYSTERIES.find((m) => m.match.test(topic)) ?? OFFLINE_MYSTERIES[hash % OFFLINE_MYSTERIES.length];
+  // The case whose words the topic uses most ("cozy mystery at a seaside hotel" is the hotel, not the manor).
+  const hits = (m: OfflineMystery) => topic.split(/\W+/).filter((w) => w && new RegExp(`^(?:${m.match.source})$`, "i").test(w)).length;
+  const best = OFFLINE_MYSTERIES.reduce((a, b) => (hits(b) > hits(a) ? b : a));
+  return hits(best) ? best : OFFLINE_MYSTERIES[hash % OFFLINE_MYSTERIES.length];
 }
 
 /** The case a plan came from, by its title (the chapter writer only sees the plan). */

@@ -6,6 +6,8 @@ import { CRYPTOGRAM_MAX, sectionTexts, wordSearchMaxLength } from "@/lib/quality
 import type { InteriorSection, Project } from "@/lib/schema/project";
 import type { ContentNeed } from "./blueprint";
 import { contentCount, rewriteSection, type ContentAsk } from "./content";
+import { storyPagesNeeded } from "@/lib/generators/pages";
+import { caseFile, chapterRequest, mysterySizing, type MysteryAsk, type MysteryPlan, type WrittenChapter } from "./mystery";
 
 /**
  * "Regenerate with feedback" for one interior section. Content sections
@@ -120,4 +122,42 @@ export async function regenerateSection(project: Project, sectionId: string, fee
   const next = replaceSections(project, configs);
   const delta = next.interior.pages.length - project.interior.pages.length;
   return { project: next, summary: `${summary}${harder}${delta ? ` The book is now ${next.interior.pages.length} pages.` : ""}` };
+}
+
+/** A chapter's story without the exhibit lines and "turn the page" lead the layout adds after it. */
+export function chapterStory(body: string): { story: string; lead: string } {
+  const at = body.search(/\n\nExhibit \d+:/);
+  const turn = at >= 0 ? at : body.search(/\n\nTurn the page and solve/);
+  return turn >= 0 ? { story: body.slice(0, turn), lead: body.slice(turn) } : { story: body, lead: "" };
+}
+
+/** The story section of chapter `n` (1-based). */
+export const chapterSection = (project: Project, n: number) => project.interior.sections.find((s) => s.config.kind === "story" && s.label.startsWith(`Chapter ${n}:`));
+
+/**
+ * Rewrite one chapter of a murder mystery with the publisher's feedback.
+ * Only the story changes: its clues, puzzles and the case stay as they
+ * are, the writer is told what the chapters around it say, and the new
+ * text is set over as many pages as it needs.
+ */
+export async function regenerateChapter(project: Project, plan: MysteryPlan, n: number, feedback: string, ask: MysteryAsk): Promise<RegenerateResult & { runId?: string }> {
+  const c = n - 1;
+  const sec = chapterSection(project, n);
+  if (!plan.chapters[c] || !sec || sec.config.kind !== "story") throw new Error(`There is no chapter ${n} to rewrite.`);
+  const written: WrittenChapter[] = plan.chapters.map((_, k) => {
+    const s = chapterSection(project, k + 1);
+    return { story: s?.config.kind === "story" ? chapterStory(s.config.body).story : "", puzzles: [] };
+  });
+  const { story: before, lead } = chapterStory(sec.config.body);
+  const words = before.split(/\s+/).filter(Boolean).length;
+  const z = mysterySizing({ trimId: project.spec.trimId, pageTarget: project.interior.pages.length, audience: project.brief.audience, topic: project.brief.topic, notes: project.brief.notes, difficulty: "medium" });
+  const req = { ...chapterRequest(plan, c, z, project.brief.audience || "adults", caseFile(plan), written), words: Math.max(150, words), feedback: feedback.trim().slice(0, 500) };
+  const r = await ask("mystery-chapter", req, [`interior.chapter:${n}`]);
+  const story = r.output.story.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim();
+  if (story.split(/\s+/).filter(Boolean).length < Math.min(80, words / 2)) throw new Error(`The rewrite of chapter ${n} came back too short, so the chapter was left as it was.`);
+  const body = `${story}${lead}`;
+  const pages = storyPagesNeeded({ title: sec.config.title, kicker: sec.config.kicker, body }, { spec: project.spec, pageCountHint: project.interior.pages.length, style: styleOf(project) });
+  const next = replaceSections(project, new Map<string, GeneratorConfig>([[sec.id, { ...sec.config, body, pages, ...(r.runId ? { aiRunId: r.runId } : {}) }]]));
+  const delta = next.interior.pages.length - project.interior.pages.length;
+  return { project: next, summary: `Rewrote chapter ${n}, "${plan.chapters[c].title}"; its clues and puzzles are unchanged.${delta ? ` The book is now ${next.interior.pages.length} pages.` : ""}`, runId: r.runId };
 }

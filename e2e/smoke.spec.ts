@@ -84,20 +84,25 @@ test("create a book, edit it, pass preflight and export a KDP package", async ({
 test("autopilot drafts a puzzle book offline", async ({ page }) => {
   await page.goto("/autopilot");
   await page.getByRole("button", { name: "large print sudoku" }).click();
-  await page.getByRole("button", { name: "Run autopilot" }).click();
+  // Before it starts, the estimate says an offline run is free.
+  await expect(page.getByLabel("Cost estimate")).toContainText("no model calls");
+  await page.getByRole("button", { name: "Start the book" }).click();
   await expect(page.getByText("Draft ready for your review")).toBeVisible({ timeout: 90_000 });
+  // The chat reported each stage in a short line.
+  await expect(page.getByRole("list", { name: "Conversation" }).getByText(/^Planned: /)).toBeVisible();
   // A complete book: difficulty sections plus front and back matter, not one repeated generator.
+  await page.getByText("What's inside").click();
   const sections = page.getByRole("list", { name: "Book sections" }).getByRole("listitem");
   await expect(sections.filter({ hasText: /^Easy: \d+ pages/ })).toHaveCount(1);
   await expect(sections.filter({ hasText: /^Expert: \d+ pages/ })).toHaveCount(1);
   await expect(sections.filter({ hasText: /How to Play/ })).toHaveCount(1);
   await expect(sections.filter({ hasText: /Answer key/ })).toHaveCount(1);
   await expect(page.getByRole("list", { name: "Quality review" }).getByRole("listitem").filter({ hasText: /^Rule checks: \d+ high/ })).toHaveCount(1);
+  await page.getByText("Details", { exact: true }).click();
   await expect(page.getByText("Check content for repeats & weak items")).toBeVisible();
   // The finished draft shows its cover and pages, and the cost estimate said offline runs are free.
   await expect(page.getByRole("img", { name: "Front cover (live)" })).toBeVisible();
   await expect(page.getByRole("list", { name: "Pages so far" }).getByRole("listitem").first()).toBeVisible();
-  await expect(page.getByLabel("Cost estimate")).toContainText("no model calls");
   if (shots) await page.screenshot({ path: `${shots}/autopilot.png`, fullPage: true });
   await page.getByRole("link", { name: "Open in studio" }).click();
   await expect(page.getByRole("listbox", { name: "Pages" })).toBeVisible();
@@ -106,13 +111,12 @@ test("autopilot drafts a puzzle book offline", async ({ page }) => {
 
 test("autopilot names a mystery from its content, and another title can be swapped in", async ({ page }) => {
   await page.goto("/autopilot");
-  await page.getByLabel("What is the book about?").fill("cozy murder mystery at a country manor");
-  await page.getByLabel("Who is it for?").fill("adults who love cozy mysteries");
-  await page.getByRole("button", { name: "Run autopilot" }).click();
+  await page.getByLabel("Message").fill("cozy murder mystery at a country manor for adults who love cozy mysteries");
+  await page.getByRole("button", { name: "Start the book" }).click();
   await expect(page.getByText("Draft ready for your review")).toBeVisible({ timeout: 90_000 });
-  await expect(page.getByText("Name the book from its content")).toBeVisible();
-  // Offline, the built-in case names the book.
-  await expect(page.getByText("Death at Ravenscroft Manor").first()).toBeVisible();
+  // Offline, the built-in case names the book, and the other titles are a click away.
+  await expect(page.getByRole("list", { name: "Conversation" }).getByText(/^Named it "Death at Ravenscroft Manor"/)).toBeVisible();
+  await expect(page.getByLabel("Other titles").getByRole("button").first()).toBeVisible();
   await page.getByRole("link", { name: "Open in studio" }).click();
   await page.getByRole("tab", { name: "Brief" }).click();
   const titles = page.getByRole("list", { name: "Titles named from the content" });
@@ -121,6 +125,39 @@ test("autopilot names a mystery from its content, and another title can be swapp
   const name = ((await other.getAttribute("aria-label")) ?? "").replace("Use the title ", "");
   await other.click();
   await expect(titles.getByRole("button", { name: `${name} is the current title` })).toBeDisabled();
+});
+
+test("the autopilot chat takes directions mid-build, revises the draft and keeps the thread", async ({ page }) => {
+  // Hold the first call back a little so a direction can arrive while the book is being built.
+  let planFeedback: string | undefined;
+  await page.route("/api/ai", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    const body = route.request().postDataJSON();
+    if (body.task === "brief") await new Promise((r) => setTimeout(r, 2500));
+    if (body.task === "mystery-plan") planFeedback = body.input.feedback;
+    return route.continue();
+  });
+  await page.goto("/autopilot");
+  const log = page.getByRole("list", { name: "Conversation" });
+  await page.getByLabel("Message").fill("cozy murder mystery at a country manor for adults");
+  await page.getByRole("button", { name: "Start the book" }).click();
+  await expect(page.getByLabel("Status")).toBeVisible();
+  await page.getByLabel("Message").fill("Make the victim a retired chef");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(log.getByText(/I'll use that when I get to planning the book/)).toBeVisible();
+  await expect(page.getByText("Draft ready for your review")).toBeVisible({ timeout: 90_000 });
+  expect(planFeedback).toMatch(/retired chef/);
+
+  // After the draft, a message revises the part it is about.
+  await page.getByLabel("Message").fill("Give it a spookier title");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(log.getByText(/^Retitled /)).toBeVisible({ timeout: 30_000 });
+
+  // The thread is kept with the book.
+  await expect(page).toHaveURL(/project=/);
+  await page.reload();
+  await expect(log.getByText(/^Retitled /)).toBeVisible();
+  await expect(log.getByText("Make the victim a retired chef")).toBeVisible();
 });
 
 test("quality tab sends rendered cover and pages to a vision model", async ({ page }) => {
@@ -141,7 +178,7 @@ test("quality tab sends rendered cover and pages to a vision model", async ({ pa
 
   await page.goto("/autopilot");
   await page.getByRole("button", { name: "large print sudoku" }).click();
-  await page.getByRole("button", { name: "Run autopilot" }).click();
+  await page.getByRole("button", { name: "Start the book" }).click();
   await expect(page.getByText("Draft ready for your review")).toBeVisible({ timeout: 90_000 });
   await page.getByRole("link", { name: "Quality review" }).click();
   await expect(page.getByRole("tab", { name: "Quality" })).toHaveAttribute("aria-selected", "true");
@@ -193,15 +230,17 @@ test("autopilot generates, picks and places AI cover art", async ({ page }) => {
   await page.reload();
 
   await page.getByRole("button", { name: "large print sudoku" }).click();
+  await page.getByText("Book settings").click();
   await expect(page.getByLabel(/Generate AI cover art/)).toBeChecked();
-  await page.getByRole("button", { name: "Run autopilot" }).click();
+  await page.getByRole("button", { name: "Start the book" }).click();
   await expect(page.getByText("Draft ready for your review")).toBeVisible({ timeout: 90_000 });
   expect(prompts).toHaveLength(4);
   for (const p of prompts) {
     expect(p.prompt).toMatch(/no text, letters/i);
     expect(p.widthIn).toBeGreaterThan(8);
   }
-  await expect(page.getByText(/Picked .+ of 4/)).toBeVisible();
+  await page.getByText("What's inside").click();
+  await expect(page.getByText(/picked .+ of 4/)).toBeVisible();
 
   await page.getByRole("link", { name: "Open in studio" }).click();
   await page.getByRole("tab", { name: "Cover" }).click();
@@ -254,7 +293,7 @@ test("autopilot picks a cover design with a vision model, redesigns once after a
 
   await page.goto("/autopilot");
   await page.getByRole("button", { name: "large print sudoku" }).click();
-  await page.getByRole("button", { name: "Run autopilot" }).click();
+  await page.getByRole("button", { name: "Start the book" }).click();
   await expect(page.getByText("Draft ready for your review")).toBeVisible({ timeout: 90_000 });
 
   // The vision model saw each shortlisted design full size and as a thumbnail, and its pick explains the choice.
@@ -262,6 +301,7 @@ test("autopilot picks a cover design with a vision model, redesigns once after a
   expect(pick).toHaveLength(1);
   expect(pick[0].images!.length).toBeGreaterThanOrEqual(4);
   expect(pick[0].images![1].label).toMatch(/search thumbnail/);
+  await page.getByText("Details", { exact: true }).click();
   await expect(page.getByText(/The second design reads best as a thumbnail/)).toBeVisible();
   // The poor first review sent the cover back for exactly one redesign.
   expect(reviews).toBe(2);

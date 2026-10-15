@@ -23,6 +23,7 @@ import { ART_CANDIDATES } from "./constants";
 import { contentCall, pool, refineContent, reviewContent, writeSection, type ContentAsk, type ContentRequest, type ContentReview } from "./content";
 import { genreOf, genreOfProject } from "@/lib/cover/genres";
 import { keepInLibrary } from "@/lib/storage/artLibrary";
+import type { DirectionStage } from "./chat";
 import { checkTitleIdeas, mysteryAvoid, mysteryContents, sectionContents, titleRequest } from "./titles";
 import { assembleMystery, caseFile, editMystery, mysterySizing, mysteryStyle, planMystery, writeMystery, type MysteryAsk } from "./mystery";
 
@@ -46,7 +47,14 @@ export interface AutopilotInput {
   pageTarget?: number;
   /** Cover template and/or palette; left to the brief (or the art direction) when unset. */
   style?: { templateId?: string; paletteId?: string };
+  /**
+   * Directions the publisher sent while the book is being built (the chat):
+   * asked for before each stage that can use them, and passed to that
+   * stage's model call as its feedback. Empty when there are none.
+   */
+  takeDirections?: (stage: DirectionStage) => string;
 }
+
 
 /** Called with the draft as it takes shape (pages, then the cover), for the live build view. */
 export type PreviewCallback = (project: Project, stage: "layout" | "listing" | "cover" | "done") => void;
@@ -86,6 +94,8 @@ export interface AutopilotResult {
   notes: string[];
   /** Rule-based quality checks of the finished draft, plus the stored model reviews. */
   quality: QualityReport;
+  /** Directions a stage couldn't use (a cover note when there was no art), for a revision after the run. */
+  unused: { stage: DirectionStage; text: string }[];
 }
 
 /** A laid-out interior, with what the namer needs to title it. */
@@ -132,6 +142,7 @@ export async function runAutopilot(
 ): Promise<AutopilotResult> {
   const runs: ModelRun[] = [];
   const notes: string[] = [];
+  const unused: { stage: DirectionStage; text: string }[] = [];
   const ai = async <T extends TaskName>(task: T, payload: Parameters<typeof callAi<T>>[1], outputs: string[]): Promise<AiCallResult<T> & { runId?: string }> => {
     const res = await callAi(task, payload, signal);
     if (!isModelOutput(res.meta)) return res;
@@ -155,6 +166,7 @@ export async function runAutopilot(
   const limits = (await aiStatus().catch(() => null))?.limits ?? DEFAULT_LIMITS;
   const trim = findTrim(input.trimId) ?? findTrim("6x9")!;
   const ctx = { bookType: input.bookType, topic: input.topic, audience: input.audience, notes: input.notes };
+  const direction = (stage: DirectionStage) => input.takeDirections?.(stage).trim().slice(0, 500) ?? "";
 
   // 1. Brief
   const briefRes = await step("brief", async () => {
@@ -180,7 +192,7 @@ export async function runAutopilot(
   project = await step("title", async () => {
     const r = await ai(
       "title-ideas",
-      titleRequest({ bookType: input.bookType, topic: input.topic, audience, angle: brief.angle, keywordIdeas: brief.keywordIdeas, contents: built.contents, avoid: built.avoid, provisional: title }),
+      titleRequest({ bookType: input.bookType, topic: input.topic, audience, angle: brief.angle, keywordIdeas: brief.keywordIdeas, contents: built.contents, avoid: built.avoid, provisional: title }, direction("title")),
       ["listing.title"],
     ).catch((e) => {
       if (signal?.aborted || [401, 403, 429].includes((e as { status?: number })?.status ?? 0)) throw e;
@@ -207,7 +219,7 @@ export async function runAutopilot(
     const z = mysterySizing(mi);
     const ask: MysteryAsk = (task, payload, outputs) => ai(task, payload as never, outputs) as never;
     const planned = await step("plan", async () => {
-      const r = await planMystery(ask, z, mi);
+      const r = await planMystery(ask, z, { ...mi, feedback: direction("plan") });
       notes.push(...r.notes);
       const clues = r.plan.chapters.reduce((n, c) => n + c.clues.length, 0);
       return [r, `${r.plan.caseTitle}: ${r.plan.suspects.length} suspects, ${r.plan.chapters.length} chapters, ${clues} clues${r.problems.length ? `, ${r.problems.length} fair-play note(s)` : ", fair-play check passed"}`];
@@ -216,7 +228,7 @@ export async function runAutopilot(
     const run = <T, R>(items: T[], fn: (item: T, index: number) => Promise<R>) => pool(items, limits.concurrency, fn);
     const written = await step("content", async () => {
       // In waves as wide as the provider runs at once, each told what the earlier waves wrote.
-      const w = await writeMystery(ask, plan, z, audience, run, limits.concurrency);
+      const w = await writeMystery(ask, plan, z, audience, run, limits.concurrency, direction("content"));
       notes.push(...w.notes);
       const words = [...w.chapters, w.reveal].reduce((n, c) => n + c.story.split(/\s+/).filter(Boolean).length, 0);
       return [w, `${w.chapters.length} chapters and the solution, about ${Math.round(words / 100) * 100} words`];
@@ -231,7 +243,8 @@ export async function runAutopilot(
     written.chapters = edited;
     return step("layout", async () => {
       const book = assembleMystery(plan, written.chapters, written.reveal, z, { ...mi, subtitle: brief.subtitle, author: input.author, planRunId: planned.runId });
-      const p = createProject({ name: title, bookType: input.bookType, trimId: trim.id, paper: "white", ink: "black", bleed: false, author: input.author, interior: book.sections, style: mysteryStyle(mi) });
+      // The plan is kept with the book so a chapter can be rewritten later without breaking the case.
+      const p = { ...createProject({ name: title, bookType: input.bookType, trimId: trim.id, paper: "white", ink: "black", bleed: false, author: input.author, interior: book.sections, style: mysteryStyle(mi) }), mystery: plan };
       return [{ project: p, summary: book.summary, plan: `${book.summary}\n\nCase plan\n\n${caseFile(plan)}`, contents: mysteryContents(plan), avoid: mysteryAvoid(plan) }, `${p.interior.pages.length} pages: ${plan.chapters.length} chapters, ${book.clues} clue puzzles`];
     });
   }
@@ -239,9 +252,10 @@ export async function runAutopilot(
   async function buildInterior(): Promise<Built> {
     // 2. Plan: sections and page budget
     const { blueprint, blueprintRunId, planned } = await step("plan", async () => {
+      const said = direction("plan");
       const r = await ai(
         "blueprint",
-        { topic: input.topic, audience, bookType: input.bookType, notes: input.notes, trim: trim.label, title, angle: brief.angle, interiorPlan: brief.interiorPlan, pageTarget },
+        { topic: input.topic, audience, bookType: input.bookType, notes: said ? `${input.notes}\n\nThe publisher's direction: ${said}`.trim() : input.notes, trim: trim.label, title, angle: brief.angle, interiorPlan: brief.interiorPlan, pageTarget },
         ["interior.plan", "interior.how-to", "interior.closing"],
       );
       const checked = validateBlueprint(r.output, { ...ctx, audience });
@@ -251,13 +265,15 @@ export async function runAutopilot(
       return [{ blueprint: bp, blueprintRunId: checked.fallback ? undefined : r.runId, planned: sections }, `${sections.length} section(s): ${sections.map((s) => s.label).join(", ")}`];
     });
 
-    // 3. Content for each section that needs it (prompts, word lists, sayings)
+    // 3. Content for each section that needs it (prompts, word lists, sayings); a direction from the chat rides along as feedback.
+    let said = "";
     const write = (req: ContentRequest) => {
-      const c = contentCall(req, { audience, bookTitle: title });
+      const c = contentCall(said && !req.feedback ? { ...req, feedback: said } : req, { audience, bookTitle: title });
       return ai(c.task, c.input, c.outputs);
     };
     let batches = 0;
     const written: PlannedSection[] = await step("content", async () => {
+      said = direction("content");
       // Long sections are written in batches, each told what the earlier ones said.
       const out = await pool(planned, limits.concurrency, async (sec): Promise<PlannedSection> => {
         if (!sec.content) return sec;
@@ -321,6 +337,7 @@ export async function runAutopilot(
         trim: trim.label,
         keywordIdeas: brief.keywordIdeas,
         categoryOptions,
+        ...(direction("listing") ? { feedback: direction("listing") } : {}),
       },
       ["listing.title", "listing.description", "listing.keywords", "listing.backCover"],
     );
@@ -369,11 +386,17 @@ export async function runAutopilot(
   // 6. Cover art: art direction, candidates, and a pick (a vision model looks at them when one is available).
   const palette = PALETTES.find((p) => p.id === (input.style?.paletteId ?? brief.palette)) ?? PALETTES[0];
   const chosenTemplate = input.style?.templateId;
+  // A cover direction goes to the art director; with no art, it is handed back for a restyle once the draft is done.
+  const coverSaid = direction("cover");
   const art = await step("art", async () => {
-    if (!input.coverArt) return [null, "Off: no image provider, using a vector template"];
-    if (chosenTemplate && !isArtTemplate(chosenTemplate)) return [null, `Off: you chose the ${chosenTemplate} template`];
+    const off = (why: string): [null, string] => {
+      if (coverSaid) unused.push({ stage: "cover", text: coverSaid });
+      return [null, why];
+    };
+    if (!input.coverArt) return off("Off: no image provider, using a vector template");
+    if (chosenTemplate && !isArtTemplate(chosenTemplate)) return off(`Off: you chose the ${chosenTemplate} template`);
     try {
-      const { direction, run } = await directArt(project, ART_CANDIDATES, signal);
+      const { direction, run } = await directArt(project, ART_CANDIDATES, signal, coverSaid || undefined);
       if (run) runs.push(run);
       const layout = (isArtTemplate(chosenTemplate) ? chosenTemplate : direction.layout) ?? suggestArtTemplate(input.bookType);
       const artPalette = input.style?.paletteId ? palette : (PALETTES.find((p) => p.id === direction.palette) ?? palette);
@@ -407,7 +430,7 @@ export async function runAutopilot(
     } catch (e) {
       if (signal?.aborted) throw e;
       notes.push(`Cover art skipped: ${e instanceof Error ? e.message : e}`);
-      return [null, "skipped, using a vector template"];
+      return off("skipped, using a vector template");
     }
   });
 
@@ -503,5 +526,5 @@ export async function runAutopilot(
   });
 
   onPreview?.(project, "done");
-  return { project, report: runPreflight(project), repairs, notes, quality: qualityReport(project) };
+  return { project, report: runPreflight(project), repairs, notes, quality: qualityReport(project), unused };
 }

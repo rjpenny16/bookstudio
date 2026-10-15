@@ -14,7 +14,11 @@ import type { ModelRun, Project, TitleOption } from "@/lib/schema/project";
 import { syncTitlePage } from "./autopilot";
 import { ART_CANDIDATES } from "./constants";
 import { contentCall } from "./content";
-import { regenerateSection } from "./regenerate";
+import { canRegenerate as canRegenerateSection, chapterSection, regenerateChapter, regenerateSection } from "./regenerate";
+import { checkTitleIdeas, mysteryAvoid, mysteryContents, titleRequest } from "./titles";
+import { routeOffline } from "./chat";
+import type { ChatIntentOutput, TaskInput } from "@/lib/ai/tasks";
+import type { MysteryAsk } from "./mystery";
 import { genreOfProject } from "@/lib/cover/genres";
 import { keepCandidates } from "@/lib/cover/artLibrary";
 import { keepInLibrary } from "@/lib/storage/artLibrary";
@@ -148,4 +152,100 @@ export async function regenerateCoverWithAi(project: Project, feedback: string, 
   const palette = PALETTES.find((p) => p.id === res.output.palette) ?? c.palette;
   const next = await designCover(project, { ...c, templateId: res.output.template, palette });
   return { project: withRuns(next, runs), summary: `${res.output.template} template, ${palette.name} palette. ${res.output.reason}` };
+}
+
+/** Rewrite one chapter of a mystery with feedback, keeping its clues (needs the case plan autopilot stored). */
+export async function regenerateChapterWithAi(project: Project, chapter: number, feedback: string, signal?: AbortSignal): Promise<Regenerated> {
+  if (!project.mystery) throw new Error("This book has no stored case plan, so its chapters can't be rewritten here. Edit the chapter in the studio instead.");
+  const runs: ModelRun[] = [];
+  const ask: MysteryAsk = async (task, input, outputs) => {
+    const res = await callAi(task, input as never, signal);
+    if (!isModelOutput(res.meta)) return { output: res.output as never };
+    const run = modelRun(res.meta, outputs);
+    runs.push(run);
+    return { output: res.output as never, runId: run.id };
+  };
+  const r = await regenerateChapter(project, project.mystery, chapter, feedback, ask);
+  return { project: withRuns(r.project, runs.filter((x) => x.id === r.runId)), summary: r.summary };
+}
+
+/** Name the book again from its content, with the publisher's direction, and use the best new title. */
+export async function retitleWithAi(project: Project, feedback: string, signal?: AbortSignal): Promise<Regenerated> {
+  const facts = listingFacts(project);
+  const plan = project.mystery;
+  const avoid = plan ? mysteryAvoid(plan) : [];
+  const res = await callAi(
+    "title-ideas",
+    titleRequest({ bookType: project.bookType, topic: facts.topic, audience: facts.audience || "adults", angle: project.brief.angle, keywordIdeas: project.brief.keywordIdeas, contents: plan ? mysteryContents(plan) : describeInterior(project), avoid, provisional: project.metadata.title || project.name }, feedback),
+    signal,
+  );
+  const checked = checkTitleIdeas(res.output, avoid);
+  if (!checked.ideas.length) return { project, summary: "None of the new titles could be used (too long, or giving the ending away), so the title stays as it is." };
+  const run = isModelOutput(res.meta) ? modelRun(res.meta, ["listing.title"]) : null;
+  const withOptions = produce(project, (d) => {
+    d.brief.titleOptions = checked.ideas;
+    d.brief.titleIdeas = checked.ideas.map((x) => x.title);
+    if (run) d.modelRuns.push(run);
+  });
+  const r = await applyTitle(withOptions, checked.ideas[0]);
+  return { project: r.project, summary: `${r.summary} ${checked.ideas.length - 1} other idea(s) are under it.` };
+}
+
+/** What a chat message is about: the model's reading, or the rule-based one offline or when the call fails. */
+export async function routeMessage(input: TaskInput<"chat-intent">, signal?: AbortSignal): Promise<ChatIntentOutput> {
+  try {
+    return (await callAi("chat-intent", input, signal)).output;
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    return routeOffline(input);
+  }
+}
+
+/** The routing input for a project: its chapters (mysteries) and sections. */
+export function intentInput(project: Project | null, message: string, phase: "building" | "done"): TaskInput<"chat-intent"> {
+  return {
+    message: message.slice(0, 2000),
+    phase,
+    bookType: project?.bookType ?? "",
+    title: project?.metadata.title || project?.name || "",
+    chapters: project?.mystery?.chapters.map((c) => c.title) ?? [],
+    sections: project?.interior.sections.filter((s) => s.role === "body" && !("part" in s.config && s.config.part === "solutions")).map((s) => s.label) ?? [],
+  };
+}
+
+/**
+ * Apply a chat message to a finished draft: the part it is about is redone
+ * with the message as feedback. Plan-level changes can't be made to a built
+ * book without rebuilding it, so those say so instead.
+ */
+export async function reviseFromChat(project: Project, intent: ChatIntentOutput, message: string, signal?: AbortSignal): Promise<Regenerated | null> {
+  const feedback = (intent.instruction.trim() || message).slice(0, 500);
+  switch (intent.target) {
+    case "chapter":
+      if (project.mystery && chapterSection(project, intent.chapter)) return regenerateChapterWithAi(project, intent.chapter, feedback, signal);
+      break;
+    case "section": {
+      const sec = project.interior.sections.find((s) => s.label === intent.section) ?? project.interior.sections.find((s) => s.label.toLowerCase().includes(intent.section.toLowerCase()) && intent.section.trim());
+      if (sec) return regenerateSectionWithAi(project, sec.id, feedback, signal);
+      break;
+    }
+    case "title":
+      return retitleWithAi(project, feedback, signal);
+    case "listing":
+      return regenerateListingWithAi(project, feedback, signal);
+    case "cover":
+      return regenerateCoverWithAi(project, feedback, signal);
+    case "content": {
+      // Throughout the book: a mystery's chapters one by one would be a rebuild; other books redo their content sections.
+      if (project.mystery) return null;
+      let next = project;
+      const done: string[] = [];
+      for (const sec of project.interior.sections.filter((s) => s.role === "body" && canRegenerateSection(s))) {
+        next = (await regenerateSectionWithAi(next, sec.id, feedback, signal)).project;
+        done.push(sec.label);
+      }
+      return done.length ? { project: next, summary: `Redid ${done.join(", ")} with that in mind.` } : null;
+    }
+  }
+  return null;
 }

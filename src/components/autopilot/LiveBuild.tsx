@@ -8,7 +8,7 @@ import { PageThumb } from "@/components/workspace/PageThumb";
 const PER_SECTION = 2;
 
 /** The draft as autopilot builds it: page thumbnails once the interior is laid out, then the cover. */
-export function LiveBuild({ project, hasCover }: { project: Project | null; hasCover: boolean }) {
+export function LiveBuild({ project, hasCover, max = Infinity }: { project: Project | null; hasCover: boolean; /** Most page thumbnails shown. */ max?: number }) {
   if (!project) return <div className="empty">Pages appear here as soon as the interior is laid out.</div>;
   const n = project.interior.pages.length;
   const g = interiorGeometry(project.spec, n);
@@ -19,7 +19,8 @@ export function LiveBuild({ project, hasCover }: { project: Project | null; hasC
       const idx: number[] = [];
       project.interior.pages.forEach((p, i) => p.sectionId === s.id && idx.length < PER_SECTION && idx.push(i));
       return idx.map((i) => ({ i, label: s.label }));
-    });
+    })
+    .slice(0, max);
   return (
     <div className="live-build" aria-label="Live build">
       <div className="live-cover">
