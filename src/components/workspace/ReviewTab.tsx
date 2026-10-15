@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { aiStatus, type AiStatus } from "@/lib/ai/client";
 import { canRegenerate } from "@/lib/agent/regenerate";
-import { coverSettings, regenerateCoverWithAi, regenerateListingWithAi, regenerateSectionWithAi, type Regenerated } from "@/lib/agent/regenerateClient";
+import { applyTitle, coverSettings, regenerateChapterWithAi, regenerateCoverWithAi, regenerateListingWithAi, regenerateSectionWithAi, type Regenerated } from "@/lib/agent/regenerateClient";
+import { groupPages, viewGroups } from "@/lib/agent/caseView";
+import { CasePanel } from "./CasePanel";
 import { isSavedTemplateId } from "@/lib/cover/library";
 import { PALETTES, templateInfo } from "@/lib/cover/templates";
 import { designCover } from "@/lib/cover/artClient";
@@ -32,7 +34,7 @@ import type { TabId } from "./Workspace";
  */
 
 const ICON: Record<RowStatus, string> = { pass: "✓", warn: "!", fail: "✕" };
-type Busy = null | "cover" | "listing" | "reviews" | "export" | `section:${string}`;
+type Busy = null | "cover" | "listing" | "title" | "reviews" | "export" | `section:${string}`;
 type Note = { kind: "info" | "fail" | "pass"; text: string } | null;
 
 function RegenerateBox({ what, placeholder, busy, disabled, onRun }: { what: string; placeholder: string; busy: boolean; disabled: boolean; onRun: (feedback: string) => Promise<void> }) {
@@ -57,16 +59,6 @@ function RegenerateBox({ what, placeholder, busy, disabled, onRun }: { what: str
   );
 }
 
-function bookPages(project: Project, section: InteriorSection): number[] {
-  const out: number[] = [];
-  project.interior.pages.forEach((p, i) => p.sectionId === section.id && out.push(i));
-  return out;
-}
-
-/** Sections shown in the flip-through: everything except section dividers, which travel with their section. */
-function viewSections(project: Project): InteriorSection[] {
-  return project.interior.sections.filter((s) => s.config.kind !== "section-divider" && project.interior.pages.some((p) => p.sectionId === s.id));
-}
 
 export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (tab: TabId) => void }) {
   const project = useProjectStore((s) => s.project)!;
@@ -77,7 +69,8 @@ export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (ta
   const [note, setNote] = useState<Note>(null);
   const [approved, setApproved] = useState(false);
   const [progress, setProgress] = useState<{ label: string; f: number } | null>(null);
-  const sections = useMemo(() => viewSections(project), [project]);
+  // Sections to flip through; a mystery's chapters each hold their story and puzzles.
+  const groups = useMemo(() => viewGroups(project), [project]);
   const [sectionId, setSectionId] = useState<string | null>(null);
   const [pageAt, setPageAt] = useState(0);
   const quality = useMemo(() => qualityReport(project), [project]);
@@ -91,8 +84,11 @@ export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (ta
   const n = project.interior.pages.length;
   const g = interiorGeometry(project.spec, n);
   const cg = coverGeometry(project.spec, n);
-  const section = sections.find((s) => s.id === sectionId) ?? sections.find((s) => s.role === "body") ?? sections[0];
-  const pages = section ? bookPages(project, section) : [];
+  const group = groups.find((s) => s.id === sectionId) ?? groups.find((s) => s.role === "body") ?? groups[0];
+  const pages = group ? groupPages(project, group) : [];
+  // A single-section group can be regenerated as before; a chapter is rewritten as a chapter.
+  const section: InteriorSection | undefined = group?.sectionIds.length === 1 && !group.chapter ? project.interior.sections.find((s) => s.id === group.sectionIds[0]) : undefined;
+  const otherTitles = (project.brief.titleOptions ?? []).filter((o) => o.title !== project.metadata.title);
   const at = Math.min(pageAt, Math.max(0, pages.length - 1));
   const current = project.interior.pages[pages[at]];
   const m = project.metadata;
@@ -300,31 +296,31 @@ export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (ta
             </span>
           </div>
           <div className="chip-list" role="tablist" aria-label="Book sections">
-            {sections.map((s) => (
+            {groups.map((s) => (
               <button
                 key={s.id}
                 role="tab"
-                aria-selected={s.id === section?.id}
+                aria-selected={s.id === group?.id}
                 className="chip"
-                style={{ borderColor: s.id === section?.id ? "var(--accent)" : undefined }}
+                style={{ borderColor: s.id === group?.id ? "var(--accent)" : undefined }}
                 onClick={() => {
                   setSectionId(s.id);
                   setPageAt(0);
                 }}
               >
-                {s.label} <span className="muted">{bookPages(project, s).length}</span>
+                {s.label} <span className="muted">{groupPages(project, s).length}</span>
               </button>
             ))}
           </div>
-          {section && current && (
-            <div className="flip" aria-label={`${section.label}, page ${at + 1} of ${pages.length}`}>
+          {group && current && (
+            <div className="flip" aria-label={`${group.label}, page ${at + 1} of ${pages.length}`}>
               <button className="btn btn-sm" aria-label="Previous page" disabled={at === 0} onClick={() => setPageAt(at - 1)}>
                 ‹
               </button>
               <div className="flip-page">
                 <PageThumb key={current.id} elements={current.elements} widthPt={g.trimW} heightPt={g.trimH} assets={project.assets} px={360} alt={`Book page ${pages[at] + 1}`} />
                 <span className="muted" style={{ fontSize: 12 }}>
-                  {section.label}: {at + 1} of {pages.length} · book page {pages[at] + 1}
+                  {group.label}: {at + 1} of {pages.length} · book page {pages[at] + 1}
                 </span>
               </div>
               <button className="btn btn-sm" aria-label="Next page" disabled={at >= pages.length - 1} onClick={() => setPageAt(at + 1)}>
@@ -332,8 +328,8 @@ export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (ta
               </button>
             </div>
           )}
-          {section && pages.length > 1 && (
-            <div className="thumb-strip" aria-label={`${section.label} pages`}>
+          {group && pages.length > 1 && (
+            <div className="thumb-strip" aria-label={`${group.label} pages`}>
               {pages.slice(0, 40).map((pi, k) => (
                 <button key={project.interior.pages[pi].id} className="page-thumb-btn" aria-current={k === at} onClick={() => setPageAt(k)}>
                   <PageThumb elements={project.interior.pages[pi].elements} widthPt={g.trimW} heightPt={g.trimH} assets={project.assets} px={72} alt={`Page ${pi + 1}`} />
@@ -342,6 +338,16 @@ export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (ta
               ))}
               {pages.length > 40 && <span className="muted" style={{ alignSelf: "center", fontSize: 12 }}>+{pages.length - 40} more</span>}
             </div>
+          )}
+          {group?.chapter && project.mystery && (
+            <RegenerateBox
+              key={group.id}
+              what={`chapter ${group.chapter}`}
+              placeholder='e.g. "more suspense", "shorter", "more dialogue"; its clues and puzzles stay'
+              busy={busy === `section:${group.id}`}
+              disabled={busy !== null}
+              onRun={(f) => act(`section:${group.id}`, (p) => regenerateChapterWithAi(p, group.chapter!, f))}
+            />
           )}
           {section && canRegenerate(section) && (
             <RegenerateBox
@@ -354,6 +360,8 @@ export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (ta
             />
           )}
         </section>
+
+        <CasePanel project={project} />
 
         <section className="card stack" aria-labelledby="review-listing">
           <div className="row-between">
@@ -370,6 +378,18 @@ export function ReviewTab({ report, onGo }: { report: PreflightReport; onGo: (ta
             </span>
             <input value={m.title} onChange={(e) => setMeta((d) => void (d.title = e.target.value))} />
           </label>
+          {otherTitles.length > 0 && (
+            <div className="stack" style={{ gap: 4 }}>
+              <span className="field-hint">Other titles named from the content (the title page and cover change too):</span>
+              <div className="chip-list" aria-label="Other titles">
+                {otherTitles.map((o) => (
+                  <button key={o.title} className="chip" title={o.why} disabled={busy !== null} onClick={() => act("title", (p) => applyTitle(p, o))}>
+                    {o.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <label className="field">
             Subtitle
             <input value={m.subtitle} onChange={(e) => setMeta((d) => void (d.subtitle = e.target.value))} />

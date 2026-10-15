@@ -160,6 +160,50 @@ test("the autopilot chat takes directions mid-build, revises the draft and keeps
   await expect(log.getByText("Make the victim a retired chef")).toBeVisible();
 });
 
+test("a mystery's Review & Publish screen goes chapter by chapter, rewrites a chapter and keeps the case behind a spoiler", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/autopilot");
+  await page.getByRole("button", { name: "cozy murder mystery at a seaside hotel" }).click();
+  await page.getByRole("button", { name: "Start the book" }).click();
+  await expect(page.getByText("Draft ready for your review")).toBeVisible({ timeout: 90_000 });
+  await page.getByRole("link", { name: "Review & Publish" }).click();
+
+  // One chip per chapter, holding its story and then its puzzles.
+  const chips = page.getByRole("tablist", { name: "Book sections" });
+  await chips.getByRole("tab", { name: /^Chapter 2:/ }).click();
+  const flip = page.locator(".flip");
+  await expect(flip).toHaveAttribute("aria-label", /^Chapter 2: .+, page 1 of [2-9]/);
+  // Past the story pages come the chapter's puzzles.
+  await page.getByRole("button", { name: "Next page" }).click();
+  await expect(flip).toHaveAttribute("aria-label", /^Chapter 2: .+, page 2 of /);
+
+  // The chapter can be rewritten with feedback; its clues stay.
+  await page.getByLabel("Feedback for the chapter 2").fill("more suspense");
+  await page.getByLabel("Feedback for the chapter 2").press("Enter");
+  await expect(page.getByText(/Rewrote chapter 2, .+ its clues and puzzles are unchanged/)).toBeVisible({ timeout: 30_000 });
+
+  // The case is shown, with the killer behind a closed spoiler.
+  const casePanel = page.getByRole("region", { name: /^The case: / });
+  await expect(casePanel.getByRole("list", { name: "Suspects" }).getByRole("listitem")).toHaveCount(5);
+  await expect(casePanel.getByLabel("Fair-play check")).toContainText("Fair-play check passed");
+  await expect(casePanel.getByText(/^Culprit:/)).toBeHidden();
+  await casePanel.getByText("Show spoilers").click();
+  await expect(casePanel.getByText(/^Culprit:/)).toBeVisible();
+  await expect(casePanel.getByRole("table", { name: "Clue chain" }).getByRole("row")).not.toHaveCount(1);
+
+  // Another title named from the content is one click away.
+  const other = page.getByLabel("Other titles").getByRole("button").first();
+  const name = (await other.textContent())!.trim();
+  await other.click();
+  await expect(page.getByRole("textbox", { name: /^Title/ })).toHaveValue(name);
+
+  // It fits a phone.
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
 test("quality tab sends rendered cover and pages to a vision model", async ({ page }) => {
   // Stand in for a vision-capable provider; the real server runs offline in e2e.
   const sent: { task: string; input: { images?: string[] }; images?: { label: string; mediaType: string; data: string }[] }[] = [];
