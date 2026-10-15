@@ -193,8 +193,8 @@ export function offlineAffirmations(i: { topic: string; audience: string; count:
  */
 function offlineChapter(i: TaskInput<"mystery-chapter">): TaskOutput<"mystery-chapter"> {
   const known = mysteryByTitle(i.caseFile);
-  if (known) return i.reveal ? { story: known.reveal, puzzles: [] } : structuredClone(known.chapters[i.chapter - 1] ?? { story: i.summary, puzzles: [] });
-  if (i.reveal) return { story: i.summary, puzzles: [] };
+  if (known) return i.reveal ? { story: known.reveal, recap: "", puzzles: [] } : { recap: i.summary, ...structuredClone(known.chapters[i.chapter - 1] ?? { story: i.summary, puzzles: [] }) };
+  if (i.reveal) return { story: i.summary, recap: "", puzzles: [] };
   const recap = i.previousClues.length ? `The last clue was still on everyone's mind: ${i.previousClues.join(", ")}.\n\n` : "";
   const puzzles = i.clues.map((c) => {
     if (c.kind === "crossword") {
@@ -205,7 +205,7 @@ function offlineChapter(i: TaskInput<"mystery-chapter">): TaskOutput<"mystery-ch
     const bank = offlineTask("word-lists", { topic: c.theme, audience: i.audience, count: 1, wordsPerPuzzle: i.wordsPerPuzzle, maxLength: i.maxLength }).puzzles[0];
     return { title: bank?.title ?? "Word Puzzle", words: bank?.words ?? [], entries: [] };
   });
-  return { story: `${recap}${i.summary}`, puzzles };
+  return { story: `${recap}${i.summary}`, recap: i.summary, puzzles };
 }
 
 function hash(s: string): number {
@@ -407,6 +407,9 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
     case "mystery-test":
       // Offline can't read a case like a person; the rule-based fair-play checks still run.
       return { verdicts: [] } as TaskOutput<T>;
+    case "mystery-edit":
+      // Nor edit one: the built-in cases are written to read as one story.
+      return { problems: [] } as TaskOutput<T>;
   }
   throw new Error(`Unknown task ${task}`);
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assembleMystery, BUILT_IN_CASES, checkChapter, checkMysteryPlan, deductionPicks, ensureSecret, judgeTest, mysterySizing, mysteryStyle, planMystery, testCheckpoints, writeMystery, type MysteryAsk, type MysteryInput } from "@/lib/agent/mystery";
+import { assembleMystery, BUILT_IN_CASES, caseFile, chapterRequest, checkChapter, checkMysteryPlan, deductionPicks, editMystery, ensureSecret, judgeTest, MAX_EDITS, mysterySizing, mysteryStyle, planMystery, storyBibleProblems, testCheckpoints, writeMystery, type MysteryAsk, type MysteryInput } from "@/lib/agent/mystery";
 import { pool } from "@/lib/agent/content";
 import { inferSetup } from "@/lib/agent/setup";
 import { offlineTask } from "@/lib/ai/offline";
@@ -257,7 +257,18 @@ describe("a whole mystery book", () => {
 
     // The contents list every chapter.
     const toc = project.interior.sections.find((s) => s.config.kind === "table-of-contents")!.config;
-    expect(toc.kind === "table-of-contents" && toc.entries.length).toBe(planned.plan.chapters.length + 6);
+    expect(toc.kind === "table-of-contents" && toc.entries.length).toBe(planned.plan.chapters.length + 7);
+
+    // The case board sits after the wrong theory is raised and before it is cleared, and names no culprit.
+    const chapterAt = (effect: string) => labels.findIndex((l) => l.startsWith(`Chapter ${planned.plan.chapters.findIndex((ch) => ch.clues.some((cl) => cl.suspect === planned.plan.falseTheory.suspect && cl.effect === effect)) + 1}:`));
+    expect(labels.indexOf("Case board")).toBeGreaterThan(chapterAt("implicates"));
+    expect(labels.indexOf("Case board")).toBeLessThan(chapterAt("clears"));
+    expect(texts(project, /^Case board$/).join(" ")).not.toContain(planned.plan.culprit);
+
+    // Each chapter names its puzzles' exhibits: the things in the story they come from.
+    const firstSource = planned.plan.chapters[0].clues[0].source;
+    expect(texts(project, /^Chapter 1:/).join(" ")).toContain("Exhibit 1:");
+    expect(texts(project, /^Chapter 1:/).join(" ")).toContain(firstSource.split(" ").slice(0, 3).join(" "));
 
     // The final deduction comes after the last chapter, and its picks spell the proof from the printed clue answers.
     const deduction = project.interior.sections.find((s) => s.label === "Final deduction")!.config;
@@ -299,5 +310,78 @@ describe("a whole mystery book", () => {
       const words = pages.flatMap((p) => p.elements.filter((e): e is TextElement => e.type === "text" && e.name === "Story")).map((e) => e.text).join(" ").split(/\s+/).filter(Boolean).length;
       expect(words).toBe(sec.config.body.split(/\s+/).filter(Boolean).length);
     }
+  });
+});
+
+describe("the story layer", () => {
+  const z = mysterySizing(base);
+  const plan = (): MysteryPlanOutput => structuredClone(BUILT_IN_CASES[0].plan);
+
+  it.each(BUILT_IN_CASES.map((c) => [c.plan.caseTitle, c] as const))("built-in case %s has a full story bible", (_, c) => {
+    expect(storyBibleProblems(c.plan)).toEqual([]);
+    const file = caseFile(c.plan);
+    expect(file).toContain("Story bible");
+    expect(file).toContain(c.plan.suspects[0].tell);
+    expect(file).toContain(c.plan.chapters[0].beats.cliffhanger);
+  });
+
+  it("asks for a missing bible without failing the plan", () => {
+    const p = plan();
+    p.bible = { voice: "", sleuth: "", locations: [], motifs: [] };
+    p.suspects[0].voice = "";
+    p.chapters[2].beats = { hook: "", turn: "", cliffhanger: "" };
+    const r = checkMysteryPlan(p, z);
+    expect(r.fatal).toBe(false);
+    expect(r.problems.join(" ")).toMatch(/narrative voice/);
+    expect(r.problems.join(" ")).toMatch(/3-6 locations/);
+    expect(r.problems.join(" ")).toMatch(new RegExp(`Give ${p.suspects[0].name} a voice`));
+    expect(r.problems.join(" ")).toMatch(/Chapter 3 needs beats/);
+  });
+
+  it("writes chapters in waves, each told what the earlier waves wrote", async () => {
+    const seen: { chapter: number; earlier: string[]; previousEnding: string; openings: number }[] = [];
+    const ask: MysteryAsk = async (task, input) => {
+      if (task === "mystery-chapter") {
+        const i = input as ReturnType<typeof chapterRequest>;
+        if (!i.reveal) seen.push({ chapter: i.chapter, earlier: i.earlier, previousEnding: i.previousEnding, openings: i.openings.length });
+        const out = offlineTask("mystery-chapter", i);
+        return { output: { ...out, recap: i.reveal ? "" : `RECAP ${i.chapter}` } as never };
+      }
+      return offlineAsk(task, input, []);
+    };
+    const p = plan();
+    await writeMystery(ask, p, z, base.audience, serial, 3);
+    const by = (n: number) => seen.find((x) => x.chapter === n)!;
+    // The first wave knows only the plan; later waves get the real recaps, the last chapter's ending and the openings so far.
+    expect(by(2).earlier[0]).not.toContain("RECAP");
+    expect(by(2).previousEnding).toBe("");
+    expect(by(4).earlier.slice(0, 3).every((e, k) => e.includes(`RECAP ${k + 1}`))).toBe(true);
+    expect(by(4).previousEnding).not.toBe("");
+    expect(by(4).openings).toBe(3);
+    expect(by(7).earlier[5]).toContain("RECAP 6");
+  });
+
+  it("rewrites at most a few chapters the story editor names, and keeps them only when no worse", async () => {
+    const p = plan();
+    const written = await writeMystery(offlineAsk, p, z, base.audience, serial);
+    let rewrites = 0;
+    const ask: MysteryAsk = async (task, input) => {
+      if (task === "mystery-edit") return { output: { problems: [1, 2, 3, 4, 5, 6].map((chapter) => ({ chapter, problem: "Opens the same way as the chapter before." })) } as never };
+      if (task === "mystery-chapter") {
+        rewrites++;
+        const out = offlineTask("mystery-chapter", input as ReturnType<typeof chapterRequest>);
+        return { output: { ...out, story: `${out.story}\n\nA new last line.` } as never };
+      }
+      return offlineAsk(task, input, []);
+    };
+    const r = await editMystery(ask, p, written.chapters, z, base.audience, serial);
+    expect(rewrites).toBe(MAX_EDITS);
+    expect(r.edited).toEqual([0, 1, 2]);
+    expect(r.chapters[0].story).toContain("A new last line.");
+    expect(r.chapters[3]).toBe(written.chapters[3]);
+    expect(r.notes.join(" ")).toMatch(/Story editor: rewrote chapters 1, 2, 3/);
+    // An editor with nothing to say changes nothing.
+    const quiet = await editMystery(offlineAsk, p, written.chapters, z, base.audience, serial);
+    expect(quiet.chapters).toEqual(written.chapters);
   });
 });

@@ -12,16 +12,51 @@ export interface OfflineMystery {
   /** Topics this case suits best. */
   match: RegExp;
   plan: MysteryPlanOutput;
-  /** Story and puzzle words per chapter, in plan order. */
-  chapters: MysteryChapterOutput[];
+  /** Story and puzzle words per chapter, in plan order (the recap is the plan's summary). */
+  chapters: Omit<MysteryChapterOutput, "recap">[];
   reveal: string;
+}
+
+type Suspect = MysteryPlanOutput["suspects"][number];
+type Chapter = MysteryPlanOutput["chapters"][number];
+
+/** A case as first written, before its story bible: the facts and the clue chain. */
+interface BaseCase extends Omit<OfflineMystery, "plan"> {
+  plan: Omit<MysteryPlanOutput, "bible" | "redHerrings" | "suspects" | "chapters"> & { suspects: Omit<Suspect, "voice" | "tell">[]; chapters: Omit<Chapter, "beats" | "onPage">[] };
+}
+
+/** The story layer: the bible, red herrings, each suspect's voice and tell, and each chapter's beats and cast. */
+interface Story {
+  bible: MysteryPlanOutput["bible"];
+  redHerrings: MysteryPlanOutput["redHerrings"];
+  /** Suspect name: [voice, tell]. */
+  people: Record<string, [string, string]>;
+  /** Per chapter, in order: [hook, turn, cliffhanger, who appears]. */
+  beats: [string, string, string, string[]][];
+}
+
+function storied(base: BaseCase, story: Story): OfflineMystery {
+  const { plan } = base;
+  return {
+    ...base,
+    plan: {
+      ...plan,
+      bible: story.bible,
+      redHerrings: story.redHerrings,
+      suspects: plan.suspects.map((s) => ({ ...s, voice: story.people[s.name][0], tell: story.people[s.name][1] })),
+      chapters: plan.chapters.map((c, n) => {
+        const [hook, turn, cliffhanger, onPage] = story.beats[n];
+        return { ...c, beats: { hook, turn, cliffhanger }, onPage };
+      }),
+    },
+  };
 }
 
 const listed = (title: string, words: string[]) => ({ title, words, entries: [] });
 const cw = (title: string, entries: [string, string][]) => ({ title, words: [], entries: entries.map(([answer, clue]) => ({ answer, clue })) });
 const coded = (title: string) => ({ title, words: [], entries: [] });
 
-const RAVENSCROFT: OfflineMystery = {
+const RAVENSCROFT_BASE: BaseCase = {
   match: /manor|country house|estate|mansion|castle|village|cozy|cosy|english|british|vintage|classic|1920|tea/i,
   plan: {
     caseTitle: "Death at Ravenscroft Manor",
@@ -316,7 +351,7 @@ Victor Lane said nothing for a long moment. Then he looked up at the painting an
 The rain had stopped. Outside, for the first time in two days, the stars were out over Ravenscroft Manor.`,
 };
 
-const HARBOR: OfflineMystery = {
+const HARBOR_BASE: BaseCase = {
   match: /hotel|harbou?r|sea|seaside|coast|beach|ocean|island|lighthouse|ship|cruise|boat|fishing|port|resort|travel|train|summer/i,
   plan: {
     caseTitle: "Murder at the Harbor Hotel",
@@ -600,6 +635,74 @@ Julian Marsh straightened his tie. "Circumstantial," he said. But his voice shoo
 
 That evening, Lillian Carrow took down the For Sale sign that Desmond had never quite had the heart to hang, and Pip got his biscuits on a china plate.`,
 };
+
+const RAVENSCROFT = storied(RAVENSCROFT_BASE, {
+  bible: {
+    voice: "Close third person on Inspector Finch: dry, warm and observant, with short sentences and the occasional wry aside.",
+    sleuth: "Clara Finch is patient and polite, keeps a pencil behind her ear, and solves cases by making lists of what is on the table and what should be.",
+    locations: [
+      { name: "the dining room", description: "Candlelight on silver and rain drumming on the long windows." },
+      { name: "the study", description: "Leather, pipe smoke and the brandy decanter glinting on the desk." },
+      { name: "the drawing room", description: "The piano, a coal fire and the smell of damp wool." },
+      { name: "the kitchen", description: "Copper pans, the ledger on the dresser and the warmth of the range." },
+      { name: "the greenhouse", description: "Wet earth, broken panes and a lamp swinging from a hook." },
+      { name: "the library", description: "A deep armchair, a grate full of ash and a garden door that sticks." },
+    ],
+    motifs: ["the rain on the windows", "Finch's growing list of things out of place"],
+  },
+  redHerrings: [{ detail: "Margaret's pearls look different at breakfast.", explanation: "She sold the real pearls to pay her debts and wears paste copies." }],
+  people: {
+    "Margaret Ravenscroft": ["Bright and quick, laughs a little too often", "twists the pearls at her throat"],
+    "Dr. Felix Hale": ["Measured and soothing, the bedside manner never slips", "polishes his spectacles when cornered"],
+    "Agnes Pell": ["Blunt Yorkshire common sense, short sentences", "smooths her apron flat"],
+    "Victor Lane": ["Smooth London charm, talks about paintings to change the subject", "straightens things that are already straight"],
+    "Thomas Briggs": ["Slow and sparing with words, says 'ma'am' a lot", "looks at his boots"],
+  },
+  beats: [
+    ["Sir Edmund raises his glass and boasts he will live to eighty, whatever some of them wish.", "He announces a letter that will surprise one guest, and that nobody may touch his decanter.", "Finch is left alone at the table, sure that something on it is wrong.", ["Sir Edmund Ravenscroft", "Margaret Ravenscroft", "Dr. Felix Hale", "Agnes Pell", "Victor Lane", "Thomas Briggs"]],
+    ["Agnes Pell's scream brings the house running to the locked study door.", "Finch finds the window latch forced from outside.", "Beneath the window, a pair of muddy boots.", ["Agnes Pell", "Margaret Ravenscroft", "Thomas Briggs"]],
+    ["Briggs stands in the rain holding his cap, swearing the boots are his but that he left them hours before.", "The cook remembers a lamp in the greenhouse late that night.", "Finch takes down the cook's statement in her own shorthand.", ["Thomas Briggs", "Agnes Pell"]],
+    ["Margaret plays a few bars on the piano to prove she never stopped.", "The solicitor reads a fresh codicil to the will.", "Agnes walks out of the morning room white with anger.", ["Margaret Ravenscroft", "Agnes Pell", "Victor Lane"]],
+    ["Agnes slaps the kitchen ledger on the table in front of Finch.", "The ledger shows her counting silver with the cook past midnight.", "So if not Agnes, who was the man by the stables?", ["Agnes Pell"]],
+    ["A stable boy shyly hands Finch a note in the lads' betting code.", "Dr. Hale finally admits why he never drove home.", "The chauffeur's motor log tells the rest.", ["Dr. Felix Hale"]],
+    ["Finch holds a magnifying glass up to Sir Edmund's newest landscape.", "Victor Lane talks very fast about provenance.", "In the library grate, something has been burned.", ["Victor Lane"]],
+    ["The decanter's glass stopper is missing, and Finch has the house turned upside down.", "It is found somewhere it should never have been.", "Finch closes her notebook: she knows who, and now she needs proof.", ["Victor Lane", "Margaret Ravenscroft", "Agnes Pell"]],
+  ],
+});
+
+const HARBOR = storied(HARBOR_BASE, {
+  bible: {
+    voice: "Close third person on Miss Quill: brisk, funny and kind, with the sea and the storm always just outside.",
+    sleuth: "Ada Quill is a retired schoolteacher who corrects grammar out of habit, remembers every guest's breakfast order, and solves cases by cross-checking what people say against what is written down.",
+    locations: [
+      { name: "the dining room", description: "Salt-crusted windows and the smell of fried fish." },
+      { name: "the cellar", description: "Steep stone stairs, a smashed lantern and the cold of the sea wall." },
+      { name: "the front desk", description: "The brass bell, the guest register and the switchboard's blinking lights." },
+      { name: "the kitchen", description: "Flour everywhere and bread rising by the stove." },
+      { name: "the pier", description: "Spray, gulls and the harbor master's lamp." },
+      { name: "Room Seven", description: "A neat room with a telephone and a wastebasket full of paper." },
+    ],
+    motifs: ["the storm closing the coast road", "Desmond's gold pocket watch, stopped at nine"],
+  },
+  redHerrings: [{ detail: "A dog barks from somewhere inside the hotel at night.", explanation: "Pip is hiding a stray in the staff cupboard." }],
+  people: {
+    "Lillian Carrow": ["Gracious hostess, every sentence ends in a kind word", "rearranges the flowers on the desk"],
+    "Captain Roy Dunmore": ["Booming, salty and full of sea stories", "taps his pipe on his palm"],
+    "Nora Tate": ["Quick and defensive, talks with her hands", "wipes flour on her apron"],
+    "Julian Marsh": ["Smooth city confidence, numbers and promises", "checks his wristwatch"],
+    "Pip Larkin": ["Eager and nervous, says 'honest' a lot", "jams his hands in his pockets"],
+  },
+  beats: [
+    ["Rain hammers the windows as Desmond Carrow taps his glass for silence.", "He tears the sale papers in half in front of Julian Marsh.", "The lights flicker and the coast road floods: nobody is leaving tonight.", ["Desmond Carrow", "Lillian Carrow", "Captain Roy Dunmore", "Nora Tate", "Julian Marsh", "Pip Larkin"]],
+    ["Pip's shout echoes up from the cellar stairs.", "Desmond lies at the bottom, the lantern smashed beside him.", "Miss Quill notices something clutched in his hand.", ["Pip Larkin", "Lillian Carrow"]],
+    ["Desmond's gold watch falls out of Pip's jacket in front of everyone.", "The hotel turns on the boy.", "Miss Quill asks to see the lost-property book.", ["Pip Larkin", "Captain Roy Dunmore", "Lillian Carrow"]],
+    ["Pip swears he found the watch on the stairs at nine.", "Lillian remembers talking to her husband long after that.", "So who was on the stairs later?", ["Pip Larkin", "Lillian Carrow"]],
+    ["The Captain booms that he was on the pier, and his debts come tumbling out.", "The harbor master saw him there at half past ten.", "Miss Quill finds white dust on the cellar steps.", ["Captain Roy Dunmore", "Nora Tate"]],
+    ["Nora admits, chin up, that she went to the cellar for butter.", "Her bread timer kept her in the kitchen the rest of the night.", "Then who was not where they said?", ["Nora Tate"]],
+    ["Miss Quill settles behind the front desk with the switchboard log.", "Room Seven's long telephone call never happened.", "She reaches for the guest register.", ["Lillian Carrow", "Julian Marsh"]],
+    ["Miss Quill goes through the guests' wastebaskets with a pair of sugar tongs.", "A sheet of carbon paper matches the scrap in Desmond's hand.", "She knows who, and now she needs the proof.", ["Julian Marsh", "Lillian Carrow"]],
+  ],
+});
 
 export const OFFLINE_MYSTERIES: OfflineMystery[] = [RAVENSCROFT, HARBOR];
 
