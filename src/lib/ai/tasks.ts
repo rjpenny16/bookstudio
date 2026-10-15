@@ -411,6 +411,35 @@ export const MysteryTestOutput = z.object({
 });
 export type MysteryTestOutput = z.infer<typeof MysteryTestOutput>;
 
+export const TitleIdeasInput = z.object({
+  bookType: z.string(),
+  topic: z.string(),
+  audience: z.string(),
+  angle: z.string(),
+  keywordIdeas: z.array(z.string()),
+  /** What is actually in the book: for a mystery its case, setting, cast and chapters; otherwise its sections and themes. */
+  contents: z.string(),
+  /** Words no title or subtitle may contain (a mystery's culprit and final proof: no spoilers). */
+  avoid: z.array(z.string()),
+  /** The working title from the brief, written before the content existed. */
+  provisional: z.string(),
+  feedback: Feedback,
+});
+
+export const TitleIdea = z.object({
+  title: z.string().describe("Under 60 characters, title case"),
+  subtitle: z.string().describe("Who it is for and what it gives them, under 120 characters"),
+  hero: z.string().describe("The 1-3 words of the title a shopper would search for, copied exactly from it; empty if none stand out"),
+  why: z.string().describe("Why this title fits this book, one short sentence"),
+});
+export type TitleIdea = z.infer<typeof TitleIdea>;
+
+export const TitleIdeasOutput = z.object({
+  ideas: z.array(TitleIdea).describe("5 titles, each a different angle"),
+  pick: z.number().int().describe("1-based number of the best idea"),
+});
+export type TitleIdeasOutput = z.infer<typeof TitleIdeasOutput>;
+
 export const KeywordsInput = z.object({ topic: z.string(), seeds: z.array(z.string()), observedTitles: z.array(z.string()) });
 export const KeywordsOutput = z.object({
   clusters: z.array(z.object({ intent: z.string(), keywords: z.array(z.string()) })),
@@ -579,6 +608,7 @@ export const TASKS = {
   "mystery-chapter": { input: MysteryChapterInput, output: MysteryChapterOutput },
   "mystery-test": { input: MysteryTestInput, output: MysteryTestOutput },
   "mystery-edit": { input: MysteryEditInput, output: MysteryEditOutput },
+  "title-ideas": { input: TitleIdeasInput, output: TitleIdeasOutput },
 } as const;
 
 /** Tasks whose prompt is accompanied by images. */
@@ -607,6 +637,7 @@ export const TASK_EFFORT: Record<TaskName, "low" | "medium" | "high"> = {
   "mystery-chapter": "high",
   "mystery-test": "high",
   "mystery-edit": "medium",
+  "title-ideas": "medium",
 };
 export type TaskInput<T extends TaskName> = z.infer<(typeof TASKS)[T]["input"]>;
 export type TaskOutput<T extends TaskName> = z.infer<(typeof TASKS)[T]["output"]>;
@@ -652,7 +683,7 @@ export function taskPrompt<T extends TaskName>(task: T, input: TaskInput<T>): st
       return `Create a publishing brief for a new KDP paperback.\n\n${data}
 
 - angle: one sentence naming the specific buyer and what this book does for them that a generic book in the niche doesn't (e.g. "Short, shift-sized gratitude pages for ER nurses who have five minutes, not fifty"). Avoid empty adjectives like "beautiful" or "perfect".
-- titleIdeas: 5 distinct, memorable titles under 60 characters that a buyer would search for or remember; title case; no subtitle stuffed into the title, no repeated words.
+- titleIdeas: 5 distinct, memorable working titles under 60 characters that a buyer would search for or remember; title case; no subtitle stuffed into the title, no repeated words. They are provisional: the final title is chosen once the book's content is written.
 - subtitle: names the audience and the main benefit, under 120 characters.
 - keywordIdeas: 10 phrases real buyers type into Amazon, each a different angle (audience, occasion, use case, format, problem solved).
 - Pick the generator that best fits the book type and topic, a realistic page target (puzzle books 100-160, journals and planners 100-200, notebooks 100-150, murder mysteries 60-100), and the cover template and palette that suit the audience and genre conventions.\n${TEMPLATE_GUIDE}\n${genreHint(input as z.infer<typeof BriefInput>)}
@@ -834,6 +865,19 @@ Name the chapter to rewrite (the later one, for a contradiction) and say how to 
       return `You are a sharp mystery reader working through a murder mystery puzzle book. You know only what the book has shown so far: the premise, the suspects as introduced, and the clues found by each checkpoint.\n\n${data}
 
 For each checkpoint, using only the clues up to that point, say who you would accuse and how sure you are. Be honest: if the clues so far don't single anyone out, answer "unsure" or give low confidence. Don't guess from genre habits (the least likely person, the newcomer); reason only from the evidence.`;
+    case "title-ideas": {
+      const i = input as TaskInput<"title-ideas">;
+      const mystery = i.bookType === "mystery";
+      return `Name this KDP paperback. Its content is written; the title should come from what is actually inside it.\n\n${data}
+
+- ideas: 5 titles, each from a different angle of "contents" (${mystery ? "a place in the case, an object or clue that matters, the situation, the victim's world, a motif" : "the main activity, the reader, the occasion, the theme of a section, the benefit"}). Every one must be clearly about this book, not a generic title that would fit any book in the niche.
+- ${mystery ? 'Murder mysteries: titles in the genre\'s style ("Murder at the …", "The … Affair", "Death and the …", a place or object from the case), intriguing, never giving away who did it or how. Include "Murder Mystery Puzzle Book" or similar in the subtitle, not the title.' : "Lead with the words shoppers search for (e.g. \"Sudoku\", \"Gratitude Journal\") when they fit naturally."}
+- Under 60 characters, title case, no repeated words, no subtitle stuffed into the title. Never use any word in "avoid". No prohibited terms, brands, trademarks, real people or existing book titles.
+- subtitle: names the reader and what the book gives them; for a puzzle or mystery book, what kind of puzzles. Under 120 characters.
+- hero: the 1-3 search words of the title, copied exactly, or empty.
+- "provisional" was written before the content existed; keep it only if it is still the best fit.
+- pick: the one a shopper scrolling search results would click and remember.${feedbackNote(i.feedback)}`;
+    }
     case "keywords":
       return `Suggest keyword clusters for researching this niche.\n\n${data}\n\nGroup buyer search phrases by intent (e.g. gift, specific audience, use case, format). These are suggestions to validate, not search-volume data; say so in notes.`;
     case "listing-critique":

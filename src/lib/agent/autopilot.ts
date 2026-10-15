@@ -23,6 +23,7 @@ import { ART_CANDIDATES } from "./constants";
 import { contentCall, pool, refineContent, reviewContent, writeSection, type ContentAsk, type ContentRequest, type ContentReview } from "./content";
 import { genreOf, genreOfProject } from "@/lib/cover/genres";
 import { keepInLibrary } from "@/lib/storage/artLibrary";
+import { checkTitleIdeas, mysteryAvoid, mysteryContents, sectionContents, titleRequest } from "./titles";
 import { assembleMystery, caseFile, editMystery, mysterySizing, mysteryStyle, planMystery, writeMystery, type MysteryAsk } from "./mystery";
 
 /**
@@ -67,6 +68,7 @@ export const AUTOPILOT_STEPS: { id: string; label: string }[] = [
   { id: "content", label: "Write section content" },
   { id: "check", label: "Check content for repeats & weak items" },
   { id: "layout", label: "Lay out interior pages" },
+  { id: "title", label: "Name the book from its content" },
   { id: "listing", label: "Write listing metadata" },
   { id: "critique", label: "Critique & revise listing" },
   { id: "art", label: "Generate & pick cover art" },
@@ -84,6 +86,17 @@ export interface AutopilotResult {
   notes: string[];
   /** Rule-based quality checks of the finished draft, plus the stored model reviews. */
   quality: QualityReport;
+}
+
+/** A laid-out interior, with what the namer needs to title it. */
+interface Built {
+  project: Project;
+  summary: string;
+  plan: string;
+  /** What is inside, for naming the book. */
+  contents: string;
+  /** Words the title must not contain (a mystery's spoilers). */
+  avoid: string[];
 }
 
 /** Covers the visual review scores below this (out of 10) get one redesign. */
@@ -150,7 +163,8 @@ export async function runAutopilot(
   });
   const brief: BriefOutput = briefRes.output;
   const pageTarget = clampPageTarget(input.pageTarget || brief.pageTarget || 120);
-  const title = brief.titleIdeas.find((t) => !findProhibited(t).length) ?? input.topic;
+  // A working title until the content exists; the book is named from its content after layout.
+  let title = brief.titleIdeas.find((t) => !findProhibited(t).length) ?? input.topic;
   const audience = brief.audience || input.audience;
 
   // 2-4. A murder mystery has its own plan (the case), content (chapters) and layout.
@@ -162,7 +176,33 @@ export async function runAutopilot(
     d.brief = { topic: input.topic, audience, notes: input.notes, angle: brief.angle, titleIdeas: brief.titleIdeas, ...(brief.titleHero.trim() ? { titleHero: brief.titleHero.trim() } : {}), keywordIdeas: brief.keywordIdeas, interiorPlan: built.plan, coverDirection: brief.coverDirection, risks: brief.risks };
   });
 
-  async function buildMystery(): Promise<{ project: Project; summary: string; plan: string }> {
+  // 4b. Name the book from what is now inside it; the other ideas stay as alternatives.
+  project = await step("title", async () => {
+    const r = await ai(
+      "title-ideas",
+      titleRequest({ bookType: input.bookType, topic: input.topic, audience, angle: brief.angle, keywordIdeas: brief.keywordIdeas, contents: built.contents, avoid: built.avoid, provisional: title }),
+      ["listing.title"],
+    ).catch((e) => {
+      if (signal?.aborted || [401, 403, 429].includes((e as { status?: number })?.status ?? 0)) throw e;
+      notes.push(`Naming the book from its content was skipped: ${e instanceof Error ? e.message : e}`);
+      return null;
+    });
+    const checked = r ? checkTitleIdeas(r.output, built.avoid) : { ideas: [], dropped: [] };
+    if (checked.dropped.length) notes.push(`Title ideas set aside: ${checked.dropped.join(", ")}.`);
+    if (!checked.ideas.length) return [project, `kept the working title "${title}"`];
+    const best = checked.ideas[0];
+    title = best.title;
+    const next = produce(project, (d) => {
+      d.name = best.title;
+      d.brief.titleOptions = checked.ideas;
+      d.brief.titleIdeas = checked.ideas.map((x) => x.title);
+      if (best.hero) d.brief.titleHero = best.hero;
+      else delete d.brief.titleHero;
+    });
+    return [next, `"${best.title}" (best of ${checked.ideas.length})`];
+  });
+
+  async function buildMystery(): Promise<Built> {
     const mi = { topic: input.topic, audience, notes: input.notes, angle: brief.angle, title, trimId: trim.id, pageTarget, difficulty: brief.difficulty };
     const z = mysterySizing(mi);
     const ask: MysteryAsk = (task, payload, outputs) => ai(task, payload as never, outputs) as never;
@@ -192,11 +232,11 @@ export async function runAutopilot(
     return step("layout", async () => {
       const book = assembleMystery(plan, written.chapters, written.reveal, z, { ...mi, subtitle: brief.subtitle, author: input.author, planRunId: planned.runId });
       const p = createProject({ name: title, bookType: input.bookType, trimId: trim.id, paper: "white", ink: "black", bleed: false, author: input.author, interior: book.sections, style: mysteryStyle(mi) });
-      return [{ project: p, summary: book.summary, plan: `${book.summary}\n\nCase plan\n\n${caseFile(plan)}` }, `${p.interior.pages.length} pages: ${plan.chapters.length} chapters, ${book.clues} clue puzzles`];
+      return [{ project: p, summary: book.summary, plan: `${book.summary}\n\nCase plan\n\n${caseFile(plan)}`, contents: mysteryContents(plan), avoid: mysteryAvoid(plan) }, `${p.interior.pages.length} pages: ${plan.chapters.length} chapters, ${book.clues} clue puzzles`];
     });
   }
 
-  async function buildInterior(): Promise<{ project: Project; summary: string; plan: string }> {
+  async function buildInterior(): Promise<Built> {
     // 2. Plan: sections and page budget
     const { blueprint, blueprintRunId, planned } = await step("plan", async () => {
       const r = await ai(
@@ -261,7 +301,7 @@ export async function runAutopilot(
       return [p, `${p.interior.pages.length} pages in ${p.interior.sections.length} parts`];
     });
     const summary = describeBook(filled);
-    return { project: laidOut, summary, plan: summary };
+    return { project: laidOut, summary, plan: summary, contents: sectionContents(summary, filled.map((s) => ({ label: s.label, theme: s.content?.theme }))), avoid: [] };
   }
 
   // 5. Listing
