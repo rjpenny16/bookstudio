@@ -268,6 +268,14 @@ export interface ListingMetadata {
   aiDisclosure: AiDisclosure;
 }
 
+export interface TitleOption {
+  title: string;
+  subtitle: string;
+  /** The search words of the title, set largest on the cover; empty if none. */
+  hero: string;
+  why: string;
+}
+
 export interface Brief {
   topic: string;
   audience: string;
@@ -276,6 +284,8 @@ export interface Brief {
   titleIdeas: string[];
   /** The words of the title shoppers search for, set largest on the cover (optional, no migration needed). */
   titleHero?: string;
+  /** Titles named from the finished content, the chosen one first, each with a subtitle and why it fits (optional). */
+  titleOptions?: TitleOption[];
   keywordIdeas: string[];
   interiorPlan: string;
   coverDirection: string;
