@@ -23,7 +23,7 @@ import { ART_CANDIDATES } from "./constants";
 import { contentCall, pool, refineContent, reviewContent, writeSection, type ContentAsk, type ContentRequest, type ContentReview } from "./content";
 import { genreOf, genreOfProject } from "@/lib/cover/genres";
 import { keepInLibrary } from "@/lib/storage/artLibrary";
-import { assembleMystery, caseFile, mysterySizing, mysteryStyle, planMystery, writeMystery, type MysteryAsk } from "./mystery";
+import { assembleMystery, caseFile, editMystery, mysterySizing, mysteryStyle, planMystery, writeMystery, type MysteryAsk } from "./mystery";
 
 /**
  * The publishing agent. It is a deterministic workflow with model calls inside
@@ -173,13 +173,22 @@ export async function runAutopilot(
       return [r, `${r.plan.caseTitle}: ${r.plan.suspects.length} suspects, ${r.plan.chapters.length} chapters, ${clues} clues${r.problems.length ? `, ${r.problems.length} fair-play note(s)` : ", fair-play check passed"}`];
     });
     const plan = planned.plan;
+    const run = <T, R>(items: T[], fn: (item: T, index: number) => Promise<R>) => pool(items, limits.concurrency, fn);
     const written = await step("content", async () => {
-      const w = await writeMystery(ask, plan, z, audience, (items, fn) => pool(items, limits.concurrency, fn));
+      // In waves as wide as the provider runs at once, each told what the earlier waves wrote.
+      const w = await writeMystery(ask, plan, z, audience, run, limits.concurrency);
       notes.push(...w.notes);
       const words = [...w.chapters, w.reveal].reduce((n, c) => n + c.story.split(/\s+/).filter(Boolean).length, 0);
       return [w, `${w.chapters.length} chapters and the solution, about ${Math.round(words / 100) * 100} words`];
     });
-    await step("check", async () => [null, written.notes.length ? `${written.notes.length} chapter(s) needed fixes` : "Every chapter holds its clues"]);
+    // The story editor reads the chapters together and rewrites the few that don't hold together.
+    const edited = await step("check", async () => {
+      const e = await editMystery(ask, plan, written.chapters, z, audience, run);
+      notes.push(...e.notes);
+      const fixes = written.notes.length ? `${written.notes.length} chapter(s) needed fixes` : "Every chapter holds its clues";
+      return [e.chapters, e.edited.length ? `${fixes}; story editor rewrote ${e.edited.length} chapter(s)` : `${fixes}; the chapters read as one story`];
+    });
+    written.chapters = edited;
     return step("layout", async () => {
       const book = assembleMystery(plan, written.chapters, written.reveal, z, { ...mi, subtitle: brief.subtitle, author: input.author, planRunId: planned.runId });
       const p = createProject({ name: title, bookType: input.bookType, trimId: trim.id, paper: "white", ink: "black", bleed: false, author: input.author, interior: book.sections, style: mysteryStyle(mi) });

@@ -242,6 +242,8 @@ export const MysteryPlanInput = z.object({
   difficulty: z.enum(["easy", "medium", "hard"]),
   /** Longest crossword answer the grids can hold. */
   maxAnswer: z.number().int(),
+  /** About how long each chapter's story is, in words, so the beats fit. */
+  wordsPerChapter: z.number().int(),
   /** What the fair-play check found wrong with the previous plan, to fix this time. */
   problems: z.array(z.string()).optional(),
   feedback: Feedback,
@@ -263,9 +265,22 @@ export const MysteryPlanOutput = z.object({
         motive: z.string().describe("One sentence"),
         alibi: z.string().describe("What they claim, one sentence"),
         secret: z.string().describe("Something they hide that is not the murder but makes them act guilty (debts, an affair, a lie about where they were); empty only for the culprit"),
+        voice: z.string().describe("How they talk, a few words the writer can hear (e.g. 'clipped and formal, never uses contractions')"),
+        tell: z.string().describe("A visible habit the sleuth notices (e.g. 'turns her ring when she lies')"),
       }),
     )
     .describe("4-6 suspects, the culprit among them"),
+  bible: z
+    .object({
+      voice: z.string().describe("The narrative voice and point of view, one or two sentences (e.g. 'close third person on the sleuth, dry and warm, short sentences')"),
+      sleuth: z.string().describe("The sleuth's manner: personality, one quirk and how they investigate, one or two sentences"),
+      locations: z.array(Named).describe("3-6 places the story uses, each with one sensory detail; the crime scene among them"),
+      motifs: z.array(z.string()).describe("2 recurring images or details that tie the chapters together (e.g. 'the stopped hall clock')"),
+    })
+    .describe("The story bible every chapter is written from, so the book reads as one story"),
+  redHerrings: z
+    .array(z.object({ detail: z.string().describe("A suspicious detail that is not a clue"), explanation: z.string().describe("Its innocent explanation, given later in the story") }))
+    .describe("1-2 misleading details that point nowhere, each explained by the end"),
   culprit: z.string().describe("The guilty suspect's name, copied exactly from suspects"),
   motive: z.string().describe("Why the culprit did it, one or two sentences"),
   method: z.string().describe("How and when it was done, two or three sentences"),
@@ -285,6 +300,14 @@ export const MysteryPlanOutput = z.object({
       z.object({
         title: z.string().describe("Chapter title, under 40 characters"),
         summary: z.string().describe("What happens in the chapter, 2-4 sentences"),
+        beats: z
+          .object({
+            hook: z.string().describe("The opening moment that pulls the reader in, one sentence"),
+            turn: z.string().describe("What changes or is discovered mid-chapter, one sentence"),
+            cliffhanger: z.string().describe("The last beat before the puzzle: a question, a discovery or a threat, one sentence"),
+          })
+          .describe("The chapter's shape"),
+        onPage: z.array(z.string()).describe("Who appears in the chapter, names copied exactly"),
         clues: z.array(
           z.object({
             kind: z.enum(MYSTERY_CLUE_KINDS),
@@ -311,8 +334,16 @@ export const MysteryChapterInput = z.object({
   totalChapters: z.number().int(),
   title: z.string(),
   summary: z.string(),
-  /** Summaries of the chapters before this one. */
+  /** What happened in the chapters before this one: the written chapters' recaps where they exist, else their plan summaries. */
   earlier: z.array(z.string()),
+  /** The chapter's shape from the plan: hook, turn and cliffhanger. */
+  beats: z.object({ hook: z.string(), turn: z.string(), cliffhanger: z.string() }),
+  /** Who appears in it. */
+  onPage: z.array(z.string()),
+  /** The last paragraph of the chapter before, when it is written, to carry on from. */
+  previousEnding: z.string(),
+  /** First sentences of the chapters already written, so this one opens differently. */
+  openings: z.array(z.string()),
   clues: z.array(z.object({ kind: z.enum(MYSTERY_CLUE_KINDS), answer: z.string(), reveals: z.string(), theme: z.string(), source: z.string() })),
   /** Answers of the previous chapter's clues, which this chapter lets the sleuth learn plainly (for readers who skip puzzles). */
   previousClues: z.array(z.string()),
@@ -329,6 +360,7 @@ export const MysteryChapterInput = z.object({
 
 export const MysteryChapterOutput = z.object({
   story: z.string().describe("The chapter's prose; a blank line between paragraphs; no chapter heading"),
+  recap: z.string().describe("For the writer of the next chapters: 2-3 sentences on what this chapter established (facts, names introduced, where it ends). Empty for the reveal"),
   puzzles: z
     .array(
       z.object({
@@ -340,6 +372,21 @@ export const MysteryChapterOutput = z.object({
     .describe("One per clue, in the same order; empty for the reveal"),
 });
 export type MysteryChapterOutput = z.infer<typeof MysteryChapterOutput>;
+
+export const MysteryEditInput = z.object({
+  audience: z.string(),
+  caseTitle: z.string(),
+  /** The story's voice, from the bible. */
+  voice: z.string(),
+  chapters: z.array(z.object({ chapter: z.number().int(), title: z.string(), opening: z.string(), ending: z.string(), recap: z.string() })),
+});
+
+export const MysteryEditOutput = z.object({
+  problems: z
+    .array(z.object({ chapter: z.number().int().describe("The chapter number"), problem: z.string().describe("What a reader would notice and how to fix it, one or two sentences") }))
+    .describe("Only real problems, worst first; an empty list when the chapters read well together"),
+});
+export type MysteryEditOutput = z.infer<typeof MysteryEditOutput>;
 
 export const MysteryTestInput = z.object({
   premise: z.string(),
@@ -531,6 +578,7 @@ export const TASKS = {
   "mystery-plan": { input: MysteryPlanInput, output: MysteryPlanOutput },
   "mystery-chapter": { input: MysteryChapterInput, output: MysteryChapterOutput },
   "mystery-test": { input: MysteryTestInput, output: MysteryTestOutput },
+  "mystery-edit": { input: MysteryEditInput, output: MysteryEditOutput },
 } as const;
 
 /** Tasks whose prompt is accompanied by images. */
@@ -558,6 +606,7 @@ export const TASK_EFFORT: Record<TaskName, "low" | "medium" | "high"> = {
   "mystery-plan": "high",
   "mystery-chapter": "high",
   "mystery-test": "high",
+  "mystery-edit": "medium",
 };
 export type TaskInput<T extends TaskName> = z.infer<(typeof TASKS)[T]["input"]>;
 export type TaskOutput<T extends TaskName> = z.infer<(typeof TASKS)[T]["output"]>;
@@ -705,14 +754,28 @@ List only the items a buyer would find weak: vague or generic, off-theme, clumsy
     case "mystery-plan": {
       const i = input as TaskInput<"mystery-plan">;
       const kinds = i.kinds.map((k) => CLUE_RULE[k].replace("{max}", String(i.maxAnswer))).join("\n");
+      const kids = /kid|child|ages? \d/i.test(i.audience);
       return `Plan a murder mystery puzzle book: a story told in chapters, where the reader solves puzzles to collect the clues that reveal the killer.\n\n${data}
 
-The plan is the backbone of the book: write it as a careful mystery writer would before drafting a single chapter.
+The plan is the backbone of the book. Every chapter is later written from it by a writer who sees only this plan, so make it complete, consistent and vivid: a careful mystery novelist's outline, not a list of facts.
 
-- ${i.chapters} chapters with ${i.cluesPerChapter === 1 ? "one clue" : `${i.cluesPerChapter} clues`} each (a chapter may have one more or one fewer where the story needs it). Chapter 1 sets the scene and introduces the victim and every suspect; the body is found by chapter 2; the last chapter brings the final piece of evidence; the solution comes after it and is not a chapter.
-- Lock the truth first: the culprit, motive, method, crime scene, time of death and a true timeline of where the victim and every suspect really were, hour by hour around the death. Nobody is in two places at once; at the time of death every innocent suspect is somewhere else; the culprit is at the crime scene within the hour.
+GOAL
+- A reader for ${i.audience || "adult readers"} who solves the puzzles should be able to name the killer just before the solution, feel clever for it, and still be surprised by how it fits together.
+- ${i.chapters} chapters with ${i.cluesPerChapter === 1 ? "one clue" : `${i.cluesPerChapter} clues`} each (a chapter may have one more or one fewer where the story needs it), about ${i.wordsPerChapter} words of story each. Chapter 1 sets the scene and introduces the victim and every suspect; the body is found by chapter 2; the last chapter brings the final piece of evidence; the solution comes after it and is not a chapter.
+
+LOCK THE TRUTH FIRST
+- The culprit, motive, method, crime scene, time of death and a true timeline of where the victim and every suspect really were, hour by hour around the death. Nobody is in two places at once; at the time of death every innocent suspect is somewhere else; the culprit is at the crime scene within the hour.
+
+THE CAST
 - 4-6 suspects, each with a believable motive, an alibi, and a secret that is not the murder but makes them act guilty (a debt, an affair, a lie about where they were). When a clue clears a suspect, their secret is what explains the suspicious behavior. The culprit appears in chapter 1 and is never treated as obviously guilty.
-- Shape the reader's suspicion: in the first quarter of the chapters, clues give neutral facts (places, times, objects) and none points at the culprit. By the middle, the evidence builds a convincing wrong theory against one innocent suspect (falseTheory), who is first implicated before the halfway point and cleared after it. In the last third, fair evidence turns toward the culprit.
+- Give every suspect a distinct voice (how they talk) and a tell (a visible habit), so the reader tells them apart on the page. Avoid stock types; each should be someone the reader could like or pity.
+
+SHAPE OF SUSPICION
+- In the first quarter of the chapters, clues give neutral facts (places, times, objects) and none points at the culprit. By the middle, the evidence builds a convincing wrong theory against one innocent suspect (falseTheory), who is first implicated before the halfway point and cleared after it. In the last third, fair evidence turns toward the culprit.
+- redHerrings: one or two suspicious details that are not clues at all, each with an innocent explanation the story gives later.
+- Every chapter has a shape (beats): a hook that opens inside a scene, a turn mid-chapter, and a cliffhanger right before its puzzle. No two chapters open or end the same way. onPage lists who appears.
+
+THE CLUES
 - Fair play: the reader must be able to solve it from the clues alone, and no single clue identifies the killer. At least 3 clues implicate the culprit (motive, opportunity or a broken alibi, and a physical clue), with the decisive one late. Every innocent suspect is cleared by at least one clue. No clue clears the culprit, and the solution uses no fact the reader never saw.
 - Every puzzle comes from something real in the story (source): a ledger, a guest register, a witness's list, a torn letter, a note the sleuth writes up. Coded messages only where a character really would write in code; at most two or three in the book.
 - finalProof: after the last chapter, a final deduction asks the reader to spell this word from letters of the clues already found. It names where the proof is or what it is, never the killer; every one of its letters must appear in the clue answers.
@@ -720,30 +783,53 @@ The plan is the backbone of the book: write it as a careful mystery writer would
 ${kinds}
 - A clue's answer is the evidence itself, in capitals, readable on its own once found. Never put a suspect's name in an answer. No two clues share an answer.
 - theme: the scene the puzzle's other words come from, so each puzzle feels part of its chapter.
-- Tone for ${i.audience || "adult readers"}: a cozy, clever mystery. The death happens off the page; no gore, cruelty or graphic violence${/kid|child|ages? \d/i.test(i.audience) ? ", and for children no one is harmed on the page and the crime is a disappearance or a theft-gone-wrong told gently" : ""}. Original characters and places only: no real people, brands or famous fictional detectives.${i.problems?.length ? `\n\nAn earlier plan failed these checks; fix every one:\n${i.problems.map((p) => `- ${p}`).join("\n")}` : ""}${feedbackNote(i.feedback)}`;
+
+THE STORY BIBLE
+- bible.voice: one narrative voice and point of view for the whole book. bible.sleuth: the detective's personality, one quirk and their way of working, so they feel like a person worth following. bible.locations: the 3-6 places the story moves through, the crime scene among them, each with one sensory detail. bible.motifs: two recurring details that return through the book and pay off in the solution.
+
+TONE
+- For ${i.audience || "adult readers"}: a cozy, clever mystery with warmth and a little humor. The death happens off the page; no gore, cruelty or graphic violence${kids ? ", and for children no one is harmed on the page and the crime is a disappearance or a theft-gone-wrong told gently" : ""}. Original characters and places only: no real people, brands or famous fictional detectives.${i.problems?.length ? `\n\nAn earlier plan failed these checks; fix every one:\n${i.problems.map((p) => `- ${p}`).join("\n")}` : ""}${feedbackNote(i.feedback)}`;
     }
     case "mystery-chapter": {
       const i = input as TaskInput<"mystery-chapter">;
       if (i.reveal)
         return `Write the solution of this murder mystery puzzle book: the scene where the sleuth gathers everyone and explains what happened.\n\n${data}
 
-- About ${i.words} words, in the same voice as the chapters. Walk through the clues in the order the reader found them, quoting each clue's words, and show how each one cleared an innocent suspect (and the secret that made them look guilty) or pointed at the culprit. Explain why the wrong theory was wrong, then how the culprit did it and why, step by step along the timeline. The final proof is found where the final deduction pointed; it, not a confession, settles the case. End with the culprit's reaction and a short, satisfying last beat.
-- Plain prose with a blank line between paragraphs; dialogue is welcome. No heading, no lists, no gore. Leave puzzles empty.${feedbackNote(i.feedback)}`;
+- About ${i.words} words, in the voice the case file's story bible sets. Walk through the clues in the order the reader found them, quoting each clue's words, and show how each one cleared an innocent suspect (and the secret that made them look guilty) or pointed at the culprit. Explain why the wrong theory was wrong and what the red herrings really were, then how the culprit did it and why, step by step along the timeline. Bring back the book's motifs. The final proof is found where the final deduction pointed; it, not a confession, settles the case. End with the culprit's reaction and a short, satisfying last beat.
+- Plain prose with a blank line between paragraphs; dialogue is welcome. No heading, no lists, no gore. Leave puzzles empty and recap empty.${feedbackNote(i.feedback)}`;
       const puzzles = i.clues.map((c, n) => `${n + 1}. ${c.kind} on "${c.theme}" hiding "${c.answer}": ${CHAPTER_PUZZLE[c.kind].replace("{words}", String(i.wordsPerPuzzle)).replace("{entries}", String(i.entriesPerPuzzle)).replace("{max}", String(i.maxLength)).replace("{answer}", c.answer)}`).join("\n");
       return `Write chapter ${i.chapter} of ${i.totalChapters} of this murder mystery puzzle book, and the puzzles that hide its clues.\n\n${data}
 
 The story:
-- About ${i.words} words. Follow the chapter summary and stay true to the case file: the people, the timeline and what each clue means. Continue from the earlier chapters without retelling them.
+- About ${i.words} words. Follow the chapter summary and its beats (open on the hook, reach the turn, end on the cliffhanger), and stay true to the case file: the people, the timeline, the story bible and what each clue means. "earlier" says what the reader already knows; carry on from it without retelling it.${i.previousEnding ? " Pick up naturally from previousEnding, the last lines of the chapter before." : ""}
 ${i.previousClues.length ? `- Early in the chapter, let the sleuth learn plainly what the last chapter's clue${i.previousClues.length > 1 ? "s" : ""} said (${i.previousClues.map((c) => `"${c}"`).join(", ")}), using the words themselves, as a natural moment rather than a recap, without yet explaining what it means. Readers who skipped the puzzle stay with the story.
-` : ""}- Each puzzle comes from its source: show that thing on the page (who has it, why the sleuth looks at it) and the moment the clue turns up, but stop short of stating the clue; the reader gets it by solving the puzzle. End on a line that sends the reader to the puzzle${i.clues.length > 1 ? "s" : ""}.
+` : ""}- Each puzzle comes from its source: show that thing on the page (who has it, why the sleuth looks at it) and the moment the clue turns up, but stop short of stating the clue; the reader gets it by solving the puzzle. End on the cliffhanger and a line that sends the reader to the puzzle${i.clues.length > 1 ? "s" : ""}.
 - When a clue clears a suspect, let their secret come out: it explains why they looked guilty.
 - Never reveal or hint at the culprit beyond what the clues allow. Give the innocent suspects real reasons to look guilty.
-- Vivid, plain prose for ${i.audience || "adult readers"}: short paragraphs, dialogue, a little humor. A blank line between paragraphs. No heading, no gore.
+
+The craft:
+- Open inside a scene (someone doing or saying something), never with a summary or the weather alone.${i.openings.length ? " Start differently from the earlier chapters, whose first lines are in openings." : ""}
+- Show, don't report: people talk in dialogue, each in their own voice from the case file, and give themselves away through their tells. Use the bible's locations and their sensory details, and touch one of its motifs.
+- Short paragraphs, varied sentence length, a little humor, plain words for ${i.audience || "adult readers"}. A blank line between paragraphs. No heading, no gore.
+- Avoid clichés: no "a chill ran down", "little did they know", "suddenly", "blood ran cold", "it was a dark and stormy night", and no characters "letting out a breath they didn't know they were holding".
+
+recap: two or three sentences for the writer of the next chapters: what this chapter established (facts, names introduced, any new detail) and where it ends. Never state the hidden clue.
 
 The puzzles, one for each clue in order:
 ${puzzles}
+- Puzzle titles name the thing the puzzle comes from, as the sleuth would label it (e.g. "The Cook's Ledger").
 - Words and answers: single words, letters A-Z only, family-friendly, no names of people, brands or trademarks. ${WORD_LEVEL}${feedbackNote(i.feedback)}`;
     }
+    case "mystery-edit":
+      return `You are the story editor of a murder mystery puzzle book. The chapters were written a few at a time by different writers working from one plan. Read how each chapter opens, ends and what it established, and find what a reader would trip over.\n\n${data}
+
+Flag only real problems a reader would notice:
+- Continuity: a fact, name, time or place that contradicts an earlier chapter, or an ending the next chapter doesn't follow from.
+- Sameness: chapters that open or end the same way, or in the same words.
+- Flatness: an opening with no scene or a chapter with no ending beat to send the reader on.
+- Voice: a chapter whose voice doesn't match "voice".
+
+Name the chapter to rewrite (the later one, for a contradiction) and say how to fix it, briefly. Most books have a few problems at most; return an empty list when the chapters read well together. Don't flag puzzle content or spoilers.`;
     case "mystery-test":
       return `You are a sharp mystery reader working through a murder mystery puzzle book. You know only what the book has shown so far: the premise, the suspects as introduced, and the clues found by each checkpoint.\n\n${data}
 

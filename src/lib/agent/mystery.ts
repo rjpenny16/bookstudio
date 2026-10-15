@@ -1,6 +1,6 @@
 import { OFFLINE_MYSTERIES, offlineMystery } from "@/lib/ai/offlineMysteries";
 import { THEME_BANK } from "@/lib/ai/offlineBanks";
-import { MYSTERY_CLUE_KINDS, type MysteryChapterOutput, type MysteryClueKind, type MysteryPlanOutput, type TaskInput, type TaskOutput } from "@/lib/ai/tasks";
+import { MYSTERY_CLUE_KINDS, type MysteryChapterOutput, type MysteryClueKind, type MysteryEditOutput, type MysteryPlanOutput, type TaskInput, type TaskOutput } from "@/lib/ai/tasks";
 import { generateCrossword, normalizeAnswer, type CrosswordEntry } from "@/lib/generators/crossword";
 import { estimatePageCount, generatorBox, storyPagesNeeded, type GeneratorConfig } from "@/lib/generators/pages";
 import { randomSeed } from "@/lib/generators/rng";
@@ -39,6 +39,8 @@ export interface MysteryInput {
   trimId: string;
   pageTarget: number;
   difficulty: Difficulty;
+  /** The publisher's direction for the case, applied to the plan. */
+  feedback?: string;
 }
 
 const KIDS = /\b(kid|kids|child|children|ages? \d|boys?|girls?|tweens?|middle grade)\b/i;
@@ -75,8 +77,8 @@ export function mysteryStyle(i: { audience: string; topic: string; notes?: strin
   return { genre: KIDS.test(words) ? "kids" : "mystery", largePrint: LARGE.test(words) };
 }
 
-/** Pages outside the chapters: title, how to solve, suspects, case notes, contents; final deduction, accusation, key divider, deduction key, solution divider, closing. */
-const FIXED_PAGES = 5 + 6;
+/** Pages outside the chapters: title, how to solve, suspects, case notes, contents; case board; final deduction, accusation, key divider, deduction key, solution divider, closing. */
+const FIXED_PAGES = 5 + 1 + 6;
 
 /** Rough page count of a plan's shape (the exact count is measured once the chapters are written). */
 const shapePages = (chapters: number, clues: number, story: number) => FIXED_PAGES + chapters * (story + clues) + Math.ceil((chapters * clues) / 4) + 3 + Math.max(2, story);
@@ -235,8 +237,27 @@ export function checkMysteryPlan(raw: MysteryPlan, z: Pick<MysterySizing, "kinds
     storyChecks(plan, names, culprit, clues, nameParts, problems);
   }
   for (const cl of clues) if (cl.source.trim().length < 8) problems.push(`Chapter ${cl.chapter + 1}'s clue "${cl.answer}" needs a source: the thing in the story the puzzle comes from.`);
+  problems.push(...storyBibleProblems(plan));
   const fatal = !culprit || plan.chapters.length < 4 || valid < 4;
   return { plan, problems, fatal };
+}
+
+/**
+ * What the story layer lacks: a voice and sleuth for the bible, places to
+ * set scenes in, a voice for every suspect and beats for every chapter.
+ * Never fatal (the logic of the case stands without them), and grouped so a
+ * thin bible costs one line in a re-plan, not one per suspect.
+ */
+export function storyBibleProblems(plan: MysteryPlan): string[] {
+  const problems: string[] = [];
+  const b = plan.bible;
+  if (!b?.voice?.trim() || !b.sleuth?.trim()) problems.push("Fill in the story bible: the narrative voice and the sleuth's manner.");
+  if ((b?.locations?.filter((l) => l.name.trim()).length ?? 0) < 3) problems.push("The story bible needs 3-6 locations, each with a sensory detail.");
+  const quiet = plan.suspects.filter((s) => !s.voice?.trim() || !s.tell?.trim()).map((s) => s.name);
+  if (quiet.length) problems.push(`Give ${quiet.join(", ")} a voice and a tell.`);
+  const flat = plan.chapters.map((c, n) => (!c.beats?.hook?.trim() || !c.beats.cliffhanger?.trim() ? n + 1 : 0)).filter(Boolean);
+  if (flat.length) problems.push(`Chapter${flat.length > 1 ? "s" : ""} ${flat.join(", ")} need${flat.length > 1 ? "" : "s"} beats: an opening hook and a cliffhanger.`);
+  return problems;
 }
 
 /** Minutes after midnight for "HH:MM", or null. */
@@ -385,27 +406,36 @@ function usableClues(plan: MysteryPlan, z: Pick<MysterySizing, "kinds" | "maxAns
 
 /** The plan in plain words, for the chapter writer and the publisher's brief (it names the culprit). */
 export function caseFile(plan: MysteryPlan): string {
-  const people = plan.suspects.map((s) => `- ${s.name}, ${s.role}. Motive: ${s.motive} Alibi: ${s.alibi}${s.secret?.trim() ? ` Secret: ${s.secret}` : ""}`).join("\n");
-  const chain = plan.chapters
-    .map((ch, c) => `${c + 1}. ${ch.title}: ${ch.summary}${ch.clues.map((cl) => `\n   Clue (${cl.kind}) "${cl.answer}", from ${cl.source}: ${cl.reveals}${cl.suspect ? ` [${cl.effect} ${cl.suspect}]` : ""}`).join("")}`)
+  const people = plan.suspects
+    .map((s) => `- ${s.name}, ${s.role}. Motive: ${s.motive} Alibi: ${s.alibi}${s.secret?.trim() ? ` Secret: ${s.secret}` : ""}${s.voice?.trim() ? ` Voice: ${s.voice}` : ""}${s.tell?.trim() ? ` Tell: ${s.tell}` : ""}`)
     .join("\n");
+  const chain = plan.chapters
+    .map((ch, c) => `${c + 1}. ${ch.title}: ${ch.summary}${ch.beats?.hook ? ` (Hook: ${ch.beats.hook} Turn: ${ch.beats.turn} Ends: ${ch.beats.cliffhanger})` : ""}${ch.clues.map((cl) => `\n   Clue (${cl.kind}) "${cl.answer}", from ${cl.source}: ${cl.reveals}${cl.suspect ? ` [${cl.effect} ${cl.suspect}]` : ""}`).join("")}`)
+    .join("\n");
+  const b = plan.bible;
+  const bible = b?.voice?.trim()
+    ? [`Story bible. Voice: ${b.voice} The sleuth: ${b.sleuth}`, b.locations?.length ? `Places: ${b.locations.map((l) => `${l.name} (${l.description})`).join("; ")}.` : "", b.motifs?.length ? `Motifs: ${b.motifs.join("; ")}.` : ""].filter(Boolean).join("\n")
+    : "";
+  const herrings = plan.redHerrings?.length ? `Red herrings (not clues): ${plan.redHerrings.map((h) => `${h.detail} (really: ${h.explanation})`).join("; ")}` : "";
   const timeline = plan.timeline.map((e) => `- ${e.time} ${e.who}, ${e.where}: ${e.doing}`).join("\n");
   return [
     `${plan.caseTitle}. ${plan.setting}`,
     plan.premise,
     `Victim: ${plan.victim.name}, ${plan.victim.description}`,
     `Sleuth: ${plan.sleuth.name}, ${plan.sleuth.description}`,
+    ...(bible ? [bible] : []),
     `Suspects:\n${people}`,
     `Culprit: ${plan.culprit}. Motive: ${plan.motive} Method: ${plan.method}`,
     `Crime scene: ${plan.crimeScene}, at ${plan.timeOfDeath}. True timeline:\n${timeline}`,
     `The wrong theory mid-book: ${plan.falseTheory.suspect}. ${plan.falseTheory.why}`,
+    ...(herrings ? [herrings] : []),
     `Chapters and clues:\n${chain}`,
     `Final deduction: the reader spells ${plan.finalProof.answer} from letters of the clues. ${plan.finalProof.reveals}`,
     `Solution: ${plan.solution}`,
   ].join("\n\n");
 }
 
-export type MysteryAsk = <T extends "mystery-plan" | "mystery-chapter" | "mystery-test">(task: T, input: TaskInput<T>, outputs: string[]) => Promise<{ output: TaskOutput<T>; runId?: string }>;
+export type MysteryAsk = <T extends "mystery-plan" | "mystery-chapter" | "mystery-test" | "mystery-edit">(task: T, input: TaskInput<T>, outputs: string[]) => Promise<{ output: TaskOutput<T>; runId?: string }>;
 
 export interface PlannedMystery {
   plan: MysteryPlan;
@@ -425,7 +455,7 @@ export interface PlannedMystery {
  * to them, the plan is sent back once more with what the reader concluded.
  */
 export async function planMystery(ask: MysteryAsk, z: MysterySizing, i: MysteryInput): Promise<PlannedMystery> {
-  const input: TaskInput<"mystery-plan"> = { topic: i.topic, audience: i.audience, title: i.title, angle: i.angle, notes: i.notes, chapters: z.chapters, cluesPerChapter: z.cluesPerChapter, kinds: z.kinds, difficulty: z.difficulty, maxAnswer: z.maxAnswer };
+  const input: TaskInput<"mystery-plan"> = { topic: i.topic, audience: i.audience, title: i.title, angle: i.angle, notes: i.notes, chapters: z.chapters, cluesPerChapter: z.cluesPerChapter, kinds: z.kinds, difficulty: z.difficulty, maxAnswer: z.maxAnswer, wordsPerChapter: z.wordsPerChapter, ...(i.feedback?.trim() ? { feedback: i.feedback.trim().slice(0, 500) } : {}) };
   const outputs = ["interior.plan", "interior.case"];
   const first = await ask("mystery-plan", input, outputs);
   let best = { ...checkMysteryPlan(first.output, z), runId: first.runId };
@@ -482,9 +512,14 @@ export interface ChapterPuzzle {
 
 export interface WrittenChapter {
   story: string;
+  /** What the chapter established, for the chapters written after it. */
+  recap?: string;
   puzzles: ChapterPuzzle[];
   runId?: string;
 }
+
+const paragraphs = (story: string) => story.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+const firstSentence = (story: string) => (paragraphs(story)[0] ?? "").match(/^.*?[.!?](?=\s|$)/)?.[0] ?? (paragraphs(story)[0] ?? "").slice(0, 160);
 
 /** Words and answers per puzzle: fewer than a plain puzzle book, so the clue box fits on the page. */
 function puzzleNeeds(kind: MysteryClueKind, z: MysterySizing): { words: number; entries: number; maxLength: number } {
@@ -495,8 +530,15 @@ function puzzleNeeds(kind: MysteryClueKind, z: MysterySizing): { words: number; 
   return { words: 0, entries: 0, maxLength: 9 };
 }
 
-export function chapterRequest(plan: MysteryPlan, c: number, z: MysterySizing, audience: string, file = caseFile(plan)): TaskInput<"mystery-chapter"> {
+/**
+ * What the writer of chapter `c` is told. `written` holds the chapters
+ * already written (earlier waves): their recaps replace the plan summaries,
+ * the last one's ending is carried on from, and their openings are listed so
+ * this one opens differently.
+ */
+export function chapterRequest(plan: MysteryPlan, c: number, z: MysterySizing, audience: string, file = caseFile(plan), written: (WrittenChapter | undefined)[] = []): TaskInput<"mystery-chapter"> {
   const ch = plan.chapters[c];
+  const before = written.slice(0, c);
   const ws = puzzleNeeds("word-search", z);
   const cw = puzzleNeeds("crossword", z);
   return {
@@ -506,7 +548,11 @@ export function chapterRequest(plan: MysteryPlan, c: number, z: MysterySizing, a
     totalChapters: plan.chapters.length,
     title: ch.title,
     summary: ch.summary,
-    earlier: plan.chapters.slice(0, c).map((x, k) => `${k + 1}. ${x.title}: ${x.summary}`),
+    earlier: plan.chapters.slice(0, c).map((x, k) => `${k + 1}. ${x.title}: ${before[k]?.recap?.trim() || x.summary}`),
+    beats: { hook: ch.beats?.hook ?? "", turn: ch.beats?.turn ?? "", cliffhanger: ch.beats?.cliffhanger ?? "" },
+    onPage: ch.onPage ?? [],
+    previousEnding: c > 0 && before[c - 1]?.story ? (paragraphs(before[c - 1]!.story).at(-1) ?? "").slice(0, 600) : "",
+    openings: before.filter((w): w is WrittenChapter => !!w?.story).map((w) => firstSentence(w.story).slice(0, 160)),
     clues: ch.clues.map((cl) => ({ kind: cl.kind, answer: cl.answer, reveals: cl.reveals, theme: cl.theme, source: cl.source })),
     previousClues: c > 0 ? plan.chapters[c - 1].clues.map((cl) => cl.answer) : [],
     words: z.wordsPerChapter,
@@ -539,7 +585,7 @@ export function ensureSecret(words: string[], secret: string): string[] {
  * enough, scrambles able to spell their secret, crosswords holding their
  * key answer. Returns what is still wrong, for one rewrite.
  */
-export function checkChapter(out: MysteryChapterOutput, clues: MysteryClue[], z: MysterySizing, words: number, previous: MysteryClue[] = []): { chapter: WrittenChapter; problems: string[] } {
+export function checkChapter(out: Omit<MysteryChapterOutput, "recap"> & { recap?: string }, clues: MysteryClue[], z: MysterySizing, words: number, previous: MysteryClue[] = []): { chapter: WrittenChapter; problems: string[] } {
   const problems: string[] = [];
   const story = out.story.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim();
   if (wordCount(story) < Math.min(120, words * 0.4)) problems.push(`The story is too short (${wordCount(story)} words; write about ${words}).`);
@@ -566,7 +612,7 @@ export function checkChapter(out: MysteryChapterOutput, clues: MysteryClue[], z:
     }
     return { title, words: [], entries: [] };
   });
-  return { chapter: { story, puzzles }, problems };
+  return { chapter: { story, recap: out.recap?.trim() ?? "", puzzles }, problems };
 }
 
 /** Last-resort fixes so a chapter always builds: bank words, a plain clue for a missing key answer. */
@@ -588,41 +634,64 @@ function repairChapter(ch: WrittenChapter, clues: MysteryClue[], z: MysterySizin
   return { ...ch, puzzles };
 }
 
+/** Chapter writing fails the whole run on these (not logged in, usage limit, cancelled, unavailable). */
+const STOPS = [401, 403, 429, 499, 503];
+const stops = (e: unknown) => {
+  const status = (e as { status?: number })?.status;
+  return !!status && STOPS.includes(status);
+};
+
+type Pool = <T, R>(items: T[], fn: (item: T, index: number) => Promise<R>) => Promise<R[]>;
+
+/** Write one chapter, check it, and ask once more with the problems (and any editor's note) when it comes back short or broken. */
+async function writeChapter(ask: MysteryAsk, plan: MysteryPlan, c: number, z: MysterySizing, req: TaskInput<"mystery-chapter">, notes: string[], first?: WrittenChapter): Promise<WrittenChapter> {
+  const ch = plan.chapters[c];
+  const clues = ch.clues;
+  const previous = c > 0 ? plan.chapters[c - 1].clues : [];
+  let r: { output: MysteryChapterOutput; runId?: string } | null = null;
+  try {
+    r = await ask("mystery-chapter", req, [`interior.chapter:${c + 1}`]);
+  } catch (e) {
+    if (stops(e)) throw e;
+  }
+  let checked = r ? checkChapter(r.output, clues, z, req.words, previous) : { chapter: first ?? { story: ch.summary, puzzles: [] }, problems: ["no answer"] };
+  let runId = r?.runId ?? first?.runId;
+  if (checked.problems.length && !first) {
+    const again = await ask("mystery-chapter", { ...req, feedback: `Fix these: ${checked.problems.join(" ")}`.slice(0, 500) }, [`interior.chapter:${c + 1}`]).catch(() => null);
+    const second = again ? checkChapter(again.output, clues, z, req.words, previous) : null;
+    if (second && second.problems.length <= checked.problems.length) {
+      checked = second;
+      runId = again!.runId ?? runId;
+    }
+    if (checked.problems.length) notes.push(`Chapter ${c + 1}: ${checked.problems.join(" ")} Filled in from the built-in banks where needed.`);
+  }
+  const chapter = repairChapter(checked.chapter.puzzles.length === clues.length ? checked.chapter : { ...checked.chapter, puzzles: clues.map((cl) => ({ title: titleCase(cl.theme), words: [], entries: [] })) }, clues, z);
+  if (!chapter.story.trim()) chapter.story = ch.summary;
+  if (!chapter.recap?.trim()) chapter.recap = ch.summary;
+  return { ...chapter, runId };
+}
+
 /**
- * Write every chapter to the plan (a few at a time), check each one and ask
- * once more for any that come back short or broken, then write the
- * solution. A chapter whose writing fails outright is built from its plan
- * summary so the book still holds together; the run notes say so.
+ * Write every chapter to the plan in waves of `wave` chapters (as many as
+ * the provider runs at once): each wave is told what the earlier waves
+ * actually wrote (their recaps and the last chapter's ending), so the story
+ * holds together without writing one chapter at a time. Each chapter is
+ * checked and asked for once more when it comes back short or broken; one
+ * whose writing fails outright is built from its plan summary. Then the
+ * solution is written.
  */
-export async function writeMystery(ask: MysteryAsk, plan: MysteryPlan, z: MysterySizing, audience: string, pool: <T, R>(items: T[], fn: (item: T, index: number) => Promise<R>) => Promise<R[]>): Promise<{ chapters: WrittenChapter[]; reveal: WrittenChapter; notes: string[] }> {
+export async function writeMystery(ask: MysteryAsk, plan: MysteryPlan, z: MysterySizing, audience: string, pool: Pool, wave = 3, feedback = ""): Promise<{ chapters: WrittenChapter[]; reveal: WrittenChapter; notes: string[] }> {
   const file = caseFile(plan);
   const notes: string[] = [];
-  const chapters = await pool(plan.chapters, async (ch, c) => {
-    const req = chapterRequest(plan, c, z, audience, file);
-    const clues = ch.clues;
-    const previous = c > 0 ? plan.chapters[c - 1].clues : [];
-    let r: { output: MysteryChapterOutput; runId?: string } | null = null;
-    try {
-      r = await ask("mystery-chapter", req, [`interior.chapter:${c + 1}`]);
-    } catch (e) {
-      if ((e as { status?: number })?.status && [401, 403, 429, 499, 503].includes((e as { status: number }).status)) throw e;
-    }
-    let checked = r ? checkChapter(r.output, clues, z, req.words, previous) : { chapter: { story: ch.summary, puzzles: [] }, problems: ["no answer"] };
-    let runId = r?.runId;
-    if (checked.problems.length) {
-      const again = await ask("mystery-chapter", { ...req, feedback: `Fix these: ${checked.problems.join(" ")}`.slice(0, 500) }, [`interior.chapter:${c + 1}`]).catch(() => null);
-      const second = again ? checkChapter(again.output, clues, z, req.words, previous) : null;
-      if (second && second.problems.length <= checked.problems.length) {
-        checked = second;
-        runId = again!.runId ?? runId;
-      }
-      if (checked.problems.length) notes.push(`Chapter ${c + 1}: ${checked.problems.join(" ")} Filled in from the built-in banks where needed.`);
-    }
-    const chapter = repairChapter(checked.chapter.puzzles.length === clues.length ? checked.chapter : { ...checked.chapter, puzzles: clues.map((cl) => ({ title: titleCase(cl.theme), words: [], entries: [] })) }, clues, z);
-    if (!chapter.story.trim()) chapter.story = ch.summary;
-    return { ...chapter, runId };
-  });
-  const revealReq = { ...chapterRequest(plan, plan.chapters.length - 1, z, audience, file), chapter: plan.chapters.length + 1, title: "The Solution", summary: plan.solution, clues: [], reveal: true, words: Math.max(z.wordsPerChapter, 350) };
+  const chapters: WrittenChapter[] = [];
+  const direction = feedback.trim() ? { feedback: feedback.trim().slice(0, 500) } : {};
+  const size = Math.max(1, wave);
+  for (let start = 0; start < plan.chapters.length; start += size) {
+    const ids = plan.chapters.slice(start, start + size).map((_, k) => start + k);
+    const done = await pool(ids, (c) => writeChapter(ask, plan, c, z, { ...chapterRequest(plan, c, z, audience, file, chapters), ...direction }, notes));
+    chapters.push(...done);
+  }
+  const revealReq = { ...chapterRequest(plan, plan.chapters.length - 1, z, audience, file, chapters), chapter: plan.chapters.length + 1, title: "The Solution", summary: plan.solution, clues: [], previousClues: [], reveal: true, words: Math.max(z.wordsPerChapter, 350), ...direction };
   const rv = await ask("mystery-chapter", revealReq, ["interior.solution"]).catch(() => null);
   let reveal: WrittenChapter = { story: rv?.output.story.trim() ?? "", puzzles: [], runId: rv?.runId };
   if (wordCount(reveal.story) < 80) {
@@ -630,6 +699,56 @@ export async function writeMystery(ask: MysteryAsk, plan: MysteryPlan, z: Myster
     reveal = { story: `${plan.solution}\n\n${plan.method}`, puzzles: [] };
   }
   return { chapters, reveal, notes };
+}
+
+/** Most chapters the story editor's notes rewrite. */
+export const MAX_EDITS = 3;
+
+/**
+ * The story editor: one call reads how every chapter opens and ends and what
+ * it established, and names continuity breaks, repeated openings and flat
+ * chapters. Up to MAX_EDITS of the chapters it names are rewritten once with
+ * its note (and what the chapters around them say); a rewrite is kept only
+ * when it holds its clues at least as well as the first version.
+ */
+export async function editMystery(ask: MysteryAsk, plan: MysteryPlan, chapters: WrittenChapter[], z: MysterySizing, audience: string, pool: Pool): Promise<{ chapters: WrittenChapter[]; notes: string[]; edited: number[] }> {
+  const input: TaskInput<"mystery-edit"> = {
+    audience,
+    caseTitle: plan.caseTitle,
+    voice: plan.bible?.voice ?? "",
+    chapters: chapters.map((w, c) => {
+      const ps = paragraphs(w.story);
+      return { chapter: c + 1, title: plan.chapters[c]?.title ?? "", opening: (ps[0] ?? "").slice(0, 500), ending: (ps.at(-1) ?? "").slice(0, 500), recap: w.recap ?? "" };
+    }),
+  };
+  const r: { output: MysteryEditOutput } | null = await ask("mystery-edit", input, ["interior.story-edit"]).catch((e) => {
+    if (stops(e)) throw e;
+    return null;
+  });
+  const byChapter = new Map<number, string[]>();
+  for (const p of r?.output.problems ?? []) {
+    const c = p.chapter - 1;
+    if (c < 0 || c >= chapters.length || !p.problem.trim()) continue;
+    byChapter.set(c, [...(byChapter.get(c) ?? []), p.problem.trim()]);
+  }
+  const picked = [...byChapter.keys()].slice(0, MAX_EDITS).sort((a, b) => a - b);
+  if (!picked.length) return { chapters, notes: [], edited: [] };
+  const file = caseFile(plan);
+  const notes: string[] = [];
+  const out = [...chapters];
+  await pool(picked, async (c) => {
+    // The chapters on both sides stay as written, so the rewrite is told what comes before (and the notes say what to fix).
+    const req = { ...chapterRequest(plan, c, z, audience, file, chapters), feedback: `A story editor read the book: ${byChapter.get(c)!.join(" ")}`.slice(0, 500) };
+    const prev = chapters[c];
+    const next = await writeChapter(ask, plan, c, z, req, notes, prev);
+    const clues = plan.chapters[c].clues;
+    const before = checkChapter({ story: prev.story, puzzles: prev.puzzles }, clues, z, req.words, c > 0 ? plan.chapters[c - 1].clues : []).problems.length;
+    const after = checkChapter({ story: next.story, puzzles: next.puzzles }, clues, z, req.words, c > 0 ? plan.chapters[c - 1].clues : []).problems.length;
+    if (next.story !== prev.story && after <= before) out[c] = next;
+  });
+  const edited = picked.filter((c) => out[c] !== chapters[c]);
+  if (edited.length) notes.push(`Story editor: rewrote chapter${edited.length > 1 ? "s" : ""} ${edited.map((c) => c + 1).join(", ")} for ${[...new Set(edited.flatMap((c) => byChapter.get(c)!))].slice(0, 2).join(" ")}`);
+  return { chapters: out, notes, edited };
 }
 
 /* --------------------------------- layout ---------------------------------- */
@@ -712,7 +831,7 @@ export function assembleMystery(plan: MysteryPlan, chapters: WrittenChapter[], r
   const cast = [
     `The victim: ${plan.victim.name}. ${plan.victim.description}`,
     `The detective: ${plan.sleuth.name}. ${plan.sleuth.description}`,
-    ...plan.suspects.map((s) => `${s.name}, ${lowerArticle(s.role)}. ${s.alibi}`),
+    ...plan.suspects.map((s) => `${s.name}, ${lowerArticle(s.role)}. ${s.alibi}${s.tell?.trim() ? ` Watch for: ${s.tell.trim().replace(/\.$/, "")}.` : ""}`),
   ].join("\n\n");
   const clueCount = plan.chapters.reduce((n, c) => n + c.clues.length, 0);
   const front: SectionInput[] = [
@@ -723,6 +842,31 @@ export function assembleMystery(plan: MysteryPlan, chapters: WrittenChapter[], r
     { label: "Contents", role: "front", config: { kind: "table-of-contents", entries: [] } },
   ];
 
+  // The case board: halfway through, the sleuth's current theory is the wrong one, set out fairly from the evidence so far.
+  const n = plan.chapters.length;
+  const ft = plan.falseTheory.suspect;
+  const chapterOf = (effect: "implicates" | "clears") => plan.chapters.findIndex((ch) => ch.clues.some((cl) => cl.suspect === ft && cl.effect === effect));
+  const implicated = chapterOf("implicates");
+  const cleared = chapterOf("clears");
+  const half = Math.max(0, Math.floor(n / 2) - 1);
+  // After the chapter that implicates them (and not before the middle), but always before the one that clears them.
+  let board = implicated < 0 ? -1 : Math.max(half, implicated);
+  if (board >= 0 && cleared >= 0 && board >= cleared) board = implicated < cleared ? cleared - 1 : -1;
+  const caseBoard: SectionInput = {
+    label: "Case board",
+    role: "body",
+    config: {
+      kind: "text-page",
+      title: "The Case Board",
+      body: [
+        `Halfway through the case, ${plan.sleuth.name} pins up everything found so far and steps back. The evidence seems to point one way: ${ft}. ${plan.falseTheory.why}`,
+        `Before you read on, look at your Case Notes. Do you agree? Who had a motive, who had the chance, and whose story has not yet been checked?`,
+        "Your theory so far:\n\n____________________________________________\n\n____________________________________________\n\n____________________________________________",
+      ].join("\n\n"),
+      aiRunId: runId,
+    },
+  };
+
   // One seed per puzzle kind; the n-th puzzle of a kind uses seed + n in its chapter and in the answer key, so both draw the same grid.
   const seeds = new Map(MYSTERY_CLUE_KINDS.map((k) => [k, randomSeed()]));
   const byKind = new Map<MysteryClueKind, { config: GeneratorConfig; number: number }[]>();
@@ -732,7 +876,9 @@ export function assembleMystery(plan: MysteryPlan, chapters: WrittenChapter[], r
     const written = chapters[c] ?? { story: ch.summary, puzzles: [] };
     const first = clueNo + 1;
     const last = clueNo + ch.clues.length;
-    const lead = ch.clues.length ? `\n\nTurn the page and solve ${ch.clues.length === 1 ? `puzzle ${first}` : `puzzles ${first} to ${last}`} to find the clue${ch.clues.length === 1 ? "" : "s"}.` : "";
+    // Each puzzle is an exhibit: the thing in the story it comes from.
+    const exhibits = ch.clues.map((cl, k) => `Exhibit ${first + k}: ${cl.source.trim().replace(/\.$/, "")}.`).join("\n");
+    const lead = ch.clues.length ? `\n\n${exhibits}\nTurn the page and solve ${ch.clues.length === 1 ? `puzzle ${first}` : `puzzles ${first} to ${last}`} to find the clue${ch.clues.length === 1 ? "" : "s"}.` : "";
     const story = { title: ch.title, kicker: `Chapter ${c + 1}`, body: `${written.story}${lead}` };
     const items: SectionInput[] = [{ label: `Chapter ${c + 1}: ${ch.title}`.slice(0, 60), role: "body", config: { kind: "story", ...story, pages: measure(story), aiRunId: written.runId } }];
     ch.clues.forEach((cl, k) => {
@@ -752,6 +898,7 @@ export function assembleMystery(plan: MysteryPlan, chapters: WrittenChapter[], r
       items.push({ label: `Puzzle ${clueNo}: ${p.title}`.slice(0, 60), role: "body", config: withPart(config, "puzzles") });
     });
     body.push({ entry: `${c + 1}. ${ch.title}`, items });
+    if (c === board) body.push({ entry: "The Case Board", items: [caseBoard] });
   });
 
   // The final deduction: one letter from earlier clues spells where the proof is (skipped if the clues can't spell it).
