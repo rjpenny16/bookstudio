@@ -1,3 +1,4 @@
+import { routeOffline } from "@/lib/agent/chat";
 import { recipeBlueprint } from "@/lib/agent/recipes";
 import { genreOf } from "@/lib/cover/genres";
 import { splitTitle } from "@/lib/cover/lockup";
@@ -221,7 +222,8 @@ function offlineTitles(i: TaskInput<"title-ideas">): TaskOutput<"title-ideas"> {
     const p = known.plan;
     const place = (n: string) => titleCase(n.replace(/^the\s+/i, ""));
     const locations = p.bible.locations.map((l) => place(l.name));
-    const motif = titleCase(p.bible.motifs[0]?.replace(/^the\s+/i, "").split(/\s+/).slice(-2).join(" ") ?? "");
+    // "the rain on the windows" becomes "Windows": the motif's last word or two, without a leading article.
+    const motif = titleCase((p.bible.motifs[0] ?? "").split(/\s+/).slice(-2).join(" ").replace(/^(the|a|an|on|in|of|at)\s+/i, ""));
     titles.push(p.caseTitle, `Murder in the ${locations[1] ?? locations[0]}`, `The ${motif} Affair`, `Death and the ${locations.at(-1)}`, `A Body in the ${locations[0]}`);
   } else {
     const base = i.provisional.trim() || offlineTitle(i.topic, i.bookType);
@@ -431,6 +433,8 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
     case "mystery-test":
       // Offline can't read a case like a person; the rule-based fair-play checks still run.
       return { verdicts: [] } as TaskOutput<T>;
+    case "chat-intent":
+      return routeOffline(input as TaskInput<"chat-intent">) as TaskOutput<T>;
     case "title-ideas":
       return offlineTitles(input as TaskInput<"title-ideas">) as TaskOutput<T>;
     case "mystery-edit":

@@ -13,6 +13,7 @@
 
 import type { GeneratorConfig } from "@/lib/generators/pages";
 import type { InteriorStyleSpec } from "@/lib/generators/style";
+import type { MysteryPlanOutput } from "@/lib/ai/tasks";
 
 export const SCHEMA_VERSION = "1.1";
 
@@ -400,6 +401,19 @@ export interface Project {
   reviews?: ProjectReviews;
   /** AI cover art candidates (optional; added in Phase 3, no migration needed). */
   coverArt?: CoverArtState;
+  /** A murder mystery's case plan, so a chapter can be rewritten later without breaking the case (optional). */
+  mystery?: MysteryPlanOutput;
+  /** The autopilot chat that built and revised this book, newest last (optional). */
+  chat?: ChatMessage[];
+}
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "agent";
+  text: string;
+  at: string;
+  /** How an agent message reads: a plain update, the finished draft, or a problem. */
+  tone?: "info" | "done" | "error";
 }
 
 export function isLowContent(bookType: BookType): boolean {
