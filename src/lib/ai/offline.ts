@@ -208,6 +208,30 @@ function offlineChapter(i: TaskInput<"mystery-chapter">): TaskOutput<"mystery-ch
   return { story: `${recap}${i.summary}`, recap: i.summary, puzzles };
 }
 
+/**
+ * Titles from the content, without a model: for a built-in case its own
+ * name and titles from its places and motifs; otherwise the brief's title
+ * and plain variants of it. Words in `avoid` never appear.
+ */
+function offlineTitles(i: TaskInput<"title-ideas">): TaskOutput<"title-ideas"> {
+  const known = i.bookType === "mystery" ? mysteryByTitle(i.contents) : undefined;
+  const subtitle = offlineSubtitle(i.bookType, i.topic, i.audience);
+  const titles: string[] = [];
+  if (known) {
+    const p = known.plan;
+    const place = (n: string) => titleCase(n.replace(/^the\s+/i, ""));
+    const locations = p.bible.locations.map((l) => place(l.name));
+    const motif = titleCase(p.bible.motifs[0]?.replace(/^the\s+/i, "").split(/\s+/).slice(-2).join(" ") ?? "");
+    titles.push(p.caseTitle, `Murder in the ${locations[1] ?? locations[0]}`, `The ${motif} Affair`, `Death and the ${locations.at(-1)}`, `A Body in the ${locations[0]}`);
+  } else {
+    const base = i.provisional.trim() || offlineTitle(i.topic, i.bookType);
+    const topic = titleCase(i.topic.trim() || "Daily");
+    titles.push(base, `The ${base}`, `${topic}: For ${audienceHead(i.audience)}`, `My ${base}`, `Simply ${topic}`);
+  }
+  const clean = titles.filter((t) => t.length <= 60 && !i.avoid.some((w) => t.toLowerCase().includes(w.toLowerCase())));
+  return { ideas: [...new Set(clean)].map((title) => ({ title, subtitle, hero: splitTitle(title).hero, why: known ? "Taken from the case's own places and motifs." : "Built from the topic." })), pick: 1 };
+}
+
 function hash(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
@@ -407,6 +431,8 @@ export function offlineTask<T extends TaskName>(task: T, input: TaskInput<T>): T
     case "mystery-test":
       // Offline can't read a case like a person; the rule-based fair-play checks still run.
       return { verdicts: [] } as TaskOutput<T>;
+    case "title-ideas":
+      return offlineTitles(input as TaskInput<"title-ideas">) as TaskOutput<T>;
     case "mystery-edit":
       // Nor edit one: the built-in cases are written to read as one story.
       return { problems: [] } as TaskOutput<T>;

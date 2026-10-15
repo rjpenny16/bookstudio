@@ -33,12 +33,12 @@ const PUZZLES_WITHOUT_TEXT = ["puzzle"];
 export function estimateRun(i: EstimateInput): RunEstimate {
   if (i.provider === "offline") return { modelCalls: [0, 0], tokens: [0, 0], images: 0, visionCalls: 0, offline: true };
   if (i.bookType === "mystery") return mysteryEstimate(i);
-  // brief, blueprint, listing, listing critique, cover design pick, visual review;
+  // brief, blueprint, naming the book, listing, listing critique, cover design pick, visual review;
   // plus a second visual review when the first sends the cover back for one redesign.
-  let low = 6;
-  let high = 7;
-  let tokLow = 2_500 + 3_000 + 4_000 + 5_000 + 5_000 + 9_000;
-  let tokHigh = 6_000 + 8_000 + 9_000 + 12_000 + 10_000 + 20_000 * 2;
+  let low = 7;
+  let high = 8;
+  let tokLow = 2_500 + 3_000 + 3_000 + 4_000 + 5_000 + 5_000 + 9_000;
+  let tokHigh = 6_000 + 8_000 + 8_000 + 9_000 + 12_000 + 10_000 + 20_000 * 2;
   // Section content: 1-6 sections; sudoku/maze/number search need none, so puzzle books often need fewer.
   const sections: [number, number] = PUZZLES_WITHOUT_TEXT.includes(i.bookType) ? [0, 5] : i.bookType === "notebook" || i.bookType === "log-book" ? [0, 2] : [1, 5];
   // Content is written in batches (30 items on an API; on codex 20 prompts or a few puzzles per call), so the longest
@@ -69,14 +69,14 @@ export function estimateRun(i: EstimateInput): RunEstimate {
  * A mystery: brief, the case plan (one re-plan if it fails the fair-play
  * check, one if the test reader solves it too soon or not at all) and the
  * test reader, one call per chapter (6-14) plus the reveal, the story
- * editor and the few chapters it has rewritten (none to three), the listing
+ * editor and the few chapters it has rewritten (none to three), naming the book, the listing
  * and its critique, the cover pick and the visual review.
  */
 function mysteryEstimate(i: EstimateInput): RunEstimate {
-  let low = 6 + 2 + 7 + 1;
-  let high = 7 + 5 + 15 + 1 + 3;
-  let tokLow = 2_500 + 12_000 + 4_000 + 7 * 6_000 + 4_000 + 3_000 + 5_000 + 5_000 + 9_000;
-  let tokHigh = 6_000 + 3 * 24_000 + 2 * 8_000 + 15 * 12_000 + 9_000 + 6_000 + 3 * 12_000 + 12_000 + 10_000 + 20_000 * 2;
+  let low = 6 + 2 + 7 + 1 + 1;
+  let high = 7 + 5 + 15 + 1 + 3 + 1;
+  let tokLow = 3_000 + 2_500 + 12_000 + 4_000 + 7 * 6_000 + 4_000 + 3_000 + 5_000 + 5_000 + 9_000;
+  let tokHigh = 8_000 + 6_000 + 3 * 24_000 + 2 * 8_000 + 15 * 12_000 + 9_000 + 6_000 + 3 * 12_000 + 12_000 + 10_000 + 20_000 * 2;
   let visionCalls = 2;
   let images = 0;
   if (i.coverArt) {

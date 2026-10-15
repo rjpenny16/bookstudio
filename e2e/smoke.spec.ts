@@ -104,6 +104,25 @@ test("autopilot drafts a puzzle book offline", async ({ page }) => {
   if (shots) await page.screenshot({ path: `${shots}/autopilot-studio.png` });
 });
 
+test("autopilot names a mystery from its content, and another title can be swapped in", async ({ page }) => {
+  await page.goto("/autopilot");
+  await page.getByLabel("What is the book about?").fill("cozy murder mystery at a country manor");
+  await page.getByLabel("Who is it for?").fill("adults who love cozy mysteries");
+  await page.getByRole("button", { name: "Run autopilot" }).click();
+  await expect(page.getByText("Draft ready for your review")).toBeVisible({ timeout: 90_000 });
+  await expect(page.getByText("Name the book from its content")).toBeVisible();
+  // Offline, the built-in case names the book.
+  await expect(page.getByText("Death at Ravenscroft Manor").first()).toBeVisible();
+  await page.getByRole("link", { name: "Open in studio" }).click();
+  await page.getByRole("tab", { name: "Brief" }).click();
+  const titles = page.getByRole("list", { name: "Titles named from the content" });
+  await expect(titles.getByRole("button", { name: "Death at Ravenscroft Manor is the current title" })).toBeDisabled();
+  const other = titles.getByRole("button", { name: /^Use the title / }).first();
+  const name = ((await other.getAttribute("aria-label")) ?? "").replace("Use the title ", "");
+  await other.click();
+  await expect(titles.getByRole("button", { name: `${name} is the current title` })).toBeDisabled();
+});
+
 test("quality tab sends rendered cover and pages to a vision model", async ({ page }) => {
   // Stand in for a vision-capable provider; the real server runs offline in e2e.
   const sent: { task: string; input: { images?: string[] }; images?: { label: string; mediaType: string; data: string }[] }[] = [];

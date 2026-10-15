@@ -6,6 +6,8 @@ import { findTrim } from "@/lib/kdp/geometry";
 import { LISTING } from "@/lib/kdp/rules";
 import { BOOK_TYPES, isLowContent, type BookType } from "@/lib/schema/project";
 import { useProjectStore } from "@/lib/storage/store";
+import { applyTitle } from "@/lib/agent/regenerateClient";
+import type { TitleOption } from "@/lib/schema/project";
 
 export function BriefTab() {
   const project = useProjectStore((s) => s.project)!;
@@ -13,6 +15,21 @@ export function BriefTab() {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ kind: "info" | "fail"; text: string } | null>(null);
   const b = project.brief;
+  const replace = useProjectStore((s) => s.replace);
+
+  const chooseTitle = async (o: TitleOption) => {
+    setBusy(true);
+    setNote(null);
+    try {
+      const r = await applyTitle(project, o);
+      replace(r.project);
+      setNote({ kind: "info", text: r.summary });
+    } catch (e) {
+      setNote({ kind: "fail", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const generate = async () => {
     setBusy(true);
@@ -100,7 +117,25 @@ export function BriefTab() {
       <aside className="stack sticky-aside">
         <div className="card stack">
           <h2 style={{ margin: 0 }}>Title ideas</h2>
-          {b.titleIdeas.length === 0 ? (
+          {b.titleOptions?.length ? (
+            <>
+              <ul className="stack" aria-label="Titles named from the content" style={{ listStyle: "none", margin: 0, padding: 0, gap: 8 }}>
+                {b.titleOptions.map((o) => {
+                  const current = o.title === project.metadata.title;
+                  return (
+                    <li key={o.title} className="stack" style={{ gap: 2 }}>
+                      <strong>{o.title}</strong>
+                      {o.why && <span className="muted" style={{ fontSize: 12 }}>{o.why}</span>}
+                      <button className="btn btn-sm" style={{ alignSelf: "flex-start" }} disabled={busy || current} aria-label={current ? `${o.title} is the current title` : `Use the title ${o.title}`} onClick={() => chooseTitle(o)}>
+                        {current ? "Current title" : "Use this title"}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+              <span className="field-hint">Named from the finished content. Using one updates the title page and cover too.</span>
+            </>
+          ) : b.titleIdeas.length === 0 ? (
             <p className="muted" style={{ margin: 0 }}>Draft a brief to get title ideas.</p>
           ) : (
             <div className="chip-list">
@@ -111,7 +146,7 @@ export function BriefTab() {
               ))}
             </div>
           )}
-          <span className="field-hint">Click to use as the book title.</span>
+          {!b.titleOptions?.length && <span className="field-hint">Click to use as the book title.</span>}
         </div>
         <div className="card stack">
           <h2 style={{ margin: 0 }}>Keyword ideas</h2>

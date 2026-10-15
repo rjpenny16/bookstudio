@@ -10,7 +10,7 @@ import { resolveCategories, suggestCategories } from "@/lib/kdp/categories";
 import { coverGeometry } from "@/lib/kdp/geometry";
 import { cleanKeywords } from "@/lib/metadata/validate";
 import { describeInterior, listingFacts, trimLabel } from "@/lib/quality";
-import type { ModelRun, Project } from "@/lib/schema/project";
+import type { ModelRun, Project, TitleOption } from "@/lib/schema/project";
 import { syncTitlePage } from "./autopilot";
 import { ART_CANDIDATES } from "./constants";
 import { contentCall } from "./content";
@@ -95,6 +95,26 @@ export async function regenerateListingWithAi(project: Project, feedback: string
   const c = coverSettings(next);
   next = await designCover(next, { ...c, backText: L.backCoverBlurb || c.backText, listingRunId: run?.id });
   return { project: next, summary: changed.length ? `Rewrote ${changed.join(", ")}; the title page and cover were updated to match.` : "The new draft matched the current listing." };
+}
+
+/**
+ * Swap in one of the titles named from the book's content: the listing, the
+ * title page and the cover (in its current style) all change to match. No
+ * model call, so nothing new to disclose.
+ */
+export async function applyTitle(project: Project, option: TitleOption): Promise<Regenerated> {
+  let next = produce(project, (d) => {
+    d.metadata.title = option.title;
+    if (option.subtitle.trim()) d.metadata.subtitle = option.subtitle.trim();
+    d.name = option.title;
+    if (option.hero.trim()) d.brief.titleHero = option.hero.trim();
+    else delete d.brief.titleHero;
+    // The chosen title goes first, as autopilot left it.
+    if (d.brief.titleOptions) d.brief.titleOptions = [option, ...d.brief.titleOptions.filter((o) => o.title !== option.title)];
+  });
+  next = syncTitlePage(next);
+  next = await designCover(next, coverSettings(next));
+  return { project: next, summary: `Retitled "${option.title}"; the title page and cover were updated to match.` };
 }
 
 export async function regenerateCoverWithAi(project: Project, feedback: string, signal?: AbortSignal): Promise<Regenerated> {
