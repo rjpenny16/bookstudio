@@ -64,8 +64,10 @@ async function getFont(ctx: Ctx, family: string, bold: boolean): Promise<PDFFont
   const file = fontFile(family, bold);
   let font = ctx.fonts.get(file);
   if (!font) {
-    // Full embedding (no subsetting) is the most robust choice for print workflows.
-    font = await ctx.doc.embedFont(await ctx.loadFont(file), { subset: false });
+    // Subset, not full: pdf-lib's full embedder only writes widths for glyphs mapped straight from a
+    // character, so substituted glyphs (Lora's colon.case in "20:35", ligatures) printed 1em wide and
+    // pushed lines past their box into the gutter. The subset records every glyph actually drawn.
+    font = await ctx.doc.embedFont(await ctx.loadFont(file), { subset: true });
     ctx.fonts.set(file, font);
   }
   return font;

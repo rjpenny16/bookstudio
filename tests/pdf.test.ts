@@ -57,6 +57,30 @@ describe("PDF rendering", () => {
     expect(ops).toMatch(/\b1 Tr\b/);
   });
 
+  it("gives every drawn glyph a width, including substituted ones", async () => {
+    // Lora swaps ":" between digits for colon.case; a glyph missing from /W prints 1em wide and runs into the gutter.
+    const p = createProject({ name: "Times", bookType: "notebook", trimId: "8.5x11", paper: "white", ink: "black", bleed: false, author: "Me", interior: [{ kind: "blank", count: 24 }] });
+    p.interior.pages[0].elements = [{ id: "el_t", type: "text", text: "At 20:35, the office", x: 36, y: 36, width: 540, height: 20, rotation: 0, fontFamily: "Lora", bold: false, fontSize: 12, color: "#000000", align: "left", lineHeight: 1 }];
+    const bytes = await renderInteriorPdf(p, { loadFont: nodeFontLoader, pageIndices: [0] });
+    const raw = Buffer.from(bytes).toString("latin1");
+    const ops = [...raw.matchAll(/stream\r?\n([\s\S]*?)endstream/g)]
+      .map((m) => {
+        try {
+          return inflateSync(Buffer.from(m[1], "latin1")).toString("latin1");
+        } catch {
+          return "";
+        }
+      })
+      .join("\n");
+    const used = [...ops.matchAll(/<([0-9A-Fa-f]+)> Tj/g)].flatMap((m) => m[1].match(/.{4}/g)!.map((h) => parseInt(h, 16)));
+    // Fewer glyphs than characters: "fi" in "office" is a ligature, another substituted glyph.
+    expect(used.length).toBe("At 20:35, the office".length - 1);
+    const widths = new Set<number>();
+    for (const w of raw.matchAll(/\/W \[([\s\S]*?)\]\s*\]/g))
+      for (const [, start, list] of `${w[1]}]`.matchAll(/(\d+)\s*\[([^\]]*)\]/g)) list.trim().split(/\s+/).forEach((_, k) => widths.add(Number(start) + k));
+    expect(used.filter((id) => !widths.has(id))).toEqual([]);
+  });
+
   it("generates every generator kind", () => {
     const p = createProject({ name: "x", bookType: "other", trimId: "6x9", paper: "white", ink: "black", bleed: false });
     const kinds = ["lined", "graph", "handwriting", "music", "gratitude", "daily-planner", "habit-tracker", "log", "belongs-to"] as const;
