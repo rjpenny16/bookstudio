@@ -15,12 +15,13 @@ const snapshot = {
 };
 
 test("with market data, autopilot prices against competitors, fills keywords by search volume, and the book is backed up", async ({ page }) => {
-  let snapshots = 0;
+  // Keywords asked for: another test's inbox idea can be built by this tab too (parallel workers share the server).
+  const asked: string[] = [];
   await page.route("/api/market", async (route) => {
     if (route.request().method() === "GET") {
       return route.fulfill({ json: { products: { configured: true, provider: "keepa", detail: "mocked" }, keywords: { configured: true, provider: "dataforseo", detail: "mocked" } } });
     }
-    snapshots++;
+    asked.push(route.request().postDataJSON().keyword);
     return route.fulfill({ json: { snapshot, usage: { keepaTokens: 20, dataforseoUsd: 0.02 }, warnings: [] } });
   });
 
@@ -29,7 +30,7 @@ test("with market data, autopilot prices against competitors, fills keywords by 
   await page.getByRole("button", { name: "Start the book" }).click();
   await expect(page.getByText("Draft ready for your review")).toBeVisible({ timeout: 90_000 });
   await expect(page.getByRole("list", { name: "Conversation" }).getByText(/Market data: 5 competing books, 3 search phrases/)).toBeVisible();
-  expect(snapshots).toBe(1);
+  expect(asked.filter((k) => k === "large print sudoku")).toHaveLength(1);
 
   await page.getByRole("link", { name: "Review listing" }).click();
   // Competitors charge $7.99-$11.99 (middle $8.99-$9.99), so the price goes to $9.99 for the 60% royalty.
