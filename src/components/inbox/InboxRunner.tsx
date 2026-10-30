@@ -10,6 +10,7 @@ import { ensureFonts, loadImages, rasterize } from "@/lib/render/canvas";
 import type { Project } from "@/lib/schema/project";
 import { DEFAULT_AUTHOR } from "@/lib/schema/factory";
 import { saveProject } from "@/lib/storage/db";
+import { snapshotForBook } from "@/lib/market/client";
 import { artEnabled, resolveSetup, type SetupState } from "@/components/autopilot/SetupForm";
 
 /** How often an idle tab asks for the next idea, and how often a building tab says it's still alive. */
@@ -48,8 +49,9 @@ async function build(item: InboxItem) {
     };
     const { bookType, trimId } = resolveSetup(setup);
     const images = await imageStatus().catch(() => null);
+    const market = await snapshotForBook(setup.topic);
     const res = await runAutopilot(
-      { topic: setup.topic, audience: setup.audience, bookType, trimId, author: setup.author, notes: setup.notes, coverArt: artEnabled(setup, images), pageTarget: setup.pageTarget },
+      { market: market.snapshot ?? undefined, topic: setup.topic, audience: setup.audience, bookType, trimId, author: setup.author, notes: setup.notes, coverArt: artEnabled(setup, images), pageTarget: setup.pageTarget },
       (id, st) => st === "running" && setRunnerState({ step: AUTOPILOT_STEPS.find((s) => s.id === id)?.label ?? id }),
     );
     await saveProject(res.project);

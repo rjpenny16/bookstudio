@@ -11,6 +11,7 @@
  *   (back + spine + front, including bleed on all four sides).
  */
 
+import type { MarketSnapshot } from "@/lib/market/types";
 import type { GeneratorConfig } from "@/lib/generators/pages";
 import type { InteriorStyleSpec } from "@/lib/generators/style";
 import type { MysteryPlanOutput } from "@/lib/ai/tasks";
@@ -267,6 +268,8 @@ export interface ListingMetadata {
   isbn: { kind: "none" | "kdp-free" | "own"; value: string };
   adultContent: boolean;
   aiDisclosure: AiDisclosure;
+  /** Amazon's id for the published paperback, pasted in once it's live; links sales reports to the book (optional). */
+  asin?: string;
 }
 
 export interface TitleOption {
@@ -405,6 +408,8 @@ export interface Project {
   mystery?: MysteryPlanOutput;
   /** The autopilot chat that built and revised this book, newest last (optional). */
   chat?: ChatMessage[];
+  /** Competing books and keyword volumes the book was planned against (optional). */
+  market?: MarketSnapshot;
 }
 
 export interface ChatMessage {

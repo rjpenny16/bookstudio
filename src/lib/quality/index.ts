@@ -1,5 +1,6 @@
 import { findTrim } from "@/lib/kdp/geometry";
 import { resolveCategories } from "@/lib/kdp/categories";
+import { keywordCandidates, packKeywords } from "@/lib/market/keywords";
 import { cleanKeywords, validateListing } from "@/lib/metadata/validate";
 import type { ListingMetadata, Project, ProjectReviews } from "@/lib/schema/project";
 import { checkBookContent, type ContentIssue, type Severity } from "./content";
@@ -28,6 +29,7 @@ export function listingFacts(project: Project): ListingFacts {
     topic: project.brief.topic || project.metadata.title || project.name,
     audience: project.brief.audience,
     pageCount: project.interior.pages.length,
+    ...(project.market?.keywords.length ? { searchTerms: project.market.keywords } : {}),
   };
 }
 
@@ -66,12 +68,20 @@ export const trimLabel = (project: Project) => findTrim(project.spec.trimId)?.la
 export function applyRevisedListing(project: Project, revised: NonNullable<NonNullable<ProjectReviews["listing"]>["revised"]>): { metadata: ListingMetadata; changed: string[] } {
   const before = project.metadata;
   const baseErrors = validateListing(before, project.bookType).errors.length;
+  const title = revised.title.trim() || before.title;
+  const subtitle = revised.subtitle.trim();
+  // With measured search volumes, the critic's phrases join them instead of replacing the volume-ranked slots.
+  const keywords = !revised.keywords.length
+    ? before.keywords
+    : project.market?.keywords.length
+      ? packKeywords({ title, subtitle, candidates: keywordCandidates({ metadata: { keywords: revised.keywords }, brief: project.brief, market: project.market }) }).slots
+      : cleanKeywords(revised.keywords);
   const next: ListingMetadata = {
     ...before,
-    title: revised.title.trim() || before.title,
-    subtitle: revised.subtitle.trim(),
+    title,
+    subtitle,
     description: revised.description.trim() || before.description,
-    keywords: revised.keywords.length ? cleanKeywords(revised.keywords) : before.keywords,
+    keywords,
     categories: resolveCategories(revised.categories, revised.categories.length ? [] : before.categories).categories,
   };
   if (!next.categories.length) next.categories = before.categories;

@@ -11,6 +11,9 @@ import { resolveCategories, suggestCategories } from "@/lib/kdp/categories";
 import { generatePages } from "@/lib/generators/pages";
 import { styleOf } from "@/lib/generators/style";
 import { coverGeometry, findTrim } from "@/lib/kdp/geometry";
+import { recommendPrice } from "@/lib/kdp/pricing";
+import { keywordCandidates, packKeywords } from "@/lib/market/keywords";
+import type { MarketSnapshot } from "@/lib/market/types";
 import { cleanKeywords, findProhibited } from "@/lib/metadata/validate";
 import { runPreflight, type FixId, type PreflightReport } from "@/lib/preflight";
 import { applyFix } from "@/lib/preflight/fixes";
@@ -53,6 +56,8 @@ export interface AutopilotInput {
    * stage's model call as its feedback. Empty when there are none.
    */
   takeDirections?: (stage: DirectionStage) => string;
+  /** Competing books and keyword volumes for the topic, when a market data provider is set up. */
+  market?: MarketSnapshot;
 }
 
 
@@ -348,10 +353,12 @@ export async function runAutopilot(
     d.metadata.title = L.title || title;
     d.metadata.subtitle = L.subtitle;
     d.metadata.description = L.description;
-    d.metadata.keywords = cleanKeywords(L.keywords);
+    // With measured search volumes, the slots are filled most-searched first; otherwise the model's seven are kept.
+    d.metadata.keywords = input.market?.keywords.length ? packKeywords({ title: d.metadata.title, subtitle: L.subtitle, candidates: keywordCandidates({ metadata: { keywords: L.keywords }, brief: { keywordIdeas: brief.keywordIdeas }, market: input.market }) }).slots : cleanKeywords(L.keywords);
     d.metadata.categories = resolveCategories(L.categories, categoryOptions).categories;
-    if (L.suggestedPriceUsd > 0) d.metadata.listPriceUsd = Math.round(L.suggestedPriceUsd * 100) / 100;
+    d.metadata.listPriceUsd = recommendPrice(d.spec, d.interior.pages.length, { competitorPrices: input.market?.products.map((p) => p.price), suggested: L.suggestedPriceUsd }).price;
     d.name = d.metadata.title;
+    if (input.market) d.market = input.market;
   });
 
   // 5b. Critique the listing and apply the revision when it is clearly better.

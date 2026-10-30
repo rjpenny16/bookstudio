@@ -8,6 +8,8 @@ import { RULES_VERSION } from "@/lib/kdp/rules";
 import { FONTS } from "@/lib/render/fonts";
 import { getValue, listProjects, loadProject } from "@/lib/storage/db";
 import { PhoneInboxCard } from "@/components/inbox/PhoneInboxCard";
+import { MarketDataCard } from "@/components/market/MarketDataCard";
+import { BackupCard } from "@/components/settings/BackupCard";
 
 type Capability = "text" | "vision" | "images";
 interface Capabilities {
@@ -92,7 +94,7 @@ export default function Settings() {
       <div className="page-head">
         <div>
           <h1>Settings</h1>
-          <p>BookStudio is local-first: projects, research and sales imports live in this browser&apos;s IndexedDB. Only AI requests go to the server, and from there to the model provider you configure.</p>
+          <p>BookStudio is local-first: projects, research and sales imports live in this browser&apos;s IndexedDB, with a backup copy on the computer running the server. AI and market data requests go from that server to the providers you configure.</p>
         </div>
       </div>
       <div className="card stack" style={{ marginBottom: 16 }}>
@@ -157,10 +159,12 @@ export default function Settings() {
             <li>Generated images are marked AI-generated, so the KDP image disclosure is pre-filled.</li>
           </ul>
         </div>
+        <MarketDataCard />
+        <BackupCard />
         <PhoneInboxCard />
         <div className="card stack">
           <h2 style={{ margin: 0 }}>Your data</h2>
-          <p className="muted" style={{ margin: 0 }}>{count ?? "…"} project(s) stored in this browser. Clearing site data deletes them, so export regularly.</p>
+          <p className="muted" style={{ margin: 0 }}>{count ?? "…"} project(s) stored in this browser. They are also copied to the server&apos;s backup folder (see Backup); an export file is a copy you can keep anywhere.</p>
           <button className="btn" onClick={exportAll}>Export entire workspace (.json)</button>
           <p className="field-hint" style={{ margin: 0 }}>Single projects can be exported from their Export tab and imported from the Projects page.</p>
         </div>

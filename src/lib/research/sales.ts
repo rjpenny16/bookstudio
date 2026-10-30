@@ -85,3 +85,26 @@ export const SAMPLE_SALES = `Royalty Date,Title,ASIN/ISBN,Marketplace,Net Units 
 2026-09-05,Sample Gratitude Journal,EXAMPLE001,Amazon.com,12,30.36,USD
 2026-09-14,Sample Sudoku Book,EXAMPLE002,Amazon.co.uk,2,4.10,GBP
 `;
+
+/** A 978 ISBN-13 as the ISBN-10 Amazon uses as a paperback's ASIN; null for anything else. */
+export function isbn13to10(isbn: string): string | null {
+  const d = isbn.replace(/[^0-9]/g, "");
+  if (d.length !== 13 || !d.startsWith("978")) return null;
+  const core = d.slice(3, 12);
+  const sum = [...core].reduce((s, c, i) => s + Number(c) * (10 - i), 0);
+  const check = (11 - (sum % 11)) % 11;
+  return core + (check === 10 ? "X" : String(check));
+}
+
+/** The ASIN a report's ASIN/ISBN column refers to, or "" when it can't be one. */
+export function asinOf(id: string): string {
+  const s = id.trim().toUpperCase().replace(/-/g, "");
+  if (/^[A-Z0-9]{10}$/.test(s)) return s;
+  return isbn13to10(s) ?? "";
+}
+
+/** The project a sold title belongs to: by ASIN when both have one, else by exact title. */
+export function projectForSale<T extends { title: string; name: string; asin?: string }>(sale: { title: string; asin: string }, projects: T[]): T | undefined {
+  const asin = asinOf(sale.asin);
+  return (asin ? projects.find((p) => p.asin && p.asin.toUpperCase() === asin) : undefined) ?? projects.find((p) => (p.title || p.name).toLowerCase() === sale.title.toLowerCase());
+}

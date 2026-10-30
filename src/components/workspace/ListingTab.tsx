@@ -4,6 +4,8 @@ import { useState } from "react";
 import { callAi, isModelOutput, modelRun } from "@/lib/ai/client";
 import { KDP_CATEGORIES, matchCategory, resolveCategories, suggestCategories } from "@/lib/kdp/categories";
 import { royaltyUsd } from "@/lib/kdp/geometry";
+import { recommendPrice } from "@/lib/kdp/pricing";
+import { keywordCandidates, packKeywords } from "@/lib/market/keywords";
 import { LISTING } from "@/lib/kdp/rules";
 import { cleanKeywords, validateListing } from "@/lib/metadata/validate";
 import { aiUsage } from "@/lib/preflight/aiUsage";
@@ -34,6 +36,7 @@ export function ListingTab() {
   const n = project.interior.pages.length;
   const v = validateListing(m, project.bookType);
   const r = royaltyUsd(project.spec, n, m.listPriceUsd);
+  const rec = recommendPrice(project.spec, n, { competitorPrices: project.market?.products.map((p) => p.price), suggested: m.listPriceUsd });
   const usage = aiUsage(project);
   const low = isLowContent(project.bookType);
   const otherTitles = (project.brief.titleOptions ?? []).filter((o) => o.title !== m.title);
@@ -51,6 +54,20 @@ export function ListingTab() {
     } finally {
       setBusy(false);
     }
+  };
+  const [kwNote, setKwNote] = useState("");
+  const fillKeywords = () => {
+    const pack = packKeywords({ title: m.title, subtitle: m.subtitle, candidates: keywordCandidates(project) });
+    if (!pack.slots.length) {
+      setKwNote("The title and subtitle already cover every keyword idea; add ideas on the Brief tab or set up market data.");
+      return;
+    }
+    set((d) => void (d.keywords = pack.slots));
+    const parts = [`Filled ${pack.slots.length} slot${pack.slots.length === 1 ? "" : "s"}.`];
+    if (pack.covered.length) parts.push(`Already covered by the title: ${pack.covered.slice(0, 4).join(", ")}.`);
+    if (pack.skipped.length) parts.push(`Left out: ${pack.skipped.slice(0, 4).map((s) => `${s.keyword} (${s.why})`).join(", ")}.`);
+    if (pack.top && !pack.topInTitle) parts.push(`The most-searched phrase, "${pack.top.keyword}", isn't in the title or subtitle; consider working it in.`);
+    setKwNote(parts.join(" "));
   };
   const ts = m.title.length + m.subtitle.length;
   const set = (fn: (d: typeof m) => void) =>
@@ -211,6 +228,15 @@ export function ListingTab() {
               </div>
             ))}
           </div>
+          <div className="row">
+            <button className="btn btn-sm" onClick={fillKeywords} data-testid="pack-keywords">
+              {project.market?.keywords.length ? "Fill slots by search volume" : "Pack keyword ideas into the slots"}
+            </button>
+            <span className="field-hint">
+              {project.market?.keywords.length ? `Uses ${project.market.keywords.length} measured search phrases (${project.market.source}), most-searched first, skipping words the title already has.` : "Skips words the title already has and shares slots between short phrases. Search volumes appear once a market data provider is set up."}
+            </span>
+          </div>
+          {kwNote && <div className="notice notice-info" role="status" style={{ fontSize: 13 }}>{kwNote}</div>}
           <datalist id="kdp-categories">
             {categoryList.map((c) => (
               <option key={c} value={c} />
@@ -287,6 +313,16 @@ export function ListingTab() {
               </span>
             </div>
           </div>
+          <div className={`notice ${rec.price === m.listPriceUsd ? "notice-pass" : "notice-info"}`} style={{ fontSize: 13 }} data-testid="price-recommendation">
+            <strong>Recommended</strong> {rec.reason} Earns ${rec.royalty.toFixed(2)} a copy.
+            {rec.price !== m.listPriceUsd && (
+              <div style={{ marginTop: 6 }}>
+                <button className="btn btn-sm" onClick={() => set((d) => void (d.listPriceUsd = rec.price))}>
+                  Use ${rec.price.toFixed(2)}
+                </button>
+              </div>
+            )}
+          </div>
           <p className="field-hint" style={{ margin: 0 }}>
             Minimum price ${r.minListPrice.toFixed(2)}. 60% royalty at $9.99 and above, 50% below. {low ? "Expanded Distribution is not available for low-content books." : `Expanded Distribution royalty: $${r.expandedRoyalty.toFixed(2)}.`}
           </p>
@@ -313,6 +349,13 @@ export function ListingTab() {
               </label>
             </div>
           )}
+          <div className="field">
+            <label>
+              ASIN (once it&apos;s live)
+              <input value={m.asin ?? ""} placeholder="e.g. B0D1234567" maxLength={10} onChange={(e) => set((d) => void (d.asin = e.target.value.trim().toUpperCase()))} />
+            </label>
+            <span className="field-hint">From the book&apos;s Amazon page or your KDP Bookshelf. Sales reports and rank history link to the book by it.</span>
+          </div>
           <label className="check">
             <input type="checkbox" checked={m.adultContent} onChange={(e) => set((d) => void (d.adultContent = e.target.checked))} /> Sexually explicit content (adult)
           </label>
