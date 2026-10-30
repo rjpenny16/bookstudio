@@ -13,6 +13,7 @@ import { runPreflight } from "@/lib/preflight";
 import { DEFAULT_AUTHOR } from "@/lib/schema/factory";
 import type { ChatMessage, Project, TitleOption } from "@/lib/schema/project";
 import { loadProject, saveProject } from "@/lib/storage/db";
+import { snapshotForBook } from "@/lib/market/client";
 import { LiveBuild } from "./LiveBuild";
 import { artEnabled, CostEstimate, EXAMPLES, resolveSetup, SetupForm, setupFromParams, type SetupState } from "./SetupForm";
 
@@ -105,8 +106,11 @@ export function Chat() {
     const add = say;
     add(`On it: ${s.topic}${s.audience ? ` for ${s.audience}` : ""}${bookType === "mystery" && !/myster/i.test(s.topic) ? ", as a murder mystery puzzle book" : ""}. I'll post short updates as I go.`);
     try {
+      const market = await snapshotForBook(s.topic);
+      if (market.note) add(market.note);
       const res = await runAutopilot(
         {
+          market: market.snapshot ?? undefined,
           topic: s.topic,
           audience: s.audience,
           bookType,

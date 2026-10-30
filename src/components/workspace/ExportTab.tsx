@@ -98,6 +98,11 @@ export function ExportTab({ report, onGoPreflight }: { report: PreflightReport; 
           <p className="field-hint" style={{ margin: 0 }}>
             BookStudio does not log in to KDP or publish for you. Upload the files in KDP, check the Print Previewer and press Publish yourself.
           </p>
+          {!project.metadata.asin && (
+            <p className="field-hint" style={{ margin: 0 }}>
+              Once the book is live, paste its ASIN on the Listing tab. Sales reports then link to this book, and its sales rank teaches BookStudio how many copies a rank means.
+            </p>
+          )}
         </div>
 
         <div className="card stack">

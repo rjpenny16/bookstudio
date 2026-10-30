@@ -1,5 +1,7 @@
 import { matchCategory, suggestCategories } from "@/lib/kdp/categories";
 import { LISTING } from "@/lib/kdp/rules";
+import { packKeywords } from "@/lib/market/keywords";
+import type { KeywordMetric } from "@/lib/market/types";
 import type { BookType, ListingMetadata } from "@/lib/schema/project";
 import type { Severity } from "./content";
 
@@ -24,6 +26,8 @@ export interface ListingFacts {
   topic: string;
   audience: string;
   pageCount: number;
+  /** Measured search phrases for the book's niche, when there is market data. */
+  searchTerms?: KeywordMetric[];
 }
 
 const tokens = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2);
@@ -41,6 +45,10 @@ export function critiqueListingRules(m: ListingMetadata, facts: ListingFacts): L
   const stuffed = [...counts.entries()].filter(([w, n]) => n >= 3 && !["the", "and", "for", "with"].includes(w)).map(([w]) => w);
   if (stuffed.length) notes.push({ field: "subtitle", severity: "high", issue: `"${stuffed.join('", "')}" appears 3+ times in the title and subtitle.`, suggestion: "KDP treats repeated search terms in the title as keyword stuffing. Say it once and use the keyword slots for variations." });
   if (/\b\d+\s*(pages|pgs)\b|\b\d+(\.\d+)?\s*(x|by)\s*\d+(\.\d+)?\b/i.test(sub)) notes.push({ field: "subtitle", severity: "low", issue: "Subtitle lists the page count or trim size.", suggestion: "Amazon already shows these in the product details; use the subtitle to say who the book is for and what it helps them do." });
+  if (facts.searchTerms?.length) {
+    const { top, topInTitle } = packKeywords({ title, subtitle: sub, candidates: facts.searchTerms });
+    if (top && !topInTitle) notes.push({ field: "title", severity: "medium", issue: `The most-searched phrase, "${top.keyword}" (${top.volume?.toLocaleString("en-US")} searches a month), isn't in the title or subtitle.`, suggestion: "Amazon weighs title words most; work the phrase into the subtitle if it doesn't suit the title." });
+  }
   if (!sub) notes.push({ field: "subtitle", severity: "low", issue: "No subtitle.", suggestion: "A subtitle that names the audience and the main benefit helps both search and conversion." });
 
   // Description

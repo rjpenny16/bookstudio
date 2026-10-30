@@ -161,10 +161,15 @@ export function Workspace() {
     return (
       <div className="page">
         <h1>Project not found</h1>
-        <p>It may have been deleted, or it lives in another browser. Projects are stored locally.</p>
-        <Link className="btn" href="/">
-          Back to projects
-        </Link>
+        <p>It may have been deleted, or it lives in another browser. Projects are stored in the browser, with a backup on the computer running BookStudio.</p>
+        <div className="row">
+          <Link className="btn" href="/">
+            Back to projects
+          </Link>
+          <Link className="btn" href="/settings">
+            Restore from backup
+          </Link>
+        </div>
       </div>
     );
 

@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { callAi } from "@/lib/ai/client";
-import { estimateMonthlySales, importObservationsCsv, newBoard, SAMPLE_CSV, summarizeNiche, titlePhrases, type Estimate, type ResearchBoard } from "@/lib/research";
+import { fetchSnapshot, marketConfigured, marketStatus } from "@/lib/market/client";
+import type { MarketStatus } from "@/lib/market/types";
+import { estimateMonthlySales, importObservationsCsv, newBoard, observationsFromMarket, SAMPLE_CSV, summarizeNiche, titlePhrases, type Estimate, type ResearchBoard } from "@/lib/research";
+import { CURVE_KEY, type SalesCurve } from "@/lib/research/calibrate";
 import { getValue, setValue } from "@/lib/storage/db";
 
 const KEY = "research:boards";
@@ -27,12 +30,16 @@ export default function Research() {
   const [paste, setPaste] = useState("");
   const [msg, setMsg] = useState<{ kind: "info" | "fail" | "pass"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [curve, setCurve] = useState<SalesCurve | null>(null);
+  const [market, setMarket] = useState<MarketStatus | null>(null);
 
   useEffect(() => {
     getValue<ResearchBoard[]>(KEY).then((b) => {
       setBoards(b ?? []);
       if (b?.length) setActiveId(b[0].id);
     });
+    getValue<SalesCurve>(CURVE_KEY).then((c) => setCurve(c ?? null));
+    marketStatus().then(setMarket).catch(() => setMarket(null));
   }, []);
 
   const persist = (next: ResearchBoard[]) => {
@@ -41,7 +48,7 @@ export default function Research() {
   };
   const board = boards?.find((b) => b.id === activeId) ?? null;
   const patch = (fn: (b: ResearchBoard) => ResearchBoard) => boards && board && persist(boards.map((b) => (b.id === board.id ? { ...fn(b), updatedAt: new Date().toISOString() } : b)));
-  const summary = useMemo(() => (board ? summarizeNiche(board.observations) : null), [board]);
+  const summary = useMemo(() => (board ? summarizeNiche(board.observations, curve) : null), [board, curve]);
   const phrases = useMemo(() => (board ? titlePhrases(board.observations) : []), [board]);
 
   const importText = (text: string, source: string) => {
@@ -62,6 +69,27 @@ export default function Research() {
     try {
       const r = await callAi("keywords", { topic: board.topic || board.name, seeds: phrases.slice(0, 10).map((p) => p.phrase), observedTitles: board.observations.slice(0, 40).map((o) => o.title) });
       patch((b) => ({ ...b, keywordClusters: r.output.clusters, keywordSource: `${r.meta.provider} (${r.meta.model}): ${r.output.notes}` }));
+    } catch (e) {
+      setMsg({ kind: "fail", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const fetchMarket = async (fresh = false) => {
+    if (!board) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await fetchSnapshot(board.topic || board.name, { fresh });
+      const s = r.snapshot;
+      const found = observationsFromMarket(s.products, s.source, s.fetchedAt);
+      patch((b) => ({
+        ...b,
+        observations: [...b.observations.filter((o) => !found.some((f) => f.asin && f.asin === o.asin)), ...found],
+        ...(s.keywords.length ? { keywordClusters: [{ intent: "What shoppers search on Amazon (monthly searches)", keywords: s.keywords.slice(0, 30).map((k) => (k.volume === null ? k.keyword : `${k.keyword} (${k.volume.toLocaleString()})`)) }, ...b.keywordClusters.filter((c) => !c.intent.startsWith("What shoppers search"))], keywordSource: `Observed search volumes from ${s.source}, ${s.fetchedAt.slice(0, 10)}` } : {}),
+      }));
+      setMsg({ kind: r.warnings.length ? "info" : "pass", text: `${found.length} competing books and ${s.keywords.length} search phrases from ${s.source}${r.cached ? " (fetched within the last week, so no new charge)" : ""}.${r.warnings.length ? ` ${r.warnings.join(" ")}` : ""}` });
     } catch (e) {
       setMsg({ kind: "fail", text: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -136,6 +164,11 @@ export default function Research() {
                 </div>
               </div>
               <div className="row">
+                {marketConfigured(market) && (
+                  <button className="btn btn-sm btn-primary" onClick={() => fetchMarket()} disabled={busy || !(board.topic || board.name).trim()} title="Search Amazon through your market data provider for this niche">
+                    {busy && <span className="spinner" />} Fetch competing books
+                  </button>
+                )}
                 <label className="btn btn-sm" style={{ cursor: "pointer" }}>
                   Import CSV…
                   <input type="file" accept=".csv,text/csv" hidden onChange={async (e) => { const f = e.target.files?.[0]; if (f) importText(await f.text(), f.name); e.target.value = ""; }} />
@@ -230,7 +263,7 @@ export default function Research() {
                           <td className="num">{o.price !== null ? `$${o.price.toFixed(2)}` : "n/a"}</td>
                           <td className="num">{o.reviews ?? "n/a"}</td>
                           <td className="num">
-                            <EstimateCell e={estimateMonthlySales(o.bsr)} />
+                            <EstimateCell e={estimateMonthlySales(o.bsr, curve)} />
                           </td>
                           <td className="muted" style={{ fontSize: 12 }}>
                             {o.source}

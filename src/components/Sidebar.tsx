@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRunnerState } from "@/lib/inbox/runnerState";
+import { syncBackups } from "@/lib/storage/backupSync";
+import { requestPersistence } from "@/lib/storage/mirror";
 
 const NAV: { group: string; items: { href: string; label: string }[] }[] = [
   { group: "Create", items: [{ href: "/", label: "Projects" }, { href: "/new", label: "New book" }, { href: "/autopilot", label: "AI Autopilot" }, { href: "/inbox", label: "Inbox" }] },
@@ -19,6 +21,11 @@ export function Sidebar() {
   // On phones the links fold away behind a Menu button and close again after a choice.
   const [open, setOpen] = useState(false);
   const [openedAt, setOpenedAt] = useState(pathname);
+  // Projects live in this browser's storage: ask it not to clear them when space runs low, and make sure the backup has them.
+  useEffect(() => {
+    void requestPersistence();
+    void syncBackups();
+  }, []);
   if (openedAt !== pathname) {
     setOpenedAt(pathname);
     setOpen(false);
@@ -57,7 +64,7 @@ export function Sidebar() {
       <div className="sidebar-foot">
         Open source · Apache-2.0
         <br />
-        Your projects stay in this browser.
+        Your projects stay on your computer.
       </div>
     </nav>
   );

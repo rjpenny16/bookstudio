@@ -2,6 +2,7 @@
 
 import { createStore, del, get, set, type UseStore } from "idb-keyval";
 import { migrateProject } from "@/lib/schema/migrate";
+import { mirrorDelete, mirrorProject, mirrorValue } from "./mirror";
 import type { Project } from "@/lib/schema/project";
 
 export interface ProjectSummary {
@@ -12,13 +13,15 @@ export interface ProjectSummary {
   pages: number;
   updatedAt: string;
   title: string;
+  /** The published book's ASIN, when known (optional). */
+  asin?: string;
 }
 
 let store: UseStore | null = null;
 const db = () => (store ??= createStore("bookstudio", "kv"));
 
 export function summarize(p: Project): ProjectSummary {
-  return { id: p.id, name: p.name, bookType: p.bookType, trimId: p.spec.trimId, pages: p.interior.pages.length, updatedAt: p.updatedAt, title: p.metadata.title };
+  return { id: p.id, name: p.name, bookType: p.bookType, trimId: p.spec.trimId, pages: p.interior.pages.length, updatedAt: p.updatedAt, title: p.metadata.title, ...(p.metadata.asin ? { asin: p.metadata.asin } : {}) };
 }
 
 export async function listProjects(): Promise<ProjectSummary[]> {
@@ -36,12 +39,14 @@ export async function saveProject(p: Project): Promise<void> {
   const index = ((await get<ProjectSummary[]>("projects:index", db())) ?? []).filter((s) => s.id !== p.id);
   index.push(summarize(p));
   await set("projects:index", index, db());
+  mirrorProject(p);
 }
 
 export async function deleteProject(id: string): Promise<void> {
   await del(`project:${id}`, db());
   const index = ((await get<ProjectSummary[]>("projects:index", db())) ?? []).filter((s) => s.id !== id);
   await set("projects:index", index, db());
+  mirrorDelete(id);
 }
 
 export async function getValue<T>(key: string): Promise<T | undefined> {
@@ -50,8 +55,10 @@ export async function getValue<T>(key: string): Promise<T | undefined> {
 
 export async function setValue<T>(key: string, value: T): Promise<void> {
   await set(key, value, db());
+  mirrorValue(key, value);
 }
 
 export async function deleteValue(key: string): Promise<void> {
   await del(key, db());
+  mirrorValue(key, null);
 }

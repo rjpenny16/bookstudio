@@ -1,5 +1,7 @@
 import Papa from "papaparse";
 import { newId } from "@/lib/util/ids";
+import type { MarketProduct } from "@/lib/market/types";
+import { curveConfidence, curveMonthly, type SalesCurve } from "./calibrate";
 
 /**
  * Research workspace. BookStudio ships no scraped marketplace data: observations
@@ -111,15 +113,24 @@ export function importObservationsCsv(text: string, source: string): ImportResul
 /**
  * Rank-to-sales heuristic for the US print books store: daily sales ~ 100000 / BSR.
  * Uncalibrated (no public ground truth), so the interval is wide and confidence low.
- * Users who opt in to share their own KDP reports could calibrate this later.
+ * With a curve fitted to the publisher's own royalty reports and rank history
+ * (Sales reports → Calibrate), that curve is used instead.
  */
 export const RANK_MODEL = "rank_sales_power_law_v1";
+export const CALIBRATED_MODEL = "rank_sales_fitted_to_your_books";
 
-export function estimateMonthlySales(bsr: number | null): Estimate | null {
+const r1 = (n: number) => Math.round(n * 10) / 10;
+
+export function estimateMonthlySales(bsr: number | null, curve?: SalesCurve | null): Estimate | null {
   if (!bsr || bsr <= 0) return null;
+  if (curve) {
+    const monthly = curveMonthly(curve, bsr);
+    const spread = Math.exp(1.96 * curve.sd);
+    return { value: r1(monthly), interval95: [r1(monthly / spread), r1(monthly * spread)], method: `${CALIBRATED_MODEL} (${curve.n} book-months)`, estimated: true, confidence: curveConfidence(curve) };
+  }
   const daily = 100000 / bsr;
   const monthly = daily * 30;
-  return { value: Math.round(monthly * 10) / 10, interval95: [Math.round(monthly * 0.4 * 10) / 10, Math.round(monthly * 2.5 * 10) / 10], method: RANK_MODEL, estimated: true, confidence: "low" };
+  return { value: r1(monthly), interval95: [r1(monthly * 0.4), r1(monthly * 2.5)], method: RANK_MODEL, estimated: true, confidence: "low" };
 }
 
 function median(xs: number[]): number | null {
@@ -142,19 +153,21 @@ export interface NicheSummary {
   explanation: string[];
 }
 
-export function summarizeNiche(obs: Observation[]): NicheSummary {
+export function summarizeNiche(obs: Observation[], curve?: SalesCurve | null): NicheSummary {
   const bsrs = obs.map((o) => o.bsr).filter((x): x is number => !!x && x > 0);
   const prices = obs.map((o) => o.price).filter((x): x is number => x !== null);
   const reviews = obs.map((o) => o.reviews).filter((x): x is number => x !== null);
-  const est = bsrs.map((b) => estimateMonthlySales(b)!);
+  const est = bsrs.map((b) => estimateMonthlySales(b, curve)!);
   const units = est.reduce((a, e) => a + e.value, 0);
+  const lo = est.reduce((a, e) => a + e.interval95[0], 0);
+  const hi = est.reduce((a, e) => a + e.interval95[1], 0);
   const medPrice = median(prices);
   const estMonthlyUnits: Estimate | null = est.length
-    ? { value: Math.round(units), interval95: [Math.round(units * 0.4), Math.round(units * 2.5)], method: `${RANK_MODEL} summed over ${est.length} titles`, estimated: true, confidence: "low" }
+    ? { value: Math.round(units), interval95: [Math.round(lo), Math.round(hi)], method: `${est[0].method} summed over ${est.length} titles`, estimated: true, confidence: est[0].confidence }
     : null;
   const estMonthlyRevenue: Estimate | null =
     estMonthlyUnits && medPrice
-      ? { value: Math.round(estMonthlyUnits.value * medPrice), interval95: [Math.round(estMonthlyUnits.interval95[0] * medPrice), Math.round(estMonthlyUnits.interval95[1] * medPrice)], method: "estimated units x median list price", estimated: true, confidence: "low" }
+      ? { value: Math.round(estMonthlyUnits.value * medPrice), interval95: [Math.round(estMonthlyUnits.interval95[0] * medPrice), Math.round(estMonthlyUnits.interval95[1] * medPrice)], method: "estimated units x median list price", estimated: true, confidence: estMonthlyUnits.confidence }
       : null;
   const medBsr = median(bsrs);
   // Demand: 0-100 on a log scale, BSR 1k -> ~100, BSR 1M -> ~0.
@@ -207,3 +220,8 @@ Gratitude Journal for Kids: Fun Daily Prompts,EXAMPLE004,Sample Author D,22000,7
 Mindful Gratitude Journal for Busy Moms,EXAMPLE005,Sample Author E,120000,8.49,34,4.4,120,Self-Help > Journal Writing,2026-10-01
 Gratitude Journal: One Line a Day,EXAMPLE006,Sample Author F,310000,6.99,12,4.2,110,Self-Help > Journal Writing,2026-10-01
 `;
+
+/** Competing books from a market data provider, as board observations. */
+export function observationsFromMarket(products: MarketProduct[], source: string, observedAt: string): Observation[] {
+  return products.map((p) => ({ id: newId("obs"), title: p.title, asin: p.asin, author: p.author, bsr: p.bsr, price: p.price, reviews: p.reviews, rating: p.rating, pages: p.pages, category: "", observedAt, source }));
+}
