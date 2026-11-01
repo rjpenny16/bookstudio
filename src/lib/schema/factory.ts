@@ -1,10 +1,11 @@
 import { genreOf } from "@/lib/cover/genres";
 import { buildCover, PALETTES } from "@/lib/cover/templates";
-import { coverGeometry, findTrim } from "@/lib/kdp/geometry";
-import { RULES_VERSION } from "@/lib/kdp/rules";
+import { coverGeometry } from "@/lib/kdp/geometry";
 import { estimatePageCount, generatePages, generatorInfo, type GeneratorConfig } from "@/lib/generators/pages";
 import { interiorStyle, type InteriorStyleSpec } from "@/lib/generators/style";
 import { newId } from "@/lib/util/ids";
+import { defaultFormats } from "./formats";
+import { paperbackSpec } from "./spec";
 import { SCHEMA_VERSION, type BookType, type InteriorInk, type InteriorSection, type Paper, type Project } from "./project";
 
 /** One interior section to generate: a bare config, or a config with a label and role. */
@@ -32,7 +33,6 @@ export function emptyBrief(): Project["brief"] {
 }
 
 export function createProject(input: NewProjectInput): Project {
-  const trim = findTrim(input.trimId) ?? findTrim("6x9")!;
   const genreId = genreOf({ bookType: input.bookType, topic: input.name, audience: "" }).id;
   const styleSpec: InteriorStyleSpec = input.style ?? { genre: genreId, largePrint: genreId === "large-print" };
   const style = interiorStyle(styleSpec);
@@ -44,18 +44,7 @@ export function createProject(input: NewProjectInput): Project {
     createdAt: now,
     updatedAt: now,
     bookType: input.bookType,
-    spec: {
-      marketplace: "amazon-kdp",
-      binding: "paperback",
-      trimId: trim.id,
-      widthIn: trim.widthIn,
-      heightIn: trim.heightIn,
-      bleed: input.bleed,
-      paper: input.paper,
-      ink: input.ink,
-      coverFinish: "matte",
-      rulesVersion: RULES_VERSION,
-    },
+    spec: paperbackSpec(input.trimId, { bleed: input.bleed, paper: input.paper, ink: input.ink }),
     brief: emptyBrief(),
     interior: { pages: [], sections: [], pageNumbers: { enabled: input.bookType !== "coloring", fontFamily: style.label, fontSize: style.sizes.pageNumber, startAt: 3 }, style: styleSpec },
     cover: { background: "#ffffff", elements: [], barcode: "kdp" },
@@ -74,6 +63,7 @@ export function createProject(input: NewProjectInput): Project {
       adultContent: false,
       aiDisclosure: { text: "none", images: "none", translation: "none", confirmed: false },
     },
+    formats: defaultFormats(),
     assets: [],
     modelRuns: [],
   };

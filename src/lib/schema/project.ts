@@ -16,7 +16,7 @@ import type { GeneratorConfig } from "@/lib/generators/pages";
 import type { InteriorStyleSpec } from "@/lib/generators/style";
 import type { MysteryPlanOutput } from "@/lib/ai/tasks";
 
-export const SCHEMA_VERSION = "1.1";
+export const SCHEMA_VERSION = "1.2";
 
 export type InteriorInk = "black" | "standard-color" | "premium-color";
 export type Paper = "white" | "cream";
@@ -34,6 +34,39 @@ export interface PrintSpec {
   coverFinish: "matte" | "glossy";
   /** Version of the marketplace rule set the project was validated against. */
   rulesVersion: string;
+}
+
+/** The KDP formats one book can be published in. KDP counts each one separately toward its weekly title limits. */
+export type FormatKind = "paperback" | "hardcover" | "ebook";
+
+/** Where a format edition is on KDP. BookStudio never logs in to KDP, so the author records each step. */
+export type KdpStatus = "not-started" | "planned" | "created" | "submitted" | "live";
+
+export interface FormatKdpState {
+  status: KdpStatus;
+  /** Start (Sunday, UTC, YYYY-MM-DD) of the week this edition is planned to be created on KDP. */
+  plannedWeek?: string;
+  /** When the title was created on KDP (counts toward the weekly creation limit). */
+  createdAt?: string;
+  /** When it was first submitted for publication (counts toward the weekly submission limit). */
+  submittedAt?: string;
+}
+
+/**
+ * One format of the book. The interior, brief and listing copy are shared by every format.
+ * The paperback edition reads its spec, cover, ISBN, price and ASIN from the project itself,
+ * so only the other formats store their own.
+ */
+export interface FormatEdition {
+  kind: FormatKind;
+  enabled: boolean;
+  /** Each format needs its own ISBN (not used for the paperback, which uses `metadata.isbn`). */
+  isbn?: ListingMetadata["isbn"];
+  /** Not used for the paperback, which uses `metadata.listPriceUsd`. */
+  listPriceUsd?: number;
+  /** Not used for the paperback, which uses `metadata.asin`. */
+  asin?: string;
+  kdp: FormatKdpState;
 }
 
 export type BookType =
@@ -398,6 +431,8 @@ export interface Project {
   interior: Interior;
   cover: Cover;
   metadata: ListingMetadata;
+  /** Formats this book is published in, one entry per kind (added in schema 1.2). */
+  formats: FormatEdition[];
   assets: Asset[];
   modelRuns: ModelRun[];
   /** Latest model reviews of the listing and the rendered book (optional; added in Phase 2, no migration needed). */

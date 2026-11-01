@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { AttachmentBuilder, Client, Events, GatewayIntentBits, type Collection, type Message } from "discord.js";
 import { decide, HELP, pending, readyText, snowflakeCompare, statusText, type BotConfig } from "./commands";
 import { describeIdea, parseIdea } from "./parse";
+import { quotaText } from "./quota";
 import { addItem, removeItem, type InboxItem } from "./state";
 import { mutateInbox, onInboxChange, readInbox } from "./store";
 
@@ -52,6 +53,7 @@ async function handle(msg: Message, cfg: BotConfig) {
   if (cmd.kind === "ignore") return;
   if (cmd.kind === "help") return void (await msg.reply(HELP));
   if (cmd.kind === "status") return void (await msg.reply(statusText((await readInbox()).items)));
+  if (cmd.kind === "quota") return void (await msg.reply(await quotaText()));
   if (cmd.kind === "cancel") {
     const removed = await mutateInbox((s) => {
       const it = pending(s.items)[cmd.n - 1];

@@ -7,11 +7,10 @@ import { randomSeed } from "@/lib/generators/rng";
 import { secretOrder } from "@/lib/generators/scramble";
 import { interiorStyle, type InteriorStyle } from "@/lib/generators/style";
 import { generateWordSearch, LETTERS, normalizeWord } from "@/lib/generators/wordsearch";
-import { findTrim } from "@/lib/kdp/geometry";
 import { lineAdvance } from "@/lib/render/textLayout";
-import { RULES_VERSION } from "@/lib/kdp/rules";
 import { cleanCrossword, cleanWordList } from "@/lib/quality/content";
 import type { SectionInput } from "@/lib/schema/factory";
+import { paperbackSpec } from "@/lib/schema/spec";
 import type { PrintSpec } from "@/lib/schema/project";
 import { clampPageTarget, MIN_PAGES, puzzleConfig, puzzleContent, type Sizing } from "./blueprint";
 
@@ -67,8 +66,7 @@ export interface MysterySizing {
 }
 
 export function specFor(trimId: string): PrintSpec {
-  const t = findTrim(trimId) ?? findTrim("8.5x11")!;
-  return { marketplace: "amazon-kdp", binding: "paperback", trimId: t.id, widthIn: t.widthIn, heightIn: t.heightIn, bleed: false, paper: "white", ink: "black", coverFinish: "matte", rulesVersion: RULES_VERSION };
+  return paperbackSpec(trimId, {}, "8.5x11");
 }
 
 /** The interior style a mystery is laid out in (kids' mysteries wear the kids' look). */

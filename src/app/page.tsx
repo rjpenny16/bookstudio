@@ -7,8 +7,11 @@ import { coverGeometry } from "@/lib/kdp/geometry";
 import { parseProjectFile } from "@/lib/export/package";
 import { BOOK_TYPES, type Project } from "@/lib/schema/project";
 import { deleteProject, listProjects, loadProject, saveProject, type ProjectSummary } from "@/lib/storage/db";
+import { freshFormats } from "@/lib/schema/formats";
 import { newId } from "@/lib/util/ids";
 import { PageThumb } from "@/components/workspace/PageThumb";
+import { QuotaStrip } from "@/components/QuotaStrip";
+import { refsFromSummaries } from "@/lib/kdp/quota";
 import { CostEstimate, emptySetup, EXAMPLES, SetupForm, setupToParams, type SetupState } from "@/components/autopilot/SetupForm";
 import { aiStatus, type AiStatus } from "@/lib/ai/client";
 import { imageStatus, type ImageStatus } from "@/lib/cover/artClient";
@@ -73,7 +76,10 @@ export default function Dashboard() {
   const duplicate = async (id: string) => {
     const p = await loadProject(id);
     if (!p) return;
-    const copy: Project = { ...structuredClone(p), id: newId("prj"), name: `${p.name} (copy)`, updatedAt: new Date().toISOString() };
+    const clone = structuredClone(p);
+    // A copy is a new KDP title: it starts with no KDP history and no ASIN.
+    delete clone.metadata.asin;
+    const copy: Project = { ...clone, id: newId("prj"), name: `${p.name} (copy)`, updatedAt: new Date().toISOString(), formats: freshFormats(clone.formats) };
     await saveProject(copy);
     refresh();
   };
@@ -142,6 +148,7 @@ export default function Dashboard() {
         <input ref={fileRef} type="file" accept=".json,application/json" hidden onChange={(e) => importFile(e.target.files?.[0])} />
       </div>
       {error && <div className="notice notice-fail" style={{ marginBottom: 16 }}>{error}</div>}
+      {!!projects?.length && <QuotaStrip refs={refsFromSummaries(projects)} />}
       <div className="row-between projects-head">
         <h2 style={{ margin: 0 }}>
           Projects{projects?.length ? <span className="muted" style={{ fontWeight: 500 }}> · {projects.length}</span> : null}

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { coverGeometry, findTrim, gutterIn, outsideMarginIn, printCostUsd, royaltyUsd, spineWidthIn } from "@/lib/kdp/geometry";
 import { GUTTER_TABLE, pageRange, RULES_VERSION, TRIM_SIZES } from "@/lib/kdp/rules";
+import { paperbackSpec } from "@/lib/schema/spec";
 import type { InteriorInk, Paper, PrintSpec } from "@/lib/schema/project";
 import { ptToIn, round } from "@/lib/util/ids";
 
@@ -14,7 +15,7 @@ export default function Tools() {
   const [bleed, setBleed] = useState(false);
   const [price, setPrice] = useState(9.99);
   const trim = findTrim(trimId)!;
-  const spec: PrintSpec = { marketplace: "amazon-kdp", binding: "paperback", trimId, widthIn: trim.widthIn, heightIn: trim.heightIn, bleed, paper, ink, coverFinish: "matte", rulesVersion: RULES_VERSION };
+  const spec: PrintSpec = paperbackSpec(trimId, { bleed, paper, ink });
   const cg = coverGeometry(spec, pages);
   const r = royaltyUsd(spec, pages, price);
   const range = pageRange(ink, paper);

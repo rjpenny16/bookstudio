@@ -3,7 +3,7 @@
 import { createStore, del, get, set, type UseStore } from "idb-keyval";
 import { migrateProject } from "@/lib/schema/migrate";
 import { mirrorDelete, mirrorProject, mirrorValue } from "./mirror";
-import type { Project } from "@/lib/schema/project";
+import type { FormatEdition, Project } from "@/lib/schema/project";
 
 export interface ProjectSummary {
   id: string;
@@ -15,17 +15,24 @@ export interface ProjectSummary {
   title: string;
   /** The published book's ASIN, when known (optional). */
   asin?: string;
+  /** Each format's KDP status, for the weekly quota and planner (missing on summaries saved before schema 1.2). */
+  editions?: Pick<FormatEdition, "kind" | "enabled" | "kdp">[];
 }
 
 let store: UseStore | null = null;
 const db = () => (store ??= createStore("bookstudio", "kv"));
 
 export function summarize(p: Project): ProjectSummary {
-  return { id: p.id, name: p.name, bookType: p.bookType, trimId: p.spec.trimId, pages: p.interior.pages.length, updatedAt: p.updatedAt, title: p.metadata.title, ...(p.metadata.asin ? { asin: p.metadata.asin } : {}) };
+  return { id: p.id, name: p.name, bookType: p.bookType, trimId: p.spec.trimId, pages: p.interior.pages.length, updatedAt: p.updatedAt, title: p.metadata.title, ...(p.metadata.asin ? { asin: p.metadata.asin } : {}), editions: (p.formats ?? []).map((f) => ({ kind: f.kind, enabled: f.enabled, kdp: { ...f.kdp } })) };
 }
 
 export async function listProjects(): Promise<ProjectSummary[]> {
-  const index = (await get<ProjectSummary[]>("projects:index", db())) ?? [];
+  let index = (await get<ProjectSummary[]>("projects:index", db())) ?? [];
+  // Summaries saved before formats existed: rebuild them once from the projects.
+  if (index.some((s) => !s.editions)) {
+    index = await Promise.all(index.map(async (s) => (s.editions ? s : ((p) => (p ? summarize(p) : s))(await loadProject(s.id)))));
+    await set("projects:index", index, db());
+  }
   return index.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
