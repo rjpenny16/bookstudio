@@ -6,6 +6,7 @@ import { elementBounds } from "@/lib/schema/elements";
 import type { Element, Page, Project } from "@/lib/schema/project";
 import { newId } from "@/lib/util/ids";
 import { reflowCoverElements } from "@/lib/cover/reflow";
+import { editionDraft } from "@/lib/schema/formats";
 import { aiUsage } from "./aiUsage";
 import type { FixId } from "./index";
 
@@ -114,6 +115,11 @@ export function applyFix(project: Project, fix: FixId): Project {
     case "fix-paper-ink":
       return produce(project, (d) => {
         d.spec.paper = "white";
+      });
+    case "adopt-kdp-cover-size":
+      return produce(project, (d) => {
+        const e = editionDraft(d, "hardcover");
+        if (e.coverCheck) e.coverCheck.adopt = true;
       });
   }
 }

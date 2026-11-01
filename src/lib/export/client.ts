@@ -5,7 +5,8 @@ import { canvasToBlob, ensureFonts, loadImages, rasterize } from "@/lib/render/c
 import { browserFontLoader } from "@/lib/render/fonts";
 import { renderMockup } from "@/lib/render/mockup";
 import type { Project } from "@/lib/schema/project";
-import { buildKdpPackage, downloadBlob, slug } from "./package";
+import { hardcoverProject } from "@/lib/schema/hardcover";
+import { buildKdpPackage, downloadBlob, printFormats, slug } from "./package";
 
 /** Full cover, front panel and a paperback mockup, rendered in the browser. */
 export async function coverImages(project: Project) {
@@ -29,10 +30,12 @@ export async function coverImages(project: Project) {
 /** Build the KDP package zip and download it. `draft` marks a package that still has blocking preflight issues. */
 export async function downloadPackage(project: Project, draft: boolean, onProgress: (label: string, f: number) => void): Promise<void> {
   const { full, mockup } = await coverImages(project);
+  const hardcover = printFormats(project).includes("hardcover") ? (await coverImages(hardcoverProject(project))).mockup : null;
   const blob = await buildKdpPackage(project, {
     loadFont: browserFontLoader,
     coverPreviewPng: await canvasToBlob(full),
     mockupPng: await canvasToBlob(mockup),
+    hardcoverMockupPng: hardcover ? await canvasToBlob(hardcover) : undefined,
     onProgress,
   });
   downloadBlob(blob, `${slug(project.metadata.title || project.name)}-kdp${draft ? "-draft" : ""}.zip`);

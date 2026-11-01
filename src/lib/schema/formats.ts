@@ -13,7 +13,7 @@ export const STATUS_LABEL: Record<KdpStatus, string> = {
 };
 
 /** Formats BookStudio can build files for today. The others can still be planned and tracked. */
-export const EXPORTABLE: Record<FormatKind, boolean> = { paperback: true, hardcover: false, ebook: false };
+export const EXPORTABLE: Record<FormatKind, boolean> = { paperback: true, hardcover: true, ebook: false };
 
 export function defaultEdition(kind: FormatKind): FormatEdition {
   return kind === "paperback" ? { kind, enabled: true, kdp: { status: "not-started" } } : { kind, enabled: false, isbn: { kind: "none", value: "" }, kdp: { status: "not-started" } };

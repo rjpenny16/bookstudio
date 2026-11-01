@@ -6,6 +6,7 @@ import { TITLE_LIMITS } from "@/lib/kdp/limits";
 import { addWeeks, isOverdue, nextOpenWeek, openSlots, remaining, usage, weekKey, weekLabel, type EditionRef } from "@/lib/kdp/quota";
 import { clearSteps, editionDraft, editionOf, EXPORTABLE, FORMAT_KINDS, FORMAT_LABEL, recordStep, STATUS_LABEL, type KdpStep } from "@/lib/schema/formats";
 import type { FormatKind, KdpStatus, ListingMetadata } from "@/lib/schema/project";
+import { hardcoverReady } from "@/lib/schema/hardcover";
 import { listProjects } from "@/lib/storage/db";
 import { useProjectStore } from "@/lib/storage/store";
 import { useNow } from "@/lib/util/useNow";
@@ -43,6 +44,7 @@ export function FormatsPanel() {
   const weeks = Array.from({ length: PLAN_WEEKS }, (_, i) => addWeeks(thisWeek, i));
 
   // Recipes must not return a value: immer treats one as a replacement draft.
+  const hardcoverOk = hardcoverReady(project).ok;
   const edit = (kind: FormatKind, fn: (e: ReturnType<typeof editionDraft>) => void) =>
     update((d) => {
       fn(editionDraft(d, kind));
@@ -98,6 +100,11 @@ export function FormatsPanel() {
                     {e.enabled && !EXPORTABLE[kind] && (
                       <div className="field-hint" style={{ marginTop: 4 }}>
                         BookStudio can&rsquo;t build {kind === "ebook" ? "eBook" : "hardcover"} files yet. You can plan and track it here.
+                      </div>
+                    )}
+                    {e.enabled && kind === "hardcover" && !hardcoverOk && (
+                      <div className="field-hint" style={{ marginTop: 4, color: "var(--fail)" }}>
+                        Not possible as the book is. See Hardcover below.
                       </div>
                     )}
                   </td>
