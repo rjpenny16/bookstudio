@@ -9,7 +9,7 @@ test("every screen fits a phone, and a book can be made and reviewed there", asy
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
 
-  for (const path of ["/", "/new", "/autopilot", "/research", "/tools", "/sales", "/settings"]) {
+  for (const path of ["/", "/new", "/autopilot", "/research", "/schedule", "/tools", "/sales", "/settings"]) {
     await page.goto(path);
     await expect(page.locator("main h1").first()).toBeVisible();
     expect(await overflow(page), path).toBeLessThanOrEqual(0);

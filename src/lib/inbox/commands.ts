@@ -1,7 +1,7 @@
 import type { InboxItem } from "./state";
 
 /** What a message in the ideas channel asks for. Kept apart from discord.js so it can be tested. */
-export type Command = { kind: "ignore" } | { kind: "help" } | { kind: "status" } | { kind: "cancel"; n: number } | { kind: "idea"; text: string };
+export type Command = { kind: "ignore" } | { kind: "help" } | { kind: "status" } | { kind: "quota" } | { kind: "cancel"; n: number } | { kind: "idea"; text: string };
 
 export interface IncomingMessage {
   authorId: string;
@@ -20,7 +20,7 @@ export const HELP = [
   "`large print sudoku for seniors, 120 pages`",
   "`gratitude journal for nurses 6x9`",
   "`word search for kids, letter size, no art`",
-  "Lines after the first go to the brief as notes. Other commands: `status`, `cancel 2`, `help`.",
+  "Lines after the first go to the brief as notes. Other commands: `status`, `quota` (this week's KDP title slots), `cancel 2`, `help`.",
 ].join("\n");
 
 /** Only the owner's messages in the ideas channel count; everything else is ignored. */
@@ -31,6 +31,7 @@ export function decide(msg: IncomingMessage, cfg: BotConfig): Command {
   const word = text.toLowerCase();
   if (word === "help" || word === "?") return { kind: "help" };
   if (word === "status" || word === "queue" || word === "list") return { kind: "status" };
+  if (word === "quota" || word === "slots" || word === "limits") return { kind: "quota" };
   const cancel = word.match(/^(?:cancel|remove|delete)\s+#?(\d+)$/);
   if (cancel) return { kind: "cancel", n: Number(cancel[1]) };
   return { kind: "idea", text };

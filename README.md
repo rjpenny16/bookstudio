@@ -44,6 +44,7 @@ Brief ──► Interior generators ──► Cover templates ──► Listing 
 | **Backup** | Every saved project, plus research boards, sales imports and the sales calibration, is copied to the computer running BookStudio (`data/backup`, or `BACKUP_DIR`). Deleted projects go to `trash/`. The app asks the browser not to evict its storage, catches the backup up whenever it opens, and **Settings → Backup** restores anything this browser doesn't have. |
 | **Research** | Boards that import CSV data you are allowed to use. With Keepa set up, **Fetch competing books** fills a board from the niche's search, and DataForSEO volumes appear as a keyword cluster. They show observed BSR, price and reviews next to **labelled estimates** (with method, 95% interval and confidence), niche opportunity scoring with its reasoning, recurring title phrases, and AI keyword clusters. There is no scraping. |
 | **Measure** | Import your KDP royalty reports (CSV). Shows units and royalties by month and by title, linked back to projects by ASIN (paste it on the Listing tab once the book is live; ISBN-13s in reports are matched too) or by title. With Keepa set up, **Calibrate sales estimates** reads your books' sales rank history and fits how many copies a rank means for your books. Research estimates then use that curve instead of the generic 100,000 ÷ rank, and say how many book-months it rests on. |
+| **Formats and release planner** | KDP limits new titles to 2 per format per week (Sunday 00:00 UTC reset; paperback, hardcover and eBook counted separately), with the same cap on first-time submissions. Each book has a **Formats** panel on its Export tab: turn on hardcover and Kindle eBook beside the paperback, give each its own ISBN, price and ASIN, plan it into a week, and record when it was created, submitted and went live on KDP. The projects page shows this week's slots left per format, and **Release planner** lays the next 8 weeks out by format, with a button that plans every waiting format into the earliest free week. `quota` in the phone inbox replies with the same numbers. BookStudio builds paperback files only for now; hardcover and eBook can be planned and tracked. |
 | **Calculators** | Cover/spine, interior margins, printing cost, and royalty. They read the same rule set as the editor, preflight and agent. |
 
 ## Quick start
@@ -98,7 +99,7 @@ One-time setup, about 10 minutes:
 4. In Discord's settings, turn on **Advanced → Developer Mode**. Right-click the channel → Copy Channel ID, and your own name → Copy User ID.
 5. Put the three values in `.env.local` as `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID` and `DISCORD_OWNER_ID`, restart `npm run dev` (or `npm start`), and use **Settings → Phone inbox → Send test message**.
 
-Then post an idea in the channel, for example `gratitude journal for nurses 6x9` or `word search for kids, letter size, no art`. A page count (`120 pages`), a trim size (`6x9`, `letter size`) and `no art` are read from the first line; book type is inferred as on the home page; later lines go to the brief as notes. `status` lists the queue and `cancel 2` drops a queued idea.
+Then post an idea in the channel, for example `gratitude journal for nurses 6x9` or `word search for kids, letter size, no art`. A page count (`120 pages`), a trim size (`6x9`, `letter size`) and `no art` are read from the first line; book type is inferred as on the home page; later lines go to the brief as notes. `status` lists the queue, `quota` replies with this week's KDP title slots per format (read from the server's project backups), and `cancel 2` drops a queued idea.
 
 How building works: autopilot renders pages and covers in the browser and saves projects to the browser's storage, so a BookStudio tab must be open to build. With the server running and a tab open, ideas are built as they arrive (one at a time; a build interrupted by closing the tab is queued again after 10 minutes). If the computer is off, ideas wait in Discord and are built once you start the server and open BookStudio. The queue is kept in `data/inbox.json` (or `INBOX_FILE`). Links in the bot's replies point at `http://localhost:3000` unless `BOOKSTUDIO_URL` is set, so they open on the computer running BookStudio.
 
@@ -166,7 +167,7 @@ Builds six reference books through the real one-click start with the offline pro
 
 These are features the blueprint calls for that are not in v0.1:
 
-- Hardcover and ebook formats, plus non-US marketplaces' printing costs
+- Hardcover and ebook files (case-laminate cover, fixed-layout EPUB; the formats can already be planned and tracked), plus non-US marketplaces' printing costs
 - More image providers (FLUX/ComfyUI) and a dedicated upscaler behind the same `ImageProvider` interface, plus automatic line-art cleanup for coloring pages
 - PDF/SVG import with OCR layout recovery (PaddleOCR worker)
 - Server-side projects, accounts and team roles (Keycloak/OIDC), real-time collaboration

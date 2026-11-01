@@ -10,7 +10,7 @@ import { requestPersistence } from "@/lib/storage/mirror";
 const NAV: { group: string; items: { href: string; label: string }[] }[] = [
   { group: "Create", items: [{ href: "/", label: "Projects" }, { href: "/new", label: "New book" }, { href: "/autopilot", label: "AI Autopilot" }, { href: "/inbox", label: "Inbox" }] },
   { group: "Research", items: [{ href: "/research", label: "Research boards" }] },
-  { group: "Publish", items: [{ href: "/tools", label: "KDP calculators" }] },
+  { group: "Publish", items: [{ href: "/schedule", label: "Release planner" }, { href: "/tools", label: "KDP calculators" }] },
   { group: "Measure", items: [{ href: "/sales", label: "Sales reports" }] },
   { group: "System", items: [{ href: "/settings", label: "Settings" }] },
 ];
