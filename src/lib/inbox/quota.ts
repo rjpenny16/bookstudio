@@ -2,12 +2,19 @@ import { addWeeks, quotaSummary, weekItems, weekKey, type EditionRef } from "@/l
 import { FORMAT_KINDS, FORMAT_LABEL } from "@/lib/schema/formats";
 import { migrateProject } from "@/lib/schema/migrate";
 import type { Project } from "@/lib/schema/project";
-import { listProjectBackups, readProjectBackup } from "@/lib/storage/backup";
+import { listBackupEditions, readProjectBackup } from "@/lib/storage/backup";
 
-/** Planner refs from the server's backup copies of the projects (the browser keeps the originals). */
+/**
+ * Planner refs from the server's backups (the browser keeps the originals). Format status
+ * comes from the backup index; a project file is opened only when its entry predates formats.
+ */
 export async function backupRefs(): Promise<EditionRef[]> {
   const refs: EditionRef[] = [];
-  for (const b of await listProjectBackups()) {
+  for (const b of await listBackupEditions()) {
+    if (b.editions) {
+      for (const edition of b.editions) refs.push({ projectId: b.id, title: b.title, edition });
+      continue;
+    }
     const raw = await readProjectBackup(b.id);
     if (!raw || !raw.metadata) continue;
     const p = migrateProject(raw as unknown as Project);
