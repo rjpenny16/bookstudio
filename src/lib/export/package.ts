@@ -5,6 +5,9 @@ import { aiUsage } from "@/lib/preflight/aiUsage";
 import { runPreflight, type PreflightReport } from "@/lib/preflight";
 import { fontDef, type FontBytesLoader } from "@/lib/render/fonts";
 import { renderCoverPdf, renderInteriorPdf } from "@/lib/render/pdf";
+import { ebookRoyalty } from "@/lib/kdp/ebook";
+import { FILL_IN_TYPES, RULES_VERSION_EBOOK } from "@/lib/kdp/rules-ebook";
+import { measuredEbookMb } from "@/lib/preflight/ebook";
 import { editionOf, formatAsin, formatIsbn, formatPrice } from "@/lib/schema/formats";
 import { hardcoverProject, hardcoverReady, hardcoverSpec } from "@/lib/schema/hardcover";
 import { isReadableSchema, migrateProject } from "@/lib/schema/migrate";
@@ -59,13 +62,50 @@ export function metadataJson(p: Project, format: "paperback" | "hardcover" = "pa
   };
 }
 
-/** One row per print format. */
+/** Listing data for the Kindle eBook: same listing, its own price and ASIN, no ISBN, royalty from the measured file size. */
+export function ebookMetadataJson(p: Project) {
+  const e = editionOf(p, "ebook");
+  const listPriceUsd = formatPrice(p, "ebook") ?? 0;
+  const mb = measuredEbookMb(p);
+  const r = ebookRoyalty(listPriceUsd, mb ?? 0);
+  const plan = e.royaltyPlan ?? r.best;
+  const asin = formatAsin(p, "ebook");
+  const { asin: _asin, ...metadata } = p.metadata;
+  void _asin;
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    marketplace: "amazon-kdp",
+    format: "ebook" as const,
+    ...metadata,
+    ...(asin ? { asin } : {}),
+    isbn: { kind: "none" as const, value: "" },
+    listPriceUsd,
+    keywords: p.metadata.keywords.filter((k) => k.trim()),
+    lowContent: isLowContent(p.bookType),
+    print: undefined,
+    ebook: { layout: "fixed (one image per page)", pageCount: p.interior.pages.length, image: e.ebookImage ?? "standard", fileMb: mb == null ? null : round(mb, 2), rulesVersion: RULES_VERSION_EBOOK },
+    pricing: {
+      listPriceUsd,
+      royaltyPlan: `${plan}%`,
+      royaltyRate: plan === "70" ? 0.7 : 0.35,
+      deliveryUsd: plan === "70" ? r.seventy.deliveryUsd : 0,
+      royaltyUsd: plan === "70" ? r.seventy.royaltyUsd : r.thirtyFive.royaltyUsd,
+    },
+  };
+}
+
+/** Formats the package has files for, in order. */
+export function packageFormats(p: Project): ("paperback" | "hardcover" | "ebook")[] {
+  return [...printFormats(p), ...(editionOf(p, "ebook").enabled ? (["ebook"] as const) : [])];
+}
+
+/** One row per format. */
 export function metadataCsv(p: Project): string {
-  const rows = printFormats(p).map((f) => metadataCsvColumns(metadataJson(p, f)));
+  const rows = packageFormats(p).map((f) => metadataCsvColumns(f === "ebook" ? ebookMetadataJson(p) : metadataJson(p, f)));
   return `${rows[0].map(([k]) => k).join(",")}\n${rows.map((cols) => cols.map(([, v]) => csvCell(v)).join(",")).join("\n")}\n`;
 }
 
-function metadataCsvColumns(m: ReturnType<typeof metadataJson>): [string, unknown][] {
+function metadataCsvColumns(m: ReturnType<typeof metadataJson> | ReturnType<typeof ebookMetadataJson>): [string, unknown][] {
   return [
     ["format", m.format],
     ["title", m.title],
@@ -80,12 +120,12 @@ function metadataCsvColumns(m: ReturnType<typeof metadataJson>): [string, unknow
     ["isbn", m.isbn.kind === "own" ? m.isbn.value : m.isbn.kind],
     ["low_content", m.lowContent],
     ["adult_content", m.adultContent],
-    ["trim", m.print.trim],
-    ["page_count", m.print.pageCount],
-    ["bleed", m.print.bleed],
-    ["paper", m.print.paper],
-    ["ink", m.print.ink],
-    ["cover_finish", m.print.coverFinish],
+    ["trim", m.print?.trim ?? ""],
+    ["page_count", m.print?.pageCount ?? ("ebook" in m ? m.ebook.pageCount : "")],
+    ["bleed", m.print?.bleed ?? ""],
+    ["paper", m.print?.paper ?? ""],
+    ["ink", m.print?.ink ?? ""],
+    ["cover_finish", m.print?.coverFinish ?? ""],
     ["list_price_usd", m.pricing.listPriceUsd],
     ["ai_text", m.aiDisclosure.text],
     ["ai_images", m.aiDisclosure.images],
@@ -164,8 +204,26 @@ UPLOAD ON KDP (Bookshelf > Create > Paperback)
   4. Launch the Print Previewer and check every flagged page.
   5. Rights & Pricing: list price $${p.metadata.listPriceUsd.toFixed(2)} USD (see metadata.json for royalty).
 
-${printFormats(p).includes("hardcover") ? hardcoverReadme(p) : ""}BookStudio never stores KDP credentials and does not publish for you: the final
+${printFormats(p).includes("hardcover") ? hardcoverReadme(p) : ""}${editionOf(p, "ebook").enabled ? ebookReadme(p) : ""}BookStudio never stores KDP credentials and does not publish for you: the final
 review and the Publish button stay with you.
+`;
+}
+
+function ebookReadme(p: Project): string {
+  const m = ebookMetadataJson(p);
+  return `KINDLE EBOOK (ebook/ folder; Bookshelf > + Create > Kindle eBook)
+  ebook/book.epub                 fixed-layout EPUB, one image per page (${m.ebook.pageCount} pages${m.ebook.fileMb != null ? `, ${m.ebook.fileMb} MB` : ""})
+  ebook/cover.jpg                 Kindle cover, 1600 x 2560 px
+  ebook/kindle-create-source.pdf  the interior without bleed, for Kindle Create
+  1. Use exactly the same title, subtitle and author as the print book so Amazon
+     links the formats. No ISBN is needed for a Kindle eBook.
+  2. Kindle eBook Content: upload ebook/book.epub as the manuscript and ebook/cover.jpg
+     as the cover, then check every page in the Kindle Previewer.
+     If KDP turns the EPUB down, open Kindle Create, import
+     ebook/kindle-create-source.pdf as a print replica, and upload the .kpf it saves.
+  3. Pricing: ${m.listPriceUsd ? `$${m.listPriceUsd.toFixed(2)} USD at ${m.pricing.royaltyPlan} royalty, about $${m.pricing.royaltyUsd.toFixed(2)} a sale` : "no price set yet"}${m.pricing.deliveryUsd ? ` after a $${m.pricing.deliveryUsd.toFixed(2)} delivery fee` : ""}.${FILL_IN_TYPES.includes(p.bookType) ? "\n  4. Readers can't write in a Kindle eBook: say so in the eBook description." : ""}
+  KDP allows 2 new eBook titles a week; record it in BookStudio's Formats panel.
+
 `;
 }
 
@@ -195,6 +253,8 @@ export interface PackageOptions {
   coverPreviewPng?: Blob;
   mockupPng?: Blob;
   hardcoverMockupPng?: Blob;
+  /** The Kindle eBook, built in the browser (pages are rendered to images there). */
+  ebook?: { epub: Uint8Array; coverJpg: Blob | Uint8Array };
   onProgress?: (label: string, fraction: number) => void;
 }
 
@@ -215,6 +275,14 @@ export async function buildKdpPackage(project: Project, opts: PackageOptions): P
     zip.file("hardcover/cover.pdf", await renderCoverPdf(hardcoverProject(project), { loadFont: opts.loadFont }));
     zip.file("hardcover/metadata.json", JSON.stringify(metadataJson(project, "hardcover"), null, 2));
     if (opts.hardcoverMockupPng) zip.file("mockups/hardcover.png", opts.hardcoverMockupPng);
+  }
+  if (opts.ebook && editionOf(project, "ebook").enabled) {
+    opts.onProgress?.("Adding the eBook", 0.85);
+    zip.file("ebook/book.epub", opts.ebook.epub);
+    zip.file("ebook/cover.jpg", opts.ebook.coverJpg);
+    const noBleed = project.spec.bleed ? await renderInteriorPdf({ ...project, spec: { ...project.spec, bleed: false } }, { loadFont: opts.loadFont }) : interior;
+    zip.file("ebook/kindle-create-source.pdf", noBleed);
+    zip.file("ebook/metadata.json", JSON.stringify(ebookMetadataJson(project), null, 2));
   }
   zip.file("metadata.json", JSON.stringify(metadataJson(project), null, 2));
   zip.file("metadata.csv", metadataCsv(project));

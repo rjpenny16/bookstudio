@@ -81,3 +81,47 @@ test("turn on a hardcover, check its cover against KDP, plan it, record it and e
   await expect(page.getByRole("heading", { name: "This week on KDP" })).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test("build a Kindle eBook, compare royalty rates, and export it", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+
+  await page.goto("/");
+  await page.getByRole("link", { name: /Start from a KDP preset/ }).click();
+  await page.getByLabel("Working title").fill("Ebook Test Journal");
+  await page.getByLabel("Book type").selectOption("journal");
+  await page.getByRole("button", { name: "Create book" }).click();
+  await expect(page).toHaveURL(/\/projects\/prj_/);
+  const pages = await page.getByRole("listbox", { name: "Pages" }).getByRole("option").count();
+
+  await page.getByRole("tab", { name: "Export" }).click();
+  const formats = page.locator("#formats");
+  await formats.getByLabel("Publish as Kindle eBook").check();
+  await formats.getByLabel("List price (USD)").fill("3.99");
+  const ebook = page.locator("#ebook");
+  await expect(ebook.getByText(/can.t write in an eBook/)).toBeVisible();
+  await expect(ebook.getByText("Not built")).toBeVisible();
+
+  await ebook.getByRole("button", { name: "Build eBook" }).click();
+  await expect(ebook.getByText(/\d+(\.\d)? MB/).first()).toBeVisible({ timeout: 60_000 });
+  await expect(ebook.getByRole("img", { name: "Kindle eBook cover" })).toBeVisible();
+  await expect(ebook.getByText(/pays more at \$3\.99/)).toBeVisible();
+  if (shots) await page.screenshot({ path: `${shots}/ebook.png`, fullPage: true });
+
+  const [download] = await Promise.all([page.waitForEvent("download"), ebook.getByRole("button", { name: "book.epub" }).click()]);
+  const epub = await JSZip.loadAsync(await readFile((await download.path())!));
+  expect(await epub.file("mimetype")!.async("string")).toBe("application/epub+zip");
+  const opf = await epub.file("OEBPS/content.opf")!.async("string");
+  expect(opf).toContain("pre-paginated");
+  expect(opf).toContain("<dc:title>Ebook Test Journal</dc:title>");
+  expect(epub.file(/^OEBPS\/p\d+\.xhtml$/)).toHaveLength(pages);
+  const cover = await epub.file("OEBPS/images/cover.jpg")!.async("uint8array");
+  expect(cover[0]).toBe(0xff);
+
+  await page.getByLabel(/I reviewed the interior/).check();
+  const [pkg] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: /Download .*KDP package/ }).click()]);
+  const zip = await JSZip.loadAsync(await readFile((await pkg.path())!));
+  for (const f of ["ebook/book.epub", "ebook/cover.jpg", "ebook/kindle-create-source.pdf", "ebook/metadata.json"]) expect(zip.file(f), f).not.toBeNull();
+  expect(JSON.parse(await zip.file("ebook/metadata.json")!.async("string"))).toMatchObject({ format: "ebook", listPriceUsd: 3.99 });
+  expect(errors).toEqual([]);
+});

@@ -9,6 +9,7 @@ import { browserFontLoader } from "@/lib/render/fonts";
 import { renderCoverPdf, renderInteriorPdf } from "@/lib/render/pdf";
 import { useProjectStore } from "@/lib/storage/store";
 import { FormatsPanel } from "./FormatsPanel";
+import { EbookPanel } from "./EbookPanel";
 import { HardcoverPanel } from "./HardcoverPanel";
 
 export function ExportTab({ report, onGoPreflight }: { report: PreflightReport; onGoPreflight: () => void }) {
@@ -56,6 +57,7 @@ export function ExportTab({ report, onGoPreflight }: { report: PreflightReport; 
       <div className="stack">
         <FormatsPanel />
         <HardcoverPanel />
+        <EbookPanel />
         <div className="card stack">
           <h2 style={{ margin: 0 }}>KDP publication package</h2>
           <p className="muted" style={{ margin: 0 }}>
