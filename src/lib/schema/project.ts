@@ -23,7 +23,7 @@ export type Paper = "white" | "cream";
 
 export interface PrintSpec {
   marketplace: "amazon-kdp";
-  binding: "paperback";
+  binding: "paperback" | "hardcover";
   trimId: string;
   widthIn: number;
   heightIn: number;
@@ -34,6 +34,8 @@ export interface PrintSpec {
   coverFinish: "matte" | "glossy";
   /** Version of the marketplace rule set the project was validated against. */
   rulesVersion: string;
+  /** Hardcover only: board size measured from KDP's own cover calculator, replacing the rule-set defaults (optional). */
+  coverAdjust?: { boardExtraWidthIn: number; boardExtraHeightIn: number };
 }
 
 /** The KDP formats one book can be published in. KDP counts each one separately toward its weekly title limits. */
@@ -66,6 +68,12 @@ export interface FormatEdition {
   listPriceUsd?: number;
   /** Not used for the paperback, which uses `metadata.asin`. */
   asin?: string;
+  /**
+   * Hardcover only: the full cover size KDP's cover calculator gives for this book, and
+   * the page count it was for. Preflight compares BookStudio's cover with it; `adopt`
+   * makes BookStudio size the boards to match it.
+   */
+  coverCheck?: { widthIn: number; heightIn: number; pages: number; adopt?: boolean };
   kdp: FormatKdpState;
 }
 

@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { coverGeometry, findTrim, gutterIn, outsideMarginIn, printCostUsd, royaltyUsd, spineWidthIn } from "@/lib/kdp/geometry";
+import { coverGeometry, findTrim, gutterIn, hardcoverAvailability, isHardcoverTrim, outsideMarginIn, printCostUsd, royaltyUsd, spineWidthIn } from "@/lib/kdp/geometry";
 import { GUTTER_TABLE, pageRange, RULES_VERSION, TRIM_SIZES } from "@/lib/kdp/rules";
+import { HARDCOVER_COVER, HARDCOVER_PAGE_RANGE, RULES_VERSION_HARDCOVER } from "@/lib/kdp/rules-hardcover";
 import { paperbackSpec } from "@/lib/schema/spec";
 import type { InteriorInk, Paper, PrintSpec } from "@/lib/schema/project";
 import { ptToIn, round } from "@/lib/util/ids";
@@ -14,11 +15,15 @@ export default function Tools() {
   const [ink, setInk] = useState<InteriorInk>("black");
   const [bleed, setBleed] = useState(false);
   const [price, setPrice] = useState(9.99);
+  const [binding, setBinding] = useState<PrintSpec["binding"]>("paperback");
+  const hc = binding === "hardcover";
   const trim = findTrim(trimId)!;
-  const spec: PrintSpec = paperbackSpec(trimId, { bleed, paper, ink });
+  const base = paperbackSpec(trimId, { bleed, paper, ink });
+  const spec: PrintSpec = hc ? { ...base, binding: "hardcover", rulesVersion: RULES_VERSION_HARDCOVER } : base;
   const cg = coverGeometry(spec, pages);
   const r = royaltyUsd(spec, pages, price);
-  const range = pageRange(ink, paper);
+  const range = hc ? HARDCOVER_PAGE_RANGE : pageRange(ink, paper);
+  const hcIssues = hc ? hardcoverAvailability(spec, pages).reasons : [];
   const inches = (pt: number, d = 3) => `${round(ptToIn(pt), d)}"`;
 
   return (
@@ -33,9 +38,26 @@ export default function Tools() {
         <div className="field-row">
           <div className="field">
             <label>
+              Binding
+              <select
+                value={binding}
+                onChange={(e) => {
+                  const b = e.target.value as PrintSpec["binding"];
+                  setBinding(b);
+                  if (b === "hardcover" && !isHardcoverTrim(trimId)) setTrimId("6x9");
+                  if (b === "hardcover" && ink === "standard-color") setInk("black");
+                }}
+              >
+                <option value="paperback">Paperback</option>
+                <option value="hardcover">Hardcover (case laminate)</option>
+              </select>
+            </label>
+          </div>
+          <div className="field">
+            <label>
               Trim
               <select value={trimId} onChange={(e) => setTrimId(e.target.value)}>
-                {TRIM_SIZES.map((t) => (
+                {TRIM_SIZES.filter((t) => !hc || isHardcoverTrim(t.id)).map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.label}
                   </option>
@@ -54,7 +76,7 @@ export default function Tools() {
               Ink
               <select value={ink} onChange={(e) => { setInk(e.target.value as InteriorInk); if (e.target.value !== "black") setPaper("white"); }}>
                 <option value="black">Black & white</option>
-                <option value="standard-color">Standard color</option>
+                <option value="standard-color" disabled={hc}>Standard color</option>
                 <option value="premium-color">Premium color</option>
               </select>
             </label>
@@ -78,7 +100,16 @@ export default function Tools() {
         <label className="check">
           <input type="checkbox" checked={bleed} onChange={(e) => setBleed(e.target.checked)} /> Interior bleed
         </label>
-        {(pages < range.min || pages > range.max) && <div className="notice notice-fail">KDP allows {range.min}–{range.max} pages for this paper and ink.</div>}
+        {hc ? (
+          hcIssues.length > 0 && <div className="notice notice-fail">{hcIssues.join(" ")}</div>
+        ) : (
+          (pages < range.min || pages > range.max) && <div className="notice notice-fail">KDP allows {range.min}–{range.max} pages for this paper and ink.</div>
+        )}
+        {hc && (
+          <p className="field-hint" style={{ margin: 0 }}>
+            Hardcover numbers ({RULES_VERSION_HARDCOVER}) come from KDP&apos;s help pages and published guides that disagree on the wrap; check the cover size against KDP&apos;s own cover calculator.
+          </p>
+        )}
       </div>
 
       <div className="grid grid-3" style={{ marginTop: 14 }}>
@@ -86,9 +117,10 @@ export default function Tools() {
           <h2 style={{ margin: 0 }}>Cover</h2>
           <table className="table">
             <tbody>
-              <tr><td>Full cover (with bleed)</td><td className="num">{inches(cg.width)} × {inches(cg.height)}</td></tr>
+              <tr><td>Full cover ({hc ? "with wrap" : "with bleed"})</td><td className="num">{inches(cg.width)} × {inches(cg.height)}</td></tr>
               <tr><td>Spine width</td><td className="num">{spineWidthIn(spec, pages).toFixed(4)}"</td></tr>
-              <tr><td>Bleed</td><td className="num">0.125" all sides</td></tr>
+              <tr><td>{hc ? "Wrap" : "Bleed"}</td><td className="num">{hc ? `${HARDCOVER_COVER.wrapIn}"` : '0.125"'} all sides</td></tr>
+              {hc && <tr><td>Hinge (no text)</td><td className="num">{HARDCOVER_COVER.hingeIn}" each side of the spine</td></tr>}
               <tr><td>Front panel starts at</td><td className="num">{inches(cg.front.x)}</td></tr>
               <tr><td>Spine text</td><td className="num">{cg.spineTextAllowed ? "Allowed" : "Needs 80+ pages"}</td></tr>
               <tr><td>Barcode area</td><td className="num">2" × 1.2", 0.25" from spine and bottom</td></tr>
@@ -125,7 +157,7 @@ export default function Tools() {
               <tr><td>Printing cost</td><td className="num">${printCostUsd(spec, pages).toFixed(2)}</td></tr>
               <tr><td>Royalty rate</td><td className="num">{Math.round(r.rate * 100)}%</td></tr>
               <tr><td>Royalty per sale</td><td className="num" style={{ color: r.royalty < 0 ? "var(--fail)" : undefined }}>${r.royalty.toFixed(2)}</td></tr>
-              <tr><td>Expanded Distribution</td><td className="num">${r.expandedRoyalty.toFixed(2)}</td></tr>
+              {!hc && <tr><td>Expanded Distribution</td><td className="num">${r.expandedRoyalty.toFixed(2)}</td></tr>}
               <tr><td>Minimum list price</td><td className="num">${r.minListPrice.toFixed(2)}</td></tr>
             </tbody>
           </table>

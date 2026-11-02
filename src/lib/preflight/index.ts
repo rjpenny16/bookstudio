@@ -25,6 +25,7 @@ import { elementBounds, elementLabel } from "@/lib/schema/elements";
 import { isLowContent, type Element, type Project } from "@/lib/schema/project";
 import { round, ptToIn } from "@/lib/util/ids";
 import { aiUsage } from "./aiUsage";
+import { hardcoverCheck } from "./hardcover";
 
 export type CheckStatus = "pass" | "warn" | "fail" | "info";
 
@@ -36,7 +37,8 @@ export type FixId =
   | "clear-barcode"
   | "clean-keywords"
   | "suggest-ai-disclosure"
-  | "fix-paper-ink";
+  | "fix-paper-ink"
+  | "adopt-kdp-cover-size";
 
 export interface Issue {
   message: string;
@@ -336,6 +338,12 @@ export function runPreflight(project: Project): PreflightReport {
       c.fix = undefined;
     }
     checks.push(c);
+  }
+
+  // 13. Hardcover edition (only when it is turned on)
+  {
+    const hc = hardcoverCheck(project);
+    if (hc) checks.push(hc);
   }
 
   const passed = checks.filter((c) => c.status === "pass" || c.status === "info").length;

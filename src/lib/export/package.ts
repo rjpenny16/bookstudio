@@ -5,6 +5,8 @@ import { aiUsage } from "@/lib/preflight/aiUsage";
 import { runPreflight, type PreflightReport } from "@/lib/preflight";
 import { fontDef, type FontBytesLoader } from "@/lib/render/fonts";
 import { renderCoverPdf, renderInteriorPdf } from "@/lib/render/pdf";
+import { editionOf, formatAsin, formatIsbn, formatPrice } from "@/lib/schema/formats";
+import { hardcoverProject, hardcoverReady, hardcoverSpec } from "@/lib/schema/hardcover";
 import { isReadableSchema, migrateProject } from "@/lib/schema/migrate";
 import { isLowContent, SCHEMA_VERSION, type Element, type Project } from "@/lib/schema/project";
 import { round, ptToIn } from "@/lib/util/ids";
@@ -18,14 +20,29 @@ export function slug(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "book";
 }
 
-export function metadataJson(p: Project) {
+/** Print formats the package has files for: the paperback, and the hardcover when it is on and possible. */
+export function printFormats(p: Project): ("paperback" | "hardcover")[] {
+  return editionOf(p, "hardcover").enabled && hardcoverReady(p).ok ? ["paperback", "hardcover"] : ["paperback"];
+}
+
+/** Listing and print data for one print format. The hardcover has its own spec, ISBN, price and ASIN. */
+export function metadataJson(p: Project, format: "paperback" | "hardcover" = "paperback") {
   const n = p.interior.pages.length;
-  const r = royaltyUsd(p.spec, n, p.metadata.listPriceUsd);
+  const hc = format === "hardcover";
+  const spec = hc ? hardcoverSpec(p) : p.spec;
+  const listPriceUsd = formatPrice(p, format) ?? 0;
+  const r = royaltyUsd(spec, n, listPriceUsd);
+  const asin = formatAsin(p, format);
+  const { asin: _asin, ...metadata } = p.metadata;
+  void _asin;
   return {
     schemaVersion: SCHEMA_VERSION,
     marketplace: "amazon-kdp",
-    format: "paperback",
-    ...p.metadata,
+    format,
+    ...metadata,
+    ...(asin ? { asin } : {}),
+    isbn: formatIsbn(p, format),
+    listPriceUsd,
     keywords: p.metadata.keywords.filter((k) => k.trim()),
     lowContent: isLowContent(p.bookType),
     print: {
@@ -35,15 +52,22 @@ export function metadataJson(p: Project) {
       paper: p.spec.paper,
       ink: p.spec.ink,
       coverFinish: p.spec.coverFinish,
-      spineWidthIn: round(spineWidthIn(p.spec, n), 4),
+      spineWidthIn: round(spineWidthIn(spec, n), 4),
+      ...(hc ? { coverIn: ((cg) => `${round(cg.width / 72, 3)} x ${round(cg.height / 72, 3)}`)(coverGeometry(spec, n)) } : {}),
     },
-    pricing: { listPriceUsd: p.metadata.listPriceUsd, printCostUsd: r.printCost, royaltyRate: r.rate, royaltyUsd: r.royalty, minListPriceUsd: r.minListPrice },
+    pricing: { listPriceUsd, printCostUsd: r.printCost, royaltyRate: r.rate, royaltyUsd: r.royalty, minListPriceUsd: r.minListPrice },
   };
 }
 
+/** One row per print format. */
 export function metadataCsv(p: Project): string {
-  const m = metadataJson(p);
-  const cols: [string, unknown][] = [
+  const rows = printFormats(p).map((f) => metadataCsvColumns(metadataJson(p, f)));
+  return `${rows[0].map(([k]) => k).join(",")}\n${rows.map((cols) => cols.map(([, v]) => csvCell(v)).join(",")).join("\n")}\n`;
+}
+
+function metadataCsvColumns(m: ReturnType<typeof metadataJson>): [string, unknown][] {
+  return [
+    ["format", m.format],
     ["title", m.title],
     ["subtitle", m.subtitle],
     ["author", m.author],
@@ -67,7 +91,6 @@ export function metadataCsv(p: Project): string {
     ["ai_images", m.aiDisclosure.images],
     ["ai_translation", m.aiDisclosure.translation],
   ];
-  return `${cols.map(([k]) => k).join(",")}\n${cols.map(([, v]) => csvCell(v)).join(",")}\n`;
 }
 
 export function provenanceJson(p: Project) {
@@ -141,8 +164,29 @@ UPLOAD ON KDP (Bookshelf > Create > Paperback)
   4. Launch the Print Previewer and check every flagged page.
   5. Rights & Pricing: list price $${p.metadata.listPriceUsd.toFixed(2)} USD (see metadata.json for royalty).
 
-BookStudio never stores KDP credentials and does not publish for you: the final
+${printFormats(p).includes("hardcover") ? hardcoverReadme(p) : ""}BookStudio never stores KDP credentials and does not publish for you: the final
 review and the Publish button stay with you.
+`;
+}
+
+function hardcoverReadme(p: Project): string {
+  const n = p.interior.pages.length;
+  const hc = hardcoverProject(p);
+  const cg = coverGeometry(hc.spec, n);
+  const e = editionOf(p, "hardcover");
+  const isbn = formatIsbn(p, "hardcover");
+  const price = formatPrice(p, "hardcover");
+  return `HARDCOVER (hardcover/ folder; Bookshelf > + Create > Hardcover)
+  hardcover/interior.pdf  the same interior as the paperback
+  hardcover/cover.pdf     ${round(ptToIn(cg.width), 3)}" x ${round(ptToIn(cg.height), 3)}" case-laminate wrap, spine ${round(ptToIn(cg.spine), 4)}"
+  1. Use exactly the same title, subtitle, author and series as the paperback,
+     so Amazon links both formats on one product page.
+  2. ISBN: ${isbn.kind === "own" ? isbn.value : isbn.kind === "kdp-free" ? "get a free KDP ISBN (each format needs its own)" : "none chosen yet"}.
+  3. Content: ${hc.spec.paper} paper, ${hc.spec.ink} ink, trim ${hc.spec.widthIn}" x ${hc.spec.heightIn}", ${hc.spec.coverFinish} finish.
+     Upload hardcover/interior.pdf and hardcover/cover.pdf.${e.coverCheck?.adopt ? "\n     The cover is sized to the KDP cover calculator size you entered." : "\n     Check the cover size against KDP's hardcover cover calculator first."}
+  4. Rights & Pricing: list price ${price != null ? `$${price.toFixed(2)} USD` : "not set yet"} (see hardcover/metadata.json for royalty).
+  5. KDP allows 2 new hardcover titles a week; record it in BookStudio's Formats panel.
+
 `;
 }
 
@@ -150,6 +194,7 @@ export interface PackageOptions {
   loadFont: FontBytesLoader;
   coverPreviewPng?: Blob;
   mockupPng?: Blob;
+  hardcoverMockupPng?: Blob;
   onProgress?: (label: string, fraction: number) => void;
 }
 
@@ -164,6 +209,13 @@ export async function buildKdpPackage(project: Project, opts: PackageOptions): P
   if (opts.coverPreviewPng) zip.file("cover-preview.png", opts.coverPreviewPng);
   if (opts.mockupPng) zip.file("mockups/paperback.png", opts.mockupPng);
   opts.onProgress?.("Writing metadata", 0.85);
+  if (printFormats(project).includes("hardcover")) {
+    opts.onProgress?.("Rendering hardcover cover", 0.8);
+    zip.file("hardcover/interior.pdf", interior);
+    zip.file("hardcover/cover.pdf", await renderCoverPdf(hardcoverProject(project), { loadFont: opts.loadFont }));
+    zip.file("hardcover/metadata.json", JSON.stringify(metadataJson(project, "hardcover"), null, 2));
+    if (opts.hardcoverMockupPng) zip.file("mockups/hardcover.png", opts.hardcoverMockupPng);
+  }
   zip.file("metadata.json", JSON.stringify(metadataJson(project), null, 2));
   zip.file("metadata.csv", metadataCsv(project));
   zip.file("keywords.csv", `slot,keyword,characters\n${project.metadata.keywords.map((k, i) => `${i + 1},${csvCell(k)},${k.length}`).join("\n")}\n`);
