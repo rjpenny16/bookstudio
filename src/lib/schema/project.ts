@@ -74,6 +74,12 @@ export interface FormatEdition {
    * makes BookStudio size the boards to match it.
    */
   coverCheck?: { widthIn: number; heightIn: number; pages: number; adopt?: boolean };
+  /** eBook only: page image size (pixels on the long side: standard 1600, sharp 2560). */
+  ebookImage?: "standard" | "sharp";
+  /** eBook only: the royalty rate chosen on KDP; unset picks whichever pays more. */
+  royaltyPlan?: "70" | "35";
+  /** eBook only: the size of the last eBook built, for the 70% delivery fee and price checks. */
+  ebookSize?: { bytes: number; pages: number; image: "standard" | "sharp" };
   kdp: FormatKdpState;
 }
 

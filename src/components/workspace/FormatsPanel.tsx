@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { TITLE_LIMITS } from "@/lib/kdp/limits";
 import { addWeeks, isOverdue, nextOpenWeek, openSlots, remaining, usage, weekKey, weekLabel, type EditionRef } from "@/lib/kdp/quota";
-import { clearSteps, editionDraft, editionOf, EXPORTABLE, FORMAT_KINDS, FORMAT_LABEL, recordStep, STATUS_LABEL, type KdpStep } from "@/lib/schema/formats";
+import { clearSteps, editionDraft, editionOf, FORMAT_KINDS, FORMAT_LABEL, recordStep, STATUS_LABEL, type KdpStep } from "@/lib/schema/formats";
 import type { FormatKind, KdpStatus, ListingMetadata } from "@/lib/schema/project";
 import { hardcoverReady } from "@/lib/schema/hardcover";
 import { listProjects } from "@/lib/storage/db";
@@ -97,11 +97,6 @@ export function FormatsPanel() {
                       />
                       <span>{FORMAT_LABEL[kind]}</span>
                     </label>
-                    {e.enabled && !EXPORTABLE[kind] && (
-                      <div className="field-hint" style={{ marginTop: 4 }}>
-                        BookStudio can&rsquo;t build {kind === "ebook" ? "eBook" : "hardcover"} files yet. You can plan and track it here.
-                      </div>
-                    )}
                     {e.enabled && kind === "hardcover" && !hardcoverOk && (
                       <div className="field-hint" style={{ marginTop: 4, color: "var(--fail)" }}>
                         Not possible as the book is. See Hardcover below.

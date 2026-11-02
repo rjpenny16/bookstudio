@@ -25,6 +25,7 @@ import { elementBounds, elementLabel } from "@/lib/schema/elements";
 import { isLowContent, type Element, type Project } from "@/lib/schema/project";
 import { round, ptToIn } from "@/lib/util/ids";
 import { aiUsage } from "./aiUsage";
+import { ebookCheck } from "./ebook";
 import { hardcoverCheck } from "./hardcover";
 
 export type CheckStatus = "pass" | "warn" | "fail" | "info";
@@ -344,6 +345,12 @@ export function runPreflight(project: Project): PreflightReport {
   {
     const hc = hardcoverCheck(project);
     if (hc) checks.push(hc);
+  }
+
+  // 14. Kindle eBook edition (only when it is turned on)
+  {
+    const eb = ebookCheck(project);
+    if (eb) checks.push(eb);
   }
 
   const passed = checks.filter((c) => c.status === "pass" || c.status === "info").length;

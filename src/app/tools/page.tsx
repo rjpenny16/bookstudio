@@ -4,6 +4,8 @@ import { useState } from "react";
 import { coverGeometry, findTrim, gutterIn, hardcoverAvailability, isHardcoverTrim, outsideMarginIn, printCostUsd, royaltyUsd, spineWidthIn } from "@/lib/kdp/geometry";
 import { GUTTER_TABLE, pageRange, RULES_VERSION, TRIM_SIZES } from "@/lib/kdp/rules";
 import { HARDCOVER_COVER, HARDCOVER_PAGE_RANGE, RULES_VERSION_HARDCOVER } from "@/lib/kdp/rules-hardcover";
+import { ebookRoyalty } from "@/lib/kdp/ebook";
+import { EBOOK_ROYALTY_US, RULES_VERSION_EBOOK } from "@/lib/kdp/rules-ebook";
 import { paperbackSpec } from "@/lib/schema/spec";
 import type { InteriorInk, Paper, PrintSpec } from "@/lib/schema/project";
 import { ptToIn, round } from "@/lib/util/ids";
@@ -166,6 +168,39 @@ export default function Tools() {
           </p>
         </div>
       </div>
+      <EbookCalculator />
+    </div>
+  );
+}
+
+/** Kindle eBook royalty: 70% (with the delivery fee per MB) against 35%, for a price and file size. */
+function EbookCalculator() {
+  const [price, setPrice] = useState(4.99);
+  const [mb, setMb] = useState(8);
+  const r = ebookRoyalty(price, mb);
+  return (
+    <div className="card stack" style={{ marginTop: 14 }}>
+      <h2 style={{ margin: 0 }}>Kindle eBook royalty (amazon.com)</h2>
+      <div className="field-row">
+        <label className="field">
+          List price (USD)
+          <input type="number" min={0} step={0.01} value={price} onChange={(e) => setPrice(Number(e.target.value) || 0)} />
+        </label>
+        <label className="field">
+          File size (MB)
+          <input type="number" min={0} step={0.1} value={mb} onChange={(e) => setMb(Math.max(0, Number(e.target.value) || 0))} />
+        </label>
+      </div>
+      <table className="table">
+        <tbody>
+          <tr><td>70% royalty</td><td className="num">{r.seventy.eligible ? `$${r.seventy.royaltyUsd.toFixed(2)} after $${r.seventy.deliveryUsd.toFixed(2)} delivery` : `Needs $${EBOOK_ROYALTY_US.highMinUsd} to $${EBOOK_ROYALTY_US.highMaxUsd}`}</td></tr>
+          <tr><td>35% royalty</td><td className="num">{r.thirtyFive.eligible ? `$${r.thirtyFive.royaltyUsd.toFixed(2)}` : `Lowest price at this size is $${r.thirtyFive.minPriceUsd.toFixed(2)}`}</td></tr>
+          <tr><td>Pays more</td><td className="num">{r.best}%</td></tr>
+        </tbody>
+      </table>
+      <p className="field-hint" style={{ margin: 0 }}>
+        Rules {RULES_VERSION_EBOOK}: 70% from ${EBOOK_ROYALTY_US.highMinUsd} to ${EBOOK_ROYALTY_US.highMaxUsd} minus ${EBOOK_ROYALTY_US.deliveryPerMbUsd} per MB; 35% otherwise. Fixed-layout eBooks are images, so they are large: build the eBook on a book&apos;s Export tab to measure its real size.
+      </p>
     </div>
   );
 }
