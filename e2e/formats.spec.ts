@@ -125,3 +125,45 @@ test("build a Kindle eBook, compare royalty rates, and export it", async ({ page
   expect(JSON.parse(await zip.file("ebook/metadata.json")!.async("string"))).toMatchObject({ format: "ebook", listPriceUsd: 3.99 });
   expect(errors).toEqual([]);
 });
+
+test("a mystery's eBook is a text eBook: the story reflows and the puzzles are pictures", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+
+  await page.goto("/autopilot");
+  await page.getByLabel("Message").fill("cozy murder mystery at a country manor for adults who love cozy mysteries");
+  await page.getByRole("button", { name: "Start the book" }).click();
+  await expect(page.getByText("Draft ready for your review")).toBeVisible({ timeout: 90_000 });
+  await page.getByRole("link", { name: "Open in studio" }).click();
+  await expect(page).toHaveURL(/\/projects\/prj_/);
+
+  await page.getByRole("tab", { name: "Export" }).click();
+  await page.locator("#formats").getByLabel("Publish as Kindle eBook").check();
+  await page.locator("#formats").getByLabel("List price (USD)").fill("4.99");
+  const ebook = page.locator("#ebook");
+  await expect(ebook.getByLabel("Layout")).toHaveValue("");
+  await expect(ebook.getByRole("option", { name: "Text (suggested for this book)" })).toBeAttached();
+
+  await ebook.getByRole("button", { name: "Build eBook" }).click();
+  await expect(ebook.getByText(/Left out of the text eBook/)).toBeVisible({ timeout: 90_000 });
+  const textMb = Number((await ebook.getByText(/^\d+(\.\d)? MB$/).first().textContent())!.replace(" MB", ""));
+  if (shots) await page.screenshot({ path: `${shots}/ebook-text.png`, fullPage: true });
+
+  const [download] = await Promise.all([page.waitForEvent("download"), ebook.getByRole("button", { name: "book.epub" }).click()]);
+  const epub = await JSZip.loadAsync(await readFile((await download.path())!));
+  const opf = await epub.file("OEBPS/content.opf")!.async("string");
+  expect(opf).not.toContain("pre-paginated");
+  const docs = await Promise.all(epub.file(/^OEBPS\/s\d+\.xhtml$/).map((f) => f.async("string")));
+  // Chapters are text the reader can resize; puzzles are pictures.
+  expect(docs.some((d) => /<section epub:type="chapter"><p class="kicker">Chapter 1<\/p>/.test(d) && /<p class="first">[A-Z]/.test(d))).toBe(true);
+  expect(docs.some((d) => /<figure><img src="images\/p\d+\.jpg"/.test(d))).toBe(true);
+
+  // The same book as a fixed-layout eBook is several times bigger.
+  await ebook.getByLabel("Layout").selectOption("fixed");
+  await ebook.getByRole("button", { name: "Rebuild eBook" }).click();
+  await expect(ebook.getByText(/Left out of the text eBook/)).toBeHidden({ timeout: 90_000 });
+  await expect(ebook.getByText(/^\d+(\.\d)? MB$/).first()).not.toHaveText(`${textMb} MB`, { timeout: 90_000 });
+  const fixedMb = Number((await ebook.getByText(/^\d+(\.\d)? MB$/).first().textContent())!.replace(" MB", ""));
+  expect(fixedMb).toBeGreaterThan(textMb * 2);
+  expect(errors).toEqual([]);
+});
