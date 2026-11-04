@@ -1,5 +1,6 @@
 import { bytesToMb, ebookRoyalty } from "@/lib/kdp/ebook";
 import { EBOOK_MAX_FILE_MB, EBOOK_ROYALTY_US, FILL_IN_TYPES, MOSTLY_BLANK_TYPES } from "@/lib/kdp/rules-ebook";
+import { ebookLayoutOf, sectionsToBlocks } from "@/lib/export/ebookBlocks";
 import { editionOf } from "@/lib/schema/formats";
 import type { Project } from "@/lib/schema/project";
 import { round } from "@/lib/util/ids";
@@ -8,7 +9,7 @@ import type { Check, Issue } from "./index";
 /** The measured eBook size, when it was built from the current page count. */
 export function measuredEbookMb(p: Project): number | null {
   const s = editionOf(p, "ebook").ebookSize;
-  return s && s.pages === p.interior.pages.length ? bytesToMb(s.bytes) : null;
+  return s && s.pages === p.interior.pages.length && (s.layout ?? "fixed") === ebookLayoutOf(p) ? bytesToMb(s.bytes) : null;
 }
 
 /**
@@ -38,10 +39,17 @@ export function ebookCheck(project: Project): Check | null {
       warns.push({ area: "listing", message: `At ${round(mb, 1)} MB the delivery fee ($${r.seventy.deliveryUsd.toFixed(2)}) makes 35% pay more: $${r.thirtyFive.royaltyUsd.toFixed(2)} vs $${r.seventy.royaltyUsd.toFixed(2)} a sale.` });
   }
 
+  const layout = ebookLayoutOf(project);
+  if (layout === "text") {
+    const plan = sectionsToBlocks(project);
+    for (const b of plan.blocks) if (b.type === "chapter" && !b.paragraphs.length) warns.push({ area: "interior", message: `"${b.title || b.kicker}" has no text for the eBook.` });
+    if (plan.omitted.length) warns.push({ area: "spec", message: `Left out of the text eBook (nobody can write on a Kindle): ${plan.omitted.join(", ")}.` });
+  }
+
   if (MOSTLY_BLANK_TYPES.includes(project.bookType)) warns.push({ area: "spec", message: "Mostly blank books make poor eBooks, and KDP may reject them. Consider print formats only for this book." });
   else if (FILL_IN_TYPES.includes(project.bookType)) warns.push({ area: "listing", message: "Kindle readers can't write in an eBook. Say so in the eBook description (for example \"view or print the pages\") to avoid returns and bad reviews." });
 
   if (fails.length) return { id: "ebook", title: "Kindle eBook", status: "fail", summary: `${fails.length} eBook problem(s)`, issues: [...fails, ...warns] };
   if (warns.length) return { id: "ebook", title: "Kindle eBook", status: "warn", summary: `${warns.length} eBook item(s) to check`, issues: warns };
-  return { id: "ebook", title: "Kindle eBook", status: "pass", summary: `Fixed-layout eBook, ${round(mb ?? 0, 1)} MB; no ISBN needed`, issues: [] };
+  return { id: "ebook", title: "Kindle eBook", status: "pass", summary: `${layout === "text" ? "Text" : "Fixed-layout"} eBook, ${round(mb ?? 0, 1)} MB; no ISBN needed`, issues: [] };
 }

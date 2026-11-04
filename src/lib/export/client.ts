@@ -8,6 +8,7 @@ import type { Project } from "@/lib/schema/project";
 import { editionOf } from "@/lib/schema/formats";
 import { hardcoverProject } from "@/lib/schema/hardcover";
 import { buildEbook } from "./ebook";
+import { ebookLayoutOf } from "./ebookBlocks";
 import { buildKdpPackage, downloadBlob, printFormats, slug } from "./package";
 
 /** Full cover, front panel and a paperback mockup, rendered in the browser. */
@@ -34,7 +35,7 @@ export async function downloadPackage(project: Project, draft: boolean, onProgre
   const { full, mockup } = await coverImages(project);
   const hardcover = printFormats(project).includes("hardcover") ? (await coverImages(hardcoverProject(project))).mockup : null;
   const ed = editionOf(project, "ebook");
-  const ebook = ed.enabled ? await buildEbook(project, ed.ebookImage ?? "standard", (label, f) => onProgress(label, f * 0.5)) : null;
+  const ebook = ed.enabled ? await buildEbook(project, ed.ebookImage ?? "standard", (label, f) => onProgress(label, f * 0.5), ebookLayoutOf(project)) : null;
   const blob = await buildKdpPackage(project, {
     ebook: ebook ? { epub: ebook.epub, coverJpg: ebook.cover } : undefined,
     loadFont: browserFontLoader,

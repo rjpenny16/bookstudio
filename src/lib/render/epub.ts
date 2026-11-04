@@ -28,9 +28,9 @@ export interface EpubInput {
   toc: { label: string; pageIndex: number }[];
 }
 
-const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c]!);
-const ext = (m: EpubImage["mime"]) => (m === "image/png" ? "png" : "jpg");
-const pad = (n: number) => String(n).padStart(4, "0");
+export const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c]!);
+export const ext = (m: EpubImage["mime"]) => (m === "image/png" ? "png" : "jpg");
+export const pad = (n: number) => String(n).padStart(4, "0");
 
 const LANGUAGES: Record<string, string> = { english: "en", spanish: "es", french: "fr", german: "de", italian: "it", portuguese: "pt", dutch: "nl", japanese: "ja" };
 
@@ -114,12 +114,13 @@ ${list.map((t) => `<li><a href="p${pad(t.pageIndex + 1)}.xhtml">${esc(t.label)}<
 `;
 }
 
-/** Build the EPUB file. `mimetype` is the first entry and stored uncompressed, as EPUB requires. */
-export async function buildFixedLayoutEpub(input: EpubInput): Promise<Uint8Array> {
-  const id = input.id ?? crypto.randomUUID();
+/** Images are already compressed: store them as they are. */
+export const STORE = { compression: "STORE" as const };
+
+/** A new EPUB zip: `mimetype` first and stored uncompressed, as EPUB requires, then the container pointing at OEBPS/content.opf. */
+export function epubZip(): JSZip {
   const zip = new JSZip();
-  const store = { compression: "STORE" as const };
-  zip.file("mimetype", "application/epub+zip", store);
+  zip.file("mimetype", "application/epub+zip", STORE);
   zip.file(
     "META-INF/container.xml",
     `<?xml version="1.0" encoding="UTF-8"?>
@@ -128,14 +129,23 @@ export async function buildFixedLayoutEpub(input: EpubInput): Promise<Uint8Array
 </container>
 `,
   );
+  return zip;
+}
+
+export const finishEpub = (zip: JSZip) => zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 }, mimeType: "application/epub+zip" });
+
+/** Build the fixed-layout EPUB file. */
+export async function buildFixedLayoutEpub(input: EpubInput): Promise<Uint8Array> {
+  const id = input.id ?? crypto.randomUUID();
+  const zip = epubZip();
   zip.file("OEBPS/content.opf", epubOpf(input, id));
   zip.file("OEBPS/nav.xhtml", epubNav(input));
-  zip.file(`OEBPS/images/cover.${ext(input.cover.mime)}`, input.cover.bytes, store);
+  zip.file(`OEBPS/images/cover.${ext(input.cover.mime)}`, input.cover.bytes, STORE);
   zip.file("OEBPS/cover.xhtml", pageXhtml("Cover", `images/cover.${ext(input.cover.mime)}`, input.cover.width, input.cover.height));
   input.pages.forEach((p, i) => {
     const n = pad(i + 1);
-    zip.file(`OEBPS/images/p${n}.${ext(p.mime)}`, p.bytes, store);
+    zip.file(`OEBPS/images/p${n}.${ext(p.mime)}`, p.bytes, STORE);
     zip.file(`OEBPS/p${n}.xhtml`, pageXhtml(`Page ${i + 1}`, `images/p${n}.${ext(p.mime)}`, p.width, p.height));
   });
-  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 }, mimeType: "application/epub+zip" });
+  return finishEpub(zip);
 }

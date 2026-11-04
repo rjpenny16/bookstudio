@@ -5,6 +5,7 @@ import { buildEbook, kindleCreateProject } from "@/lib/export/ebook";
 import { downloadBlob, slug } from "@/lib/export/package";
 import { bytesToMb, ebookRoyalty } from "@/lib/kdp/ebook";
 import { EBOOK_IMAGE_PRESETS, EBOOK_ROYALTY_US, FILL_IN_TYPES, MOSTLY_BLANK_TYPES, type EbookImagePreset } from "@/lib/kdp/rules-ebook";
+import { ebookLayoutDefault, storyWords } from "@/lib/export/ebookBlocks";
 import { measuredEbookMb } from "@/lib/preflight/ebook";
 import { browserFontLoader } from "@/lib/render/fonts";
 import { renderInteriorPdf } from "@/lib/render/pdf";
@@ -13,6 +14,8 @@ import { useProjectStore } from "@/lib/storage/store";
 import { round } from "@/lib/util/ids";
 
 interface Built {
+  layout: "fixed" | "text";
+  omitted: string[];
   epub: Blob;
   cover: Blob;
   coverUrl: string;
@@ -38,6 +41,9 @@ export function EbookPanel() {
 
   const name = slug(project.metadata.title || project.name);
   const preset: EbookImagePreset = e.ebookImage ?? "standard";
+  const layoutDefault = ebookLayoutDefault(project);
+  const layout = e.ebookLayout ?? layoutDefault;
+  const words = storyWords(project);
   const mb = measuredEbookMb(project);
   const price = e.listPriceUsd;
   const r = price != null ? ebookRoyalty(price, mb ?? 0) : null;
@@ -51,10 +57,10 @@ export function EbookPanel() {
     setError(null);
     setProgress({ label: "Rendering eBook pages", f: 0 });
     try {
-      const b = await buildEbook(project, preset, (label, f) => setProgress({ label, f }));
+      const b = await buildEbook(project, preset, (label, f) => setProgress({ label, f }), layout);
       if (built) URL.revokeObjectURL(built.coverUrl);
-      setBuilt({ epub: new Blob([b.epub as BlobPart], { type: "application/epub+zip" }), cover: b.cover, coverUrl: URL.createObjectURL(b.cover), pageWidth: b.pageWidth, pageHeight: b.pageHeight });
-      set((d) => void (d.ebookSize = { bytes: b.epub.byteLength, pages: b.pages, image: preset }));
+      setBuilt({ layout: b.layout, omitted: b.omitted, epub: new Blob([b.epub as BlobPart], { type: "application/epub+zip" }), cover: b.cover, coverUrl: URL.createObjectURL(b.cover), pageWidth: b.pageWidth, pageHeight: b.pageHeight });
+      set((d) => void (d.ebookSize = { bytes: b.epub.byteLength, pages: b.pages, image: preset, layout: b.layout }));
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : String(err));
@@ -67,7 +73,7 @@ export function EbookPanel() {
     <div className="card stack" id="ebook">
       <h2 style={{ margin: 0 }}>Kindle eBook</h2>
       <p className="muted" style={{ margin: 0 }}>
-        A fixed-layout eBook: every page looks exactly like the print book, one image per page. The cover is the front of the paperback cover. No ISBN is needed.
+        Built from this book&rsquo;s pages and the front of the paperback cover. No ISBN is needed.
       </p>
       {MOSTLY_BLANK_TYPES.includes(project.bookType) ? (
         <div className="notice notice-warn">Mostly blank books make poor eBooks, and KDP may reject them. Consider print formats only for this book.</div>
@@ -76,9 +82,22 @@ export function EbookPanel() {
           <div className="notice notice-warn">Kindle readers can&rsquo;t write in an eBook. Say so in the eBook description, for example &ldquo;view or print the pages&rdquo;, to avoid returns and bad reviews.</div>
         )
       )}
+      <label className="field">
+        Layout
+        <select value={e.ebookLayout ?? ""} onChange={(ev) => set((d) => void (ev.target.value ? (d.ebookLayout = ev.target.value as "fixed" | "text") : delete d.ebookLayout))}>
+          <option value="">{layoutDefault === "text" ? "Text (suggested for this book)" : "Fixed (suggested for this book)"}</option>
+          <option value="text">Text: the story reflows; puzzles are pictures</option>
+          <option value="fixed">Fixed: every page is a picture</option>
+        </select>
+        <span className="field-hint">
+          {layout === "text"
+            ? `Readers can resize and search the ${words.toLocaleString()} words of prose; puzzles, answer keys and other grids stay as pictures, and pages for writing are left out. Text eBooks are much smaller, so the 70% delivery fee is low.`
+            : "Every page looks exactly like the print book. Best for puzzle, activity and journal books; readers can't resize the text."}
+        </span>
+      </label>
       <div className="field-row">
         <label className="field">
-          Page image size
+          {layout === "text" ? "Puzzle image size" : "Page image size"}
           <select value={preset} onChange={(ev) => set((d) => void (d.ebookImage = ev.target.value as EbookImagePreset))}>
             <option value="standard">Standard ({EBOOK_IMAGE_PRESETS.standard} px, smaller file)</option>
             <option value="sharp">Sharp ({EBOOK_IMAGE_PRESETS.sharp} px, for fine puzzle detail)</option>
@@ -140,6 +159,9 @@ export function EbookPanel() {
           {r.best === "70" ? `70% pays more at $${price!.toFixed(2)}.` : `35% pays more at $${price!.toFixed(2)}${r.seventy.eligible ? ` (the delivery fee on ${round(mb ?? 0, 1)} MB outweighs the higher rate)` : ""}.`}
           {plan !== r.best && ` You chose ${plan}%.`}
         </div>
+      )}
+      {built?.layout === "text" && built.omitted.length > 0 && (
+        <div className="notice notice-info">Left out of the text eBook (nobody can write on a Kindle): {built.omitted.join(", ")}.</div>
       )}
       {built && <img src={built.coverUrl} alt="Kindle eBook cover" style={{ width: 160, border: "1px solid var(--line)", borderRadius: 4 }} />}
       <div className="row">

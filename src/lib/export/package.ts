@@ -8,6 +8,7 @@ import { renderCoverPdf, renderInteriorPdf } from "@/lib/render/pdf";
 import { ebookRoyalty } from "@/lib/kdp/ebook";
 import { FILL_IN_TYPES, RULES_VERSION_EBOOK } from "@/lib/kdp/rules-ebook";
 import { measuredEbookMb } from "@/lib/preflight/ebook";
+import { ebookLayoutOf } from "./ebookBlocks";
 import { editionOf, formatAsin, formatIsbn, formatPrice } from "@/lib/schema/formats";
 import { hardcoverProject, hardcoverReady, hardcoverSpec } from "@/lib/schema/hardcover";
 import { isReadableSchema, migrateProject } from "@/lib/schema/migrate";
@@ -83,7 +84,7 @@ export function ebookMetadataJson(p: Project) {
     keywords: p.metadata.keywords.filter((k) => k.trim()),
     lowContent: isLowContent(p.bookType),
     print: undefined,
-    ebook: { layout: "fixed (one image per page)", pageCount: p.interior.pages.length, image: e.ebookImage ?? "standard", fileMb: mb == null ? null : round(mb, 2), rulesVersion: RULES_VERSION_EBOOK },
+    ebook: { layout: ebookLayoutOf(p) === "text" ? "text (reflowable; puzzles as images)" : "fixed (one image per page)", pageCount: p.interior.pages.length, image: e.ebookImage ?? "standard", fileMb: mb == null ? null : round(mb, 2), rulesVersion: RULES_VERSION_EBOOK },
     pricing: {
       listPriceUsd,
       royaltyPlan: `${plan}%`,
@@ -212,7 +213,7 @@ review and the Publish button stay with you.
 function ebookReadme(p: Project): string {
   const m = ebookMetadataJson(p);
   return `KINDLE EBOOK (ebook/ folder; Bookshelf > + Create > Kindle eBook)
-  ebook/book.epub                 fixed-layout EPUB, one image per page (${m.ebook.pageCount} pages${m.ebook.fileMb != null ? `, ${m.ebook.fileMb} MB` : ""})
+  ebook/book.epub                 ${m.ebook.layout} EPUB (${m.ebook.pageCount} print pages${m.ebook.fileMb != null ? `, ${m.ebook.fileMb} MB` : ""})
   ebook/cover.jpg                 Kindle cover, 1600 x 2560 px
   ebook/kindle-create-source.pdf  the interior without bleed, for Kindle Create
   1. Use exactly the same title, subtitle and author as the print book so Amazon
