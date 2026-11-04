@@ -13,6 +13,9 @@ import { runPreflight } from "@/lib/preflight";
 import { DEFAULT_AUTHOR } from "@/lib/schema/factory";
 import type { ChatMessage, Project, TitleOption } from "@/lib/schema/project";
 import { loadProject, saveProject } from "@/lib/storage/db";
+import { autoPlan } from "@/lib/storage/autoplan";
+import { plannedSummary } from "@/lib/kdp/autoplan";
+import { FORMAT_LABEL } from "@/lib/schema/formats";
 import { snapshotForBook } from "@/lib/market/client";
 import { LiveBuild } from "./LiveBuild";
 import { artEnabled, CostEstimate, EXAMPLES, resolveSetup, SetupForm, setupFromParams, type SetupState } from "./SetupForm";
@@ -151,6 +154,13 @@ export function Chat() {
       }
       queue.current = [];
       later.current = [];
+      // Turn on the formats you publish in and plan each into the next free KDP week.
+      const plan = await autoPlan(p).catch(() => null);
+      if (plan && (plan.planned.length || plan.skipped.length)) {
+        p = plan.project;
+        const skipped = plan.skipped.map((x) => `${FORMAT_LABEL[x.kind]} skipped: ${x.reason}`).join(". ");
+        add(`${plan.planned.length ? `Planned for KDP: ${plannedSummary(plan.planned)}. Change it on the Export tab or in the Release planner.` : ""}${skipped ? ` ${skipped}.` : ""}`.trim());
+      }
       await persist(p);
       if (thenReview.current) router.push(`/projects/${p.id}#review`);
       else router.replace(`/autopilot?project=${p.id}`);

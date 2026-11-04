@@ -11,6 +11,8 @@ export interface InboxResult {
   title: string;
   pages: number;
   preflight: { passed: number; total: number; blocking: number };
+  /** Formats planned into KDP weeks when the book was finished (week = its Sunday, YYYY-MM-DD). */
+  planned?: { kind: "paperback" | "hardcover" | "ebook"; week: string }[];
 }
 
 export interface InboxItem {

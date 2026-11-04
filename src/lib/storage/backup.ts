@@ -11,7 +11,7 @@ import path from "node:path";
 export const backupDir = () => process.env.BACKUP_DIR || path.join(process.cwd(), "data", "backup");
 
 /** Browser values that are user data worth keeping; anything else (caches) isn't backed up. */
-export const BACKED_UP_VALUES = ["research:boards", "sales:rows", "sales:curve"] as const;
+export const BACKED_UP_VALUES = ["research:boards", "sales:rows", "sales:curve", "autoplan:settings"] as const;
 export type BackedUpValue = (typeof BACKED_UP_VALUES)[number];
 
 export interface BackupSummary {
