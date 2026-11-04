@@ -1,3 +1,4 @@
+import { plannedSummary } from "@/lib/kdp/autoplan";
 import type { InboxItem } from "./state";
 
 /** What a message in the ideas channel asks for. Kept apart from discord.js so it can be tested. */
@@ -61,7 +62,8 @@ export function statusText(items: InboxItem[]): string {
 export function readyText(item: InboxItem, url: string): string {
   const r = item.result!;
   const pf = `preflight ${r.preflight.passed}/${r.preflight.total}${r.preflight.blocking ? `, ${r.preflight.blocking} to fix` : ""}`;
-  return `✅ Draft ready: **${r.title}**, ${r.pages} pages, ${pf}.\nReview & Publish on your computer: ${url}`;
+  const planned = r.planned?.length ? `\nPlanned for KDP: ${plannedSummary(r.planned)}.` : "";
+  return `✅ Draft ready: **${r.title}**, ${r.pages} pages, ${pf}.${planned}\nReview & Publish on your computer: ${url}`;
 }
 
 /** Discord message ids are snowflakes: later messages have larger ids. */

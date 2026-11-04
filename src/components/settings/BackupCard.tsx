@@ -19,7 +19,7 @@ interface BackupList {
   values: Record<string, { savedAt: string; value: unknown } | undefined>;
 }
 
-const VALUE_LABELS: Record<string, string> = { "research:boards": "Research boards", "sales:rows": "Sales reports", "sales:curve": "Sales rank calibration" };
+const VALUE_LABELS: Record<string, string> = { "research:boards": "Research boards", "sales:rows": "Sales reports", "sales:curve": "Sales rank calibration", "autoplan:settings": "Release planning settings" };
 const size = (b: number) => (b > 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`);
 
 interface Loaded {

@@ -9,6 +9,7 @@ import { FONTS } from "@/lib/render/fonts";
 import { getValue, listProjects, loadProject } from "@/lib/storage/db";
 import { PhoneInboxCard } from "@/components/inbox/PhoneInboxCard";
 import { MarketDataCard } from "@/components/market/MarketDataCard";
+import { AutoPlanCard } from "@/components/settings/AutoPlanCard";
 import { BackupCard } from "@/components/settings/BackupCard";
 
 type Capability = "text" | "vision" | "images";
@@ -160,6 +161,7 @@ export default function Settings() {
           </ul>
         </div>
         <MarketDataCard />
+        <AutoPlanCard />
         <BackupCard />
         <PhoneInboxCard />
         <div className="card stack">

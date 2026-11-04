@@ -10,6 +10,7 @@ import { ensureFonts, loadImages, rasterize } from "@/lib/render/canvas";
 import type { Project } from "@/lib/schema/project";
 import { DEFAULT_AUTHOR } from "@/lib/schema/factory";
 import { saveProject } from "@/lib/storage/db";
+import { autoPlan } from "@/lib/storage/autoplan";
 import { snapshotForBook } from "@/lib/market/client";
 import { artEnabled, resolveSetup, type SetupState } from "@/components/autopilot/SetupForm";
 
@@ -54,12 +55,15 @@ async function build(item: InboxItem) {
       { market: market.snapshot ?? undefined, topic: setup.topic, audience: setup.audience, bookType, trimId, author: setup.author, notes: setup.notes, coverArt: artEnabled(setup, images), pageTarget: setup.pageTarget },
       (id, st) => st === "running" && setRunnerState({ step: AUTOPILOT_STEPS.find((s) => s.id === id)?.label ?? id }),
     );
-    await saveProject(res.project);
+    const plan = await autoPlan(res.project).catch(() => null);
+    const project = plan?.project ?? res.project;
+    await saveProject(project);
     const result: InboxResult = {
-      projectId: res.project.id,
-      title: res.project.metadata.title,
-      pages: res.project.interior.pages.length,
+      projectId: project.id,
+      title: project.metadata.title,
+      pages: project.interior.pages.length,
       preflight: { passed: res.report.passed, total: res.report.total, blocking: res.report.blocking },
+      ...(plan?.planned.length ? { planned: plan.planned } : {}),
     };
     await post(`/api/inbox/${item.id}`, { action: "ready", result, coverPng: await coverPng(res.project) });
   } catch (err) {

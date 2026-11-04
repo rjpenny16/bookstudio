@@ -167,3 +167,52 @@ test("a mystery's eBook is a text eBook: the story reflows and the puzzles are p
   expect(fixedMb).toBeGreaterThan(textMb * 2);
   expect(errors).toEqual([]);
 });
+
+test("autopilot plans a finished book's formats into free KDP weeks, unless turned off in Settings", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+
+  await page.goto("/settings");
+  const card = page.getByTestId("autoplan-card");
+  await expect(card.getByLabel("Plan finished books into free KDP weeks")).toBeChecked();
+  await expect(card.getByRole("group", { name: "Formats to publish" }).getByRole("checkbox")).toHaveCount(3);
+
+  await page.goto("/autopilot");
+  await page.getByLabel("Message").fill("gratitude journal for busy nurses, 6x9");
+  await page.getByRole("button", { name: "Start the book" }).click();
+  await expect(page.getByText("Draft ready for your review")).toBeVisible({ timeout: 90_000 });
+  const line = page.getByRole("list", { name: "Conversation" }).getByText(/^Planned for KDP: /);
+  await expect(line).toBeVisible();
+  await expect(line).toContainText("Paperback");
+  await expect(line).toContainText("Change it on the Export tab or in the Release planner.");
+  if (shots) await page.screenshot({ path: `${shots}/autoplan-chat.png`, fullPage: true });
+
+  // The book's formats are on and planned.
+  await page.getByRole("link", { name: "Open in studio" }).click();
+  await page.getByRole("tab", { name: "Export" }).click();
+  const formats = page.locator("#formats");
+  await expect(formats.getByLabel("Publish as Paperback")).toBeChecked();
+  await expect(formats.locator(".badge", { hasText: "Planned" }).first()).toBeVisible();
+  const title = (await page.locator(".ws-title").textContent())!.trim();
+  await page.goto("/schedule");
+  await expect(page.getByRole("table").last().getByRole("link", { name: title }).first()).toBeVisible();
+
+  // Turned off: the next book stays paperback only and unscheduled.
+  await page.goto("/settings");
+  await card.getByLabel("Plan finished books into free KDP weeks").uncheck();
+  await page.waitForTimeout(300);
+  await page.goto("/autopilot");
+  await page.getByLabel("Message").fill("word search for kids, letter size");
+  await page.getByRole("button", { name: "Start the book" }).click();
+  await expect(page.getByText("Draft ready for your review")).toBeVisible({ timeout: 90_000 });
+  await expect(page.getByRole("list", { name: "Conversation" }).getByText(/^Planned for KDP: /)).toHaveCount(0);
+  await page.getByRole("link", { name: "Open in studio" }).click();
+  await page.getByRole("tab", { name: "Export" }).click();
+  await expect(page.locator("#formats").getByLabel("Publish as Hardcover")).not.toBeChecked();
+  await expect(page.locator("#formats").locator(".badge", { hasText: "Planned" })).toHaveCount(0);
+
+  // Leave the setting as it was for other tests.
+  await page.goto("/settings");
+  await card.getByLabel("Plan finished books into free KDP weeks").check();
+  expect(errors).toEqual([]);
+});
